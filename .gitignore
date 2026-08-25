@@ -1,0 +1,16 @@
+# Runtime logs
+*.log
+
+# Widget window position / local state
+state.json
+*-state.json
+
+# Usage history
+*.jsonl
+
+# Auth / credentials
+chatgpt-auth-*.json
+*auth*.json
+*.token
+.env
+.env.*
