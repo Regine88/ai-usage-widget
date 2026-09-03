@@ -1,12 +1,12 @@
-# Combined Grok / Kimi / ChatGPT weekly usage desktop widget.
-# One window, one row per provider (ChatGPT expands to one row per account).
+﻿# Combined Grok / Kimi / ChatGPT / Gemini / Command Code weekly usage desktop widget.
+# One window, one row per provider. Grok and ChatGPT expand to one row per account.
 
 [CmdletBinding()]
 param(
     [switch]$Install,
     [switch]$Uninstall,
     [switch]$AddAccount,
-    [int]$IntervalSeconds = 60
+    [int]$IntervalSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,20 +51,36 @@ $script:CodexTokenUrl = 'https://auth.openai.com/oauth/token'
 $script:CodexUsageUrl = 'https://chatgpt.com/backend-api/wham/usage'
 $script:CodexUsagePageUrl = 'https://chatgpt.com/codex/settings/usage'
 
+$script:CommandCodeHomeDir = if ($env:COMMAND_CODE_HOME) { $env:COMMAND_CODE_HOME } else { Join-Path $env:USERPROFILE '.commandcode' }
+$script:CommandCodeAuthPath = Join-Path $script:CommandCodeHomeDir 'auth.json'
+$script:CommandCodeApiBaseUrl = 'https://api.commandcode.ai'
+$script:CommandCodeUsagePageUrl = 'https://commandcode.ai/usage'
+$script:CommandCodeShowBalance = $false
+$script:CommandCodeDisplayName = 'Command Code'
+
 $script:SelfPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 $script:WidgetDir = Split-Path -Parent $script:SelfPath
 $script:StatePath = Join-Path $script:WidgetDir 'ai-state.json'
 $script:LogPath = Join-Path $script:WidgetDir 'ai-widget.log'
 $script:HistoryPath = Join-Path $script:WidgetDir 'ai-history.jsonl'
+$script:RequestEventsPath = Join-Path $script:WidgetDir 'ai-request-events.jsonl'
 $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
+. (Join-Path $script:WidgetDir 'GrokAccounts.ps1')
+. (Join-Path $script:WidgetDir 'GeminiAntigravity.ps1')
+. (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
+. (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 
 $script:Mutex = $null
 $script:LastOkAt = $null
 $script:FetchRunning = $false
 $script:FetchJob = $null
+$script:WorkerSrc = $null
+$script:WorkerRs = $null
 $script:Fonts = $null
 $script:Alerted = @{}
 $script:LastPct = @{}
+$script:FailCount = @{}
+$script:BackoffUntil = @{}
 $script:IntervalItems = @{}
 $script:IntervalExplicit = $PSBoundParameters.ContainsKey('IntervalSeconds')
 $script:Drag = $false
@@ -76,6 +92,11 @@ function Write-WidgetLog {
     try {
         $line = '{0:o} {1}' -f (Get-Date).ToUniversalTime(), $Message
         Add-Content -LiteralPath $script:LogPath -Value $line -Encoding utf8
+        $f = Get-Item -LiteralPath $script:LogPath
+        if ($f.Length -gt 512KB) {
+            $tail = Get-Content -LiteralPath $script:LogPath -Tail 800
+            Set-Content -LiteralPath $script:LogPath -Value $tail -Encoding utf8
+        }
     } catch { }
 }
 
@@ -101,8 +122,48 @@ function Send-BehindWindows {
     param($Form)
     if (-not $Form -or $Form.IsDisposed) { return }
     if ($Form.TopMost) { return }
-    $hwndBottom = [IntPtr]1
-    [void][NativeWin]::SetWindowPos($Form.Handle, $hwndBottom, 0, 0, 0, 0, 0x0013)
+    try {
+        $hwnd = [IntPtr]$Form.Handle
+        $behind = [IntPtr]1
+        $flags = [uint32]0x0013
+        [void][NativeWin]::SetWindowPos($hwnd, $behind, 0, 0, 0, 0, $flags)
+    } catch {
+        Write-WidgetLog ("zorder $($_.Exception.Message)")
+    }
+}
+
+function Set-UiColor {
+    param($Control, [string]$Property, [int]$Argb)
+    if (-not $Control) { return }
+    try {
+        $color = [System.Drawing.Color]::FromArgb($Argb)
+        $prop = $Control.GetType().GetProperty($Property)
+        if ($prop) { $prop.SetValue($Control, $color, $null) }
+    } catch {
+        try { $Control.$Property = [System.Drawing.Color]::FromArgb($Argb) } catch { }
+    }
+}
+
+function Register-UiExceptionHandlers {
+    try {
+        [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
+            [System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+    } catch { }
+    try {
+        [System.Windows.Forms.Application]::add_ThreadException({
+            param($sender, $e)
+            try {
+                $ex = $e.Exception
+                Write-WidgetLog ("thread $($ex.GetType().FullName): $($ex.Message)")
+            } catch { }
+        })
+    } catch { }
+    try {
+        [AppDomain]::CurrentDomain.add_UnhandledException({
+            param($sender, $e)
+            try { Write-WidgetLog ("unhandled $($e.ExceptionObject)") } catch { }
+        })
+    } catch { }
 }
 
 function Get-UsageColor {
@@ -197,13 +258,30 @@ function Get-HttpStatusCode {
         if ($ErrorRecord.Exception.Response) { return [int]$ErrorRecord.Exception.Response.StatusCode }
     } catch { }
     $msg = [string]$ErrorRecord.Exception.Message
+    try {
+        if ($ErrorRecord.Exception.InnerException) {
+            $msg = $msg + ' ' + $ErrorRecord.Exception.InnerException.Message
+        }
+    } catch { }
     if ($msg -match 'HTTP (\d{3})\b') { return [int]$Matches[1] }
     if ($msg -match 'status code does not indicate success: (\d{3})') { return [int]$Matches[1] }
     return $null
 }
 
-# WinForms STA + HttpClient can hang past -TimeoutSec. Run HTTP in an MTA runspace
-# with a hard wait so one provider cannot freeze the whole card.
+function Format-FetchError {
+    param([string]$Message)
+    if (-not $Message) { return '读取失败' }
+    if ($Message -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return '请求超时' }
+    if ($Message -match 'SSL|certificate|信任关系|could not be established') { return '网络连接失败' }
+    if ($Message -match 'HTTP 401|\b401\b|Unauthorized') { return '登录已过期，请重新登录' }
+    if ($Message -match 'HTTP 403|\b403\b|Forbidden') { return '无访问权限' }
+    if ($Message -match 'HTTP 429|\b429\b') { return '请求过于频繁' }
+    if ($Message.Length -gt 80) { return $Message.Substring(0, 80) }
+    return $Message
+}
+
+# HttpClient can ignore -TimeoutSec on STA/MTA edges. Run each request in a
+# nested runspace with a hard WaitOne so one slow provider cannot stall the worker.
 function Invoke-WidgetRest {
     param(
         [ValidateSet('Get', 'Post')]$Method = 'Get',
@@ -257,9 +335,11 @@ function Invoke-WidgetRest {
         }
         $result = $ps.EndInvoke($handle)
         if ($ps.HadErrors) {
-            $err = $ps.Streams.Error[0]
-            if ($err.Exception) { throw $err.Exception }
-            throw $err.ToString()
+            $err = $null
+            try { $err = $ps.Streams.Error | Select-Object -First 1 } catch { }
+            if ($err -and $err.Exception) { throw $err.Exception }
+            if ($err) { throw $err.ToString() }
+            throw '请求失败'
         }
         if ($result.Count -eq 1) { return $result[0] }
         return $result
@@ -284,48 +364,30 @@ function Get-ProductLabel {
 }
 
 function Read-GrokAuth {
-    if (-not (Test-Path -LiteralPath $script:GrokAuthPath)) {
-        throw '未找到 ~/.grok/auth.json，请先运行 grok login'
-    }
-    $raw = Get-Content -LiteralPath $script:GrokAuthPath -Raw -Encoding utf8 | ConvertFrom-Json
-    $best = $null
-    foreach ($p in $raw.PSObject.Properties) {
-        $v = $p.Value
-        if (-not $v -or -not $v.key) { continue }
-        $prefer = 0
-        if ($p.Name -like 'https://auth.x.ai*') { $prefer = 2 }
-        elseif ($p.Name -like 'https://accounts.x.ai*') { $prefer = 1 }
-        $exp = $null
-        if ($v.expires_at) { try { $exp = [datetime]::Parse($v.expires_at, $null, [Globalization.DateTimeStyles]::RoundtripKind) } catch { } }
-        $score = $prefer
-        if ($exp -and $exp.ToUniversalTime() -gt [datetime]::UtcNow) { $score += 10 }
-        if (-not $best -or $score -gt $best.score) {
-            $best = [pscustomobject]@{ score = $score; entry = $v; keyName = $p.Name; expires = $exp }
-        }
-    }
-    if (-not $best) { throw 'auth.json 中没有可用的登录凭证' }
-    [pscustomobject]@{
-        KeyName      = $best.keyName
-        Token        = [string]$best.entry.key
-        RefreshToken = [string]$best.entry.refresh_token
-        ClientId     = [string]$best.entry.oidc_client_id
-        Email        = [string]$best.entry.email
-        ExpiresAt    = $best.expires
-        Raw          = $raw
-        Entry        = $best.entry
-    }
+    param([string]$Path = $script:GrokAuthPath)
+    Read-GrokAuthFromFile -Path $Path
 }
 
 function Save-GrokAuth {
     param($Auth, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
-    $entry = $Auth.Entry
+    $path = $Auth.Path
+    if (-not $path) { $path = $script:GrokAuthPath }
+    $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+    $entry = $null
+    if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) {
+        $entry = $raw.PSObject.Properties[$Auth.KeyName].Value
+    }
+    if (-not $entry) { $entry = $Auth.Entry }
     $entry.key = $AccessToken
     if ($RefreshToken) { $entry.refresh_token = $RefreshToken }
     $entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o')
-    $json = $Auth.Raw | ConvertTo-Json -Depth 8
-    $tmp = "$script:GrokAuthPath.tmp-ai-widget"
+    $json = $raw | ConvertTo-Json -Depth 8
+    $tmp = "$path.tmp-ai-widget"
     Set-Content -LiteralPath $tmp -Value $json -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $script:GrokAuthPath -Force
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+    $Auth.Raw = $raw
+    $Auth.Entry = $entry
+    $Auth.Path = $path
 }
 
 function Update-GrokToken {
@@ -346,8 +408,28 @@ function Update-GrokToken {
     $Auth.Token = [string]$resp.access_token
     $Auth.RefreshToken = $newRefresh
     $Auth.ExpiresAt = $expires
-    Write-WidgetLog 'grok token refreshed'
+    Write-WidgetLog ('grok token refreshed for {0}' -f (Get-GrokRowName $Auth))
     return $Auth
+}
+
+function Sync-GrokAuthFromDisk {
+    param($Auth)
+    $path = $Auth.Path
+    if (-not $path) { $path = $script:GrokAuthPath }
+    $fresh = Read-GrokAuthFromFile -Path $path
+    if (-not $fresh) { return $false }
+    $changed = ($fresh.Token -ne $Auth.Token)
+    $Auth.Token = $fresh.Token
+    $Auth.RefreshToken = $fresh.RefreshToken
+    $Auth.ClientId = $fresh.ClientId
+    $Auth.ExpiresAt = $fresh.ExpiresAt
+    $Auth.Raw = $fresh.Raw
+    $Auth.Entry = $fresh.Entry
+    $Auth.KeyName = $fresh.KeyName
+    $Auth.Email = $fresh.Email
+    $Auth.AccountId = $fresh.AccountId
+    $Auth.Path = $fresh.Path
+    return $changed
 }
 
 function Get-GrokAuthHeaders {
@@ -366,16 +448,21 @@ function Invoke-GrokGet {
         return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-GrokAuthHeaders $Auth)
     } catch {
         $code = Get-HttpStatusCode $_
-        if ($code -in 401, 403) {
-            $Auth = Update-GrokToken -Auth $Auth
-            return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-GrokAuthHeaders $Auth)
-        }
-        throw
+        if ($code -notin 401, 403) { throw }
+        try {
+            if (Sync-GrokAuthFromDisk $Auth) {
+                return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-GrokAuthHeaders $Auth)
+            }
+        } catch { }
+        $Auth = Update-GrokToken -Auth $Auth
+        return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-GrokAuthHeaders $Auth)
     }
 }
 
 function Get-GrokUsageSnapshot {
-    $auth = Read-GrokAuth
+    param($Auth)
+    if (-not $Auth) { $Auth = Read-GrokAuthFromFile -Path $script:GrokAuthPath }
+    $auth = $Auth
     if ($auth.ExpiresAt -and $auth.ExpiresAt.ToUniversalTime() -lt [datetime]::UtcNow.AddMinutes(2)) {
         try { $auth = Update-GrokToken -Auth $auth } catch { Write-WidgetLog "grok preemptive refresh failed: $($_.Exception.Message)" }
     }
@@ -502,12 +589,20 @@ function Invoke-KimiGet {
         return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
     } catch {
         $code = Get-HttpStatusCode $_
-        if ($code -in 401, 403) {
-            $Auth = Update-KimiToken -Auth $Auth
-            $headers.Authorization = "Bearer $($Auth.Token)"
-            return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
-        }
-        throw
+        if ($code -notin 401, 403) { throw }
+        try {
+            $fresh = Read-KimiAuth
+            if ($fresh.Token -and $fresh.Token -ne $Auth.Token) {
+                $Auth.Token = $fresh.Token
+                $Auth.Refresh = $fresh.Refresh
+                $Auth.ExpiresAt = $fresh.ExpiresAt
+                $headers.Authorization = "Bearer $($Auth.Token)"
+                return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
+            }
+        } catch { }
+        $Auth = Update-KimiToken -Auth $Auth
+        $headers.Authorization = "Bearer $($Auth.Token)"
+        return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
     }
 }
 
@@ -653,6 +748,21 @@ function Add-CurrentAccount {
     Write-WidgetLog ("snapshot account {0}" -f (Get-AccountLabel $active))
 }
 
+function Add-CurrentGrokAccount {
+    if (-not (Test-Path -LiteralPath $script:GrokAuthPath)) {
+        Write-Host '未找到 ~/.grok/auth.json，请先运行 grok login'
+        return
+    }
+    Sync-ActiveGrokSnapshot
+    try {
+        $active = Read-GrokAuthFromFile -Path $script:GrokAuthPath
+        Write-Host ("已登记 Grok 账号 {0}" -f (Get-GrokRowName $active))
+        Write-WidgetLog ("snapshot grok {0}" -f (Get-GrokRowName $active))
+    } catch {
+        Write-WidgetLog ("snapshot grok failed: {0}" -f $_.Exception.Message)
+    }
+}
+
 function Save-CodexAuth {
     param([string]$Path, [string]$AccessToken, [string]$RefreshToken, [string]$IdToken)
     $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
@@ -684,24 +794,86 @@ function Update-CodexToken {
     return $Auth
 }
 
-function Invoke-CodexGet {
-    param($Auth, [string]$Url)
-    $headers = @{
+function Sync-CodexAuthFromDisk {
+    param($Auth)
+    $fresh = Read-CodexAuth -Path $Auth.Path
+    if (-not $fresh) { return $false }
+    $changed = ($fresh.Token -ne $Auth.Token)
+    $Auth.Token = $fresh.Token
+    $Auth.Refresh = $fresh.Refresh
+    if ($fresh.AccountId) { $Auth.AccountId = $fresh.AccountId }
+    if ($fresh.Email) { $Auth.Email = $fresh.Email }
+    return $changed
+}
+
+function Get-CodexAuthHeaders {
+    param($Auth)
+    return @{
         Authorization        = "Bearer $($Auth.Token)"
         'ChatGPT-Account-Id' = $Auth.AccountId
         Accept               = 'application/json'
         'User-Agent'         = 'codex-cli'
     }
+}
+
+function Invoke-CurlJson {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [hashtable]$Headers,
+        [int]$TimeoutSec = 15
+    )
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if (-not $curl) { throw '未找到 curl.exe' }
+    $argList = [System.Collections.Generic.List[string]]::new()
+    [void]$argList.Add('-sS')
+    [void]$argList.Add('--http1.1')
+    [void]$argList.Add('--ssl-no-revoke')
+    [void]$argList.Add('-m')
+    [void]$argList.Add("$TimeoutSec")
+    [void]$argList.Add('-w')
+    [void]$argList.Add("`nHTTPSTATUS:%{http_code}")
+    [void]$argList.Add('-H')
+    [void]$argList.Add('Accept: application/json')
+    if ($Headers) {
+        foreach ($k in $Headers.Keys) {
+            if ($k -eq 'Accept') { continue }
+            [void]$argList.Add('-H')
+            [void]$argList.Add(('{0}: {1}' -f $k, $Headers[$k]))
+        }
+    }
+    [void]$argList.Add($Uri)
+    $raw = & $curl.Source @argList 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 22) {
+        throw ("curl 退出码 {0}: {1}" -f $LASTEXITCODE, $raw.Trim())
+    }
+    $status = 0
+    $body = $raw
+    if ($raw -match '(?s)^(.*)HTTPSTATUS:(\d+)\s*$') {
+        $body = $Matches[1].Trim()
+        $status = [int]$Matches[2]
+    }
+    if ($status -ge 400) { throw ("HTTP {0} {1}" -f $status, $body) }
+    if (-not $body) { throw '用量接口返回空' }
+    return $body | ConvertFrom-Json
+}
+
+function Invoke-CodexGet {
+    param($Auth, [string]$Url)
     try {
-        return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
+        return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
     } catch {
         $code = Get-HttpStatusCode $_
-        if ($code -in 401, 403) {
-            $Auth = Update-CodexToken -Auth $Auth
-            $headers.Authorization = "Bearer $($Auth.Token)"
-            return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
+        if ($code -notin 401, 403) { throw }
+        if (Sync-CodexAuthFromDisk $Auth) {
+            try {
+                return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
+            } catch {
+                $code = Get-HttpStatusCode $_
+                if ($code -notin 401, 403) { throw }
+            }
         }
-        throw
+        $Auth = Update-CodexToken -Auth $Auth
+        return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
     }
 }
 
@@ -780,42 +952,126 @@ function Sync-ActiveCodexSnapshot {
     }
 }
 
+# --- Command Code ---
+
+function Test-CommandCodeCredExists {
+    return Test-Path -LiteralPath $script:CommandCodeAuthPath
+}
+
+function Read-CommandCodeAuth {
+    if (-not (Test-Path -LiteralPath $script:CommandCodeAuthPath)) {
+        throw '未找到 ~/.commandcode/auth.json，请先安装 Command Code 并登录'
+    }
+    $raw = Get-Content -LiteralPath $script:CommandCodeAuthPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if (-not $raw.apiKey) { throw 'auth.json 缺少 apiKey，请重新登录' }
+    return [pscustomobject]@{
+        ApiKey   = [string]$raw.apiKey
+        UserId   = [string]$raw.userId
+        UserName = [string]$raw.userName
+        KeyName  = [string]$raw.keyName
+    }
+}
+
+function Get-CommandCodeAuthHeaders {
+    param($Auth)
+    return @{
+        Authorization = "Bearer $($Auth.ApiKey)"
+        Accept        = 'application/json'
+        'User-Agent'  = 'command-code'
+    }
+}
+
+function Invoke-CommandCodeGet {
+    param($Auth, [string]$Path)
+    # Command Code auth.json is a login snapshot with no refresh flow: a 401 is
+    # surfaced directly to Format-FetchError ("登录已过期") instead of retried.
+    return Invoke-WidgetRest -Method Get -Uri "$($script:CommandCodeApiBaseUrl)$Path" -Headers (Get-CommandCodeAuthHeaders $Auth)
+}
+
+function Get-CommandCodeOrgId {
+    param($Auth)
+    try {
+        $resp = Invoke-WidgetRest -Method Get -Uri "$($script:CommandCodeApiBaseUrl)/alpha/whoami" -Headers (Get-CommandCodeAuthHeaders $Auth)
+        if ($resp.org -and $resp.org.id) { return [string]$resp.org.id }
+    } catch { }
+    return $null
+}
+
+function Get-CommandCodeUsageSnapshot {
+    $auth = Read-CommandCodeAuth
+    $orgId = Get-CommandCodeOrgId $auth
+    $path = '/alpha/billing/credits'
+    if ($orgId) { $path += '?orgId=' + [uri]::EscapeDataString($orgId) }
+    $data = Invoke-CommandCodeGet -Auth $auth -Path $path
+    return Convert-CommandCodeCredits $data
+}
+
+function Get-CommandCodeRowData {
+    $u = Get-CommandCodeUsageSnapshot
+    $details = @()
+    if ($u.FiveHour) { $details += ('5小时 {0:0}%' -f $u.FiveHour.Percent) }
+    if ($u.Weekly)   { $details += ('周 {0:0}%'    -f $u.Weekly.Percent) }
+    $details += Format-ResetText $u.PeriodEnd
+    if ($script:CommandCodeShowBalance -and $null -ne $u.TotalRemaining) {
+        $details += ('余额 {0:0.00}' -f $u.TotalRemaining)
+    }
+    Write-WidgetLog ("usage commandcode {0} ok" -f $u.Percent)
+    [pscustomobject]@{
+        Percent = $u.Percent
+        Detail  = ($details -join ' · ')
+        Tip     = ('{0} {1}' -f $script:CommandCodeDisplayName, (Format-PercentText $u.Percent))
+        Reset   = (Format-ResetTime $u.PeriodEnd)
+    }
+}
+
 # --- Rows / UI ---
 
 function Get-ProviderRows {
     $rows = @()
-    $rows += [pscustomobject]@{
-        Id      = 'grok'
-        Kind    = 'grok'
-        Name    = 'Grok'
-        OpenUrl = $script:GrokUsagePageUrl
-        Auth    = $null
-    }
-    $rows += [pscustomobject]@{
-        Id      = 'kimi'
-        Kind    = 'kimi'
-        Name    = 'Kimi'
-        OpenUrl = $script:KimiUsagePageUrl
-        Auth    = $null
-    }
-    $accounts = @(Get-CodexAccounts)
-    if ($accounts.Count -eq 0) {
+    try { Sync-ActiveGrokSnapshot } catch { Write-WidgetLog ("grok snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-GrokAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'codex-missing'
-            Kind    = 'codex-missing'
-            Name    = 'ChatGPT'
-            OpenUrl = $script:CodexUsagePageUrl
+            Id      = Get-GrokRowId $acct
+            Kind    = 'grok'
+            Name    = Get-GrokRowName $acct
+            OpenUrl = $script:GrokUsagePageUrl
+            Auth    = $acct
+        }
+    }
+    if (Test-AntigravityCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'gemini'
+            Kind    = 'gemini'
+            Name    = 'Gemini'
+            OpenUrl = $script:GeminiUsagePageUrl
             Auth    = $null
         }
-    } else {
-        foreach ($acct in $accounts) {
-            $rows += [pscustomobject]@{
-                Id      = ('codex-{0}' -f $acct.AccountId)
-                Kind    = 'codex'
-                Name    = Get-AccountLabel $acct
-                OpenUrl = $script:CodexUsagePageUrl
-                Auth    = $acct
-            }
+    }
+    if (Test-Path -LiteralPath $script:KimiCredPath) {
+        $rows += [pscustomobject]@{
+            Id      = 'kimi'
+            Kind    = 'kimi'
+            Name    = 'Kimi'
+            OpenUrl = $script:KimiUsagePageUrl
+            Auth    = $null
+        }
+    }
+    foreach ($acct in @(Get-CodexAccounts)) {
+        $rows += [pscustomobject]@{
+            Id      = ('codex-{0}' -f $acct.AccountId)
+            Kind    = 'codex'
+            Name    = Get-AccountLabel $acct
+            OpenUrl = $script:CodexUsagePageUrl
+            Auth    = $acct
+        }
+    }
+    if (Test-CommandCodeCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'commandcode'
+            Kind    = 'commandcode'
+            Name    = $script:CommandCodeDisplayName
+            OpenUrl = $script:CommandCodeUsagePageUrl
+            Auth    = $null
         }
     }
     return $rows
@@ -823,6 +1079,23 @@ function Get-ProviderRows {
 
 function Get-StartupShortcutPath {
     Join-Path ([Environment]::GetFolderPath('Startup')) 'AI 周用量.lnk'
+}
+
+function Get-LegacyStartupShortcutPaths {
+    $dir = [Environment]::GetFolderPath('Startup')
+    @(
+        (Join-Path $dir 'Grok 周用量.lnk'),
+        (Join-Path $dir 'Kimi 周用量.lnk'),
+        (Join-Path $dir 'ChatGPT 周用量.lnk')
+    )
+}
+
+function Remove-LegacyStartupShortcuts {
+    foreach ($p in (Get-LegacyStartupShortcutPaths)) {
+        if (Test-Path -LiteralPath $p) {
+            try { Remove-Item -LiteralPath $p -Force } catch { }
+        }
+    }
 }
 
 function Write-LauncherVbs {
@@ -888,6 +1161,7 @@ function New-Shortcut {
 
 function Install-Widget {
     Write-LauncherVbs
+    Remove-LegacyStartupShortcuts
     New-Shortcut -Path (Get-StartupShortcutPath) -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc '开机启动 AI 周用量卡片'
     Write-Host "已写入开机启动。程序目录: $($script:WidgetDir)"
 }
@@ -895,6 +1169,7 @@ function Install-Widget {
 function Uninstall-Widget {
     $p = Get-StartupShortcutPath
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+    Remove-LegacyStartupShortcuts
     Write-Host "已移除开机启动。程序仍在 $($script:WidgetDir)"
 }
 
@@ -927,8 +1202,8 @@ function New-Label {
     $lbl.Location = New-Object System.Drawing.Point $X, $Y
     $lbl.Size = New-Object System.Drawing.Size $W, $H
     $lbl.Font = $Font
-    $lbl.ForeColor = $Color
-    $lbl.BackColor = [System.Drawing.Color]::Transparent
+    Set-UiColor $lbl 'ForeColor' $Color.ToArgb()
+    Set-UiColor $lbl 'BackColor' ([System.Drawing.Color]::Transparent.ToArgb())
     $lbl.TextAlign = [System.Drawing.ContentAlignment]$Align
     $lbl.Parent = $Parent
     return $lbl
@@ -937,30 +1212,38 @@ function New-Label {
 function Bind-Drag {
     param($Control)
     $Control.Add_MouseDown({
-        if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
-            $script:Drag = $true
-            $script:DragOffset = $_.Location
-        }
+        try {
+            if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
+                $script:Drag = $true
+                $script:DragOffset = $_.Location
+            }
+        } catch { }
     })
     $Control.Add_MouseMove({
-        if ($script:Drag -and $_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
-            $script:Ui.Form.Left += $_.X - $script:DragOffset.X
-            $script:Ui.Form.Top += $_.Y - $script:DragOffset.Y
-        }
+        try {
+            if ($script:Drag -and $_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
+                $script:Ui.Form.Left += [int]$_.X - [int]$script:DragOffset.X
+                $script:Ui.Form.Top += [int]$_.Y - [int]$script:DragOffset.Y
+            }
+        } catch { }
     })
     $Control.Add_MouseUp({
-        if ($script:Drag -and $script:Ui -and $script:Ui.Form) {
-            $script:Drag = $false
-            $f = $script:Ui.Form
-            $clamped = Get-ClampedLocation $f.Left $f.Top $f.Width $f.Height
-            $f.Location = $clamped
-            Save-State $f
-            Send-BehindWindows $f
-        }
+        try {
+            if ($script:Drag -and $script:Ui -and $script:Ui.Form) {
+                $script:Drag = $false
+                $f = $script:Ui.Form
+                $clamped = Get-ClampedLocation $f.Left $f.Top $f.Width $f.Height
+                $f.Location = New-Object System.Drawing.Point ([int]$clamped.X), ([int]$clamped.Y)
+                Save-State $f
+                Send-BehindWindows $f
+            }
+        } catch { Write-WidgetLog ("drag $($_.Exception.Message)") }
     })
     $Control.Add_MouseDoubleClick({
-        $url = $this.Tag
-        if ($url -is [string] -and $url) { Start-Process $url }
+        try {
+            $url = [string]$this.Tag
+            if ($url) { Start-Process $url }
+        } catch { }
     })
 }
 
@@ -998,6 +1281,7 @@ function Rebuild-ProviderRows {
         $lblName = New-Label $Form "name-$y" 16 ($y + 4) 180 18 $nameFont $fg 'MiddleLeft'
         $lblName.Text = $spec.Name
         $lblName.Tag = $spec.OpenUrl
+        $lblName.AutoEllipsis = $true
         $lblPct = New-Label $Form "pct-$y" 196 $y 68 26 $pctFont (Get-UsageColor 0) 'MiddleRight'
         $lblPct.Text = '--%'
         $lblPct.Tag = $spec.OpenUrl
@@ -1005,13 +1289,13 @@ function Rebuild-ProviderRows {
         $barBack = New-Object System.Windows.Forms.Panel
         $barBack.Location = New-Object System.Drawing.Point 16, ($y + 30)
         $barBack.Size = New-Object System.Drawing.Size 248, 8
-        $barBack.BackColor = [System.Drawing.Color]::FromArgb(42, 42, 50)
+        Set-UiColor $barBack 'BackColor' ([System.Drawing.Color]::FromArgb(42, 42, 50).ToArgb())
         $barBack.Parent = $Form
         $barBack.Tag = $spec.OpenUrl
         $barFill = New-Object System.Windows.Forms.Panel
         $barFill.Location = New-Object System.Drawing.Point 0, 0
         $barFill.Size = New-Object System.Drawing.Size 6, 8
-        $barFill.BackColor = Get-UsageColor 0
+        Set-UiColor $barFill 'BackColor' ((Get-UsageColor 0).ToArgb())
         $barFill.Parent = $barBack
         $barFill.Tag = $spec.OpenUrl
 
@@ -1047,37 +1331,59 @@ function Rebuild-ProviderRows {
     $Form.Size = New-Object System.Drawing.Size(280, $h)
     $round = New-RoundRectPath 0 0 $Form.Width $Form.Height 18
     $old = $Form.Region
-    $Form.Region = New-Object System.Drawing.Region($round)
-    if ($old) { $old.Dispose() }
+    try {
+        $region = New-Object System.Drawing.Region($round)
+        $Form.GetType().GetProperty('Region').SetValue($Form, $region, $null)
+    } catch {
+        $Form.Region = New-Object System.Drawing.Region($round)
+    }
+    if ($old) { try { $old.Dispose() } catch { } }
     $script:Ui.Stamp.Top = $h - 24
     $script:Ui.Sig = (($Specs | ForEach-Object { $_.Id }) -join ',')
 }
 
 function Set-RowUsage {
     param($Row, [double]$Percent, [string]$Detail)
-    $color = Get-UsageColor $Percent
+    $colorPct = $Percent
+    if ($Row.Kind -eq 'gemini') { $colorPct = [Math]::Max(0, [Math]::Min(100, 100.0 - $Percent)) }
+    $argb = (Get-UsageColor $colorPct).ToArgb()
     $text = Format-PercentText $Percent
-    if ($Row.Pct.Text -ne $text) { $Row.Pct.Text = $text }
-    if ($Row.Pct.ForeColor.ToArgb() -ne $color.ToArgb()) { $Row.Pct.ForeColor = $color }
-    if ($Row.BarFill.BackColor.ToArgb() -ne $color.ToArgb()) { $Row.BarFill.BackColor = $color }
-    $w = [Math]::Max(6, [int](248 * $Percent / 100.0))
+    if ($Row.Pct.Text -ne $text) { $Row.Pct.Text = [string]$text }
+    Set-UiColor $Row.Pct 'ForeColor' $argb
+    Set-UiColor $Row.BarFill 'BackColor' $argb
+    $w = [Math]::Max(0, [Math]::Min(248, [int][Math]::Round(248.0 * $colorPct / 100.0)))
     if ($Row.BarFill.Width -ne $w) { $Row.BarFill.Width = $w }
-    if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = $Detail }
-    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
-    if ($Row.Detail.ForeColor.ToArgb() -ne $muted.ToArgb()) { $Row.Detail.ForeColor = $muted }
+    if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
+    Set-UiColor $Row.Detail 'ForeColor' ([System.Drawing.Color]::FromArgb(152, 152, 160).ToArgb())
     return $text
 }
 
 function Set-RowError {
     param($Row, [string]$Message)
-    $Row.Detail.Text = $Message
-    $Row.Detail.ForeColor = [System.Drawing.Color]::FromArgb(255, 107, 107)
+    $Row.Detail.Text = [string]$Message
+    Set-UiColor $Row.Detail 'ForeColor' ([System.Drawing.Color]::FromArgb(255, 107, 107).ToArgb())
+}
+
+function Get-RecentRequestLabel {
+    param($Row, [object[]]$Events)
+    if (-not $Row) { return $null }
+    $accountId = $null
+    try { if ($Row.Auth -and $Row.Auth.AccountId) { $accountId = [string]$Row.Auth.AccountId } } catch { }
+    $event = Get-LatestModelRequest -Path $script:RequestEventsPath -Provider $Row.Kind -AccountId $accountId -Events $Events
+    if (-not $event -or -not $event.model) { return $null }
+    $when = $null
+    try { $when = [datetime]::Parse([string]$event.ts).ToLocalTime().ToString('HH:mm') } catch { }
+    $state = if ($event.status -eq 'failed') { '失败' } elseif ($event.status -eq 'started') { '进行中' } else { '完成' }
+    $timeText = if ($when) { ' · ' + $when } else { '' }
+    return ('最近 {0} · {1}{2}' -f [string]$event.model, $state, $timeText)
 }
 
 # Row data builders are pure (no UI access) so they can run in the
 # background fetch runspace; the UI thread only applies their results.
 function Get-GrokRowData {
-    $u = Get-GrokUsageSnapshot
+    param($Auth, [string]$Name, [string]$Id)
+    if (-not $Auth) { $Auth = Read-GrokAuthFromFile -Path $script:GrokAuthPath }
+    $u = Get-GrokUsageSnapshot -Auth $Auth
     $details = @()
     foreach ($p in @($u.Products)) {
         $details += ('{0} {1:0}%' -f $p.Name, $p.Percent)
@@ -1086,11 +1392,28 @@ function Get-GrokRowData {
     if ($u.PrepaidCents -gt 0) {
         $details += ('额外 ${0:0.00}' -f ($u.PrepaidCents / 100.0))
     }
-    Write-WidgetLog ("usage grok {0} ok" -f $u.Percent)
+    $logId = if ($Id) { $Id } else { 'grok' }
+    $tipName = if ($Name) { $Name } else { 'Grok' }
+    Write-WidgetLog ("usage {0} {1} ok" -f $logId, $u.Percent)
     [pscustomobject]@{
         Percent = $u.Percent
         Detail  = ($details -join ' · ')
-        Tip     = ('Grok {0}' -f (Format-PercentText $u.Percent))
+        Tip     = ('{0} {1}' -f $tipName, (Format-PercentText $u.Percent))
+        Reset   = (Format-ResetTime $u.PeriodEnd)
+    }
+}
+
+function Get-GeminiRowData {
+    $u = Get-GeminiUsageSnapshot
+    $details = @()
+    if ($null -ne $u.Remain5h) { $details += ('5小时余 {0:0}%' -f $u.Remain5h) }
+    if ($null -ne $u.RemainWeekly) { $details += ('周余 {0:0}%' -f $u.RemainWeekly) }
+    $details += Format-ResetText $u.PeriodEnd
+    Write-WidgetLog ("usage gemini remain={0} ok" -f $u.Remaining)
+    [pscustomobject]@{
+        Percent = $u.Remaining
+        Detail  = ($details -join ' · ')
+        Tip     = ('Gemini 余量 {0}' -f (Format-PercentText $u.Remaining))
         Reset   = (Format-ResetTime $u.PeriodEnd)
     }
 }
@@ -1117,6 +1440,7 @@ function Get-KimiRowData {
 
 function Get-CodexRowData {
     param($Auth, [string]$Name, [string]$Id)
+    Write-WidgetLog ("codex fetch start {0}" -f $Id)
     $u = Get-CodexUsageSnapshot -Auth $Auth
     $details = @()
     if ($u.Burst -and $u.Burst.Label) { $details += ('{0} {1:0}%' -f $u.Burst.Label, $u.Burst.Percent) }
@@ -1140,7 +1464,7 @@ function New-WidgetForm {
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $form.Size = New-Object System.Drawing.Size(280, (Get-FormHeight 3))
-    $form.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 22)
+    Set-UiColor $form 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
     $form.Opacity = 0.96
     $form.TopMost = $false
     $form.ShowInTaskbar = $false
@@ -1156,7 +1480,12 @@ function New-WidgetForm {
     Write-WidgetLog ("form location $($form.Left),$($form.Top)")
 
     $round = New-RoundRectPath 0 0 $form.Width $form.Height 18
-    $form.Region = New-Object System.Drawing.Region($round)
+    try {
+        $region = New-Object System.Drawing.Region($round)
+        $form.GetType().GetProperty('Region').SetValue($form, $region, $null)
+    } catch {
+        $form.Region = New-Object System.Drawing.Region($round)
+    }
 
     $dim = [System.Drawing.Color]::FromArgb(108, 108, 116)
     $footFont = New-Object System.Drawing.Font('Segoe UI', 8.5)
@@ -1172,11 +1501,14 @@ function New-WidgetForm {
         $script:IntervalItems[$sec] = $item
     }
     [void]$menu.Items.Add($miInterval)
+    $miAddGrok = $menu.Items.Add('登记 Grok 账号')
     $miAdd = $menu.Items.Add('登记 ChatGPT 账号')
     $miOpen = New-Object System.Windows.Forms.ToolStripMenuItem '打开用量页'
     $miOpenGrok = $miOpen.DropDownItems.Add('Grok')
+    $miOpenGemini = $miOpen.DropDownItems.Add('Gemini')
     $miOpenKimi = $miOpen.DropDownItems.Add('Kimi')
     $miOpenCodex = $miOpen.DropDownItems.Add('ChatGPT')
+    $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     [void]$menu.Items.Add($miOpen)
     $miTop = $menu.Items.Add('浮在窗口上')
     $miTop.Checked = [bool]$script:State.topMost
@@ -1234,13 +1566,19 @@ function New-WidgetForm {
             Update-Widget
         })
     }
+    $miAddGrok.Add_Click({
+        Add-CurrentGrokAccount
+        Update-Widget
+    })
     $miAdd.Add_Click({
         Add-CurrentAccount
         Update-Widget
     })
     $miOpenGrok.Add_Click({ Start-Process $script:GrokUsagePageUrl })
+    $miOpenGemini.Add_Click({ Start-Process $script:GeminiUsagePageUrl })
     $miOpenKimi.Add_Click({ Start-Process $script:KimiUsagePageUrl })
     $miOpenCodex.Add_Click({ Start-Process $script:CodexUsagePageUrl })
+    $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
     $miTop.Add_Click({
         if ($form.TopMost) {
             $form.TopMost = $false
@@ -1258,6 +1596,7 @@ function New-WidgetForm {
             $miStart.Text = '开机启动'
         } else {
             Write-LauncherVbs
+            Remove-LegacyStartupShortcuts
             New-Shortcut -Path $path -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc '开机启动 AI 周用量卡片'
             $miStart.Text = '取消开机启动'
         }
@@ -1272,30 +1611,37 @@ function New-WidgetForm {
     if (-not $script:IntervalExplicit -and $script:State.interval) { $intervalSec = [int]$script:State.interval }
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = [Math]::Max(15000, $intervalSec * 1000)
-    $timer.Add_Tick({ Update-Widget })
+    $timer.Add_Tick({
+        try { Update-Widget } catch { Write-WidgetLog ("tick $($_.Exception.Message)`n$($_.ScriptStackTrace)") }
+    })
     $form.Tag = $timer
     foreach ($k in $script:IntervalItems.Keys) { $script:IntervalItems[$k].Checked = ([int]$k -eq [int]$intervalSec) }
 
     # Fast poll timer: picks up background fetch results on the UI thread.
     $pollTimer = New-Object System.Windows.Forms.Timer
     $pollTimer.Interval = 300
-    $pollTimer.Add_Tick({ Receive-BackgroundFetch })
+    $pollTimer.Add_Tick({
+        try { Receive-BackgroundFetch } catch { Write-WidgetLog ("poll $($_.Exception.Message)`n$($_.ScriptStackTrace)") }
+    })
     $script:Ui.Poll = $pollTimer
 
-    $form.Add_Deactivate({ Send-BehindWindows $form })
+    $form.Add_Deactivate({
+        try { Send-BehindWindows $form } catch { Write-WidgetLog ("deactivate $($_.Exception.Message)") }
+    })
     $form.Add_Shown({
-        Write-WidgetLog 'form shown'
-        Send-BehindWindows $form
-        $timer.Start()
-        Write-WidgetLog 'timer started'
-        Update-Widget
+        try {
+            Write-WidgetLog 'form shown'
+            Send-BehindWindows $form
+            $timer.Start()
+            Write-WidgetLog 'timer started'
+            Update-Widget
+        } catch { Write-WidgetLog ("shown $($_.Exception.Message)`n$($_.ScriptStackTrace)") }
     })
     $form.Add_FormClosed({
         Write-WidgetLog 'form closed'
         try { $timer.Stop(); $timer.Dispose() } catch { }
         try { $pollTimer.Stop(); $pollTimer.Dispose() } catch { }
-        if ($script:FetchJob) { try { $script:FetchJob.Ps.Stop() } catch { } }
-        Clear-FetchJob
+        Close-WorkerRunspace
         if ($script:Fonts) {
             foreach ($f in $script:Fonts.Values) { try { $f.Dispose() } catch { } }
             $script:Fonts = $null
@@ -1307,15 +1653,43 @@ function New-WidgetForm {
     })
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
+    Register-UiExceptionHandlers
     Write-WidgetLog 'run loop'
-    [System.Windows.Forms.Application]::Run($form)
+    [System.Windows.Forms.Application]::Run([System.Windows.Forms.Form]$form)
     Write-WidgetLog 'run ended'
+}
+
+function Test-ProviderBackoff {
+    param([string]$Id)
+    if (-not $script:BackoffUntil.ContainsKey($Id)) { return $false }
+    if ([datetime]::UtcNow -ge $script:BackoffUntil[$Id]) {
+        $script:BackoffUntil.Remove($Id)
+        return $false
+    }
+    return $true
+}
+
+function Register-ProviderSuccess {
+    param([string]$Id)
+    if (-not $Id) { return }
+    $script:FailCount[$Id] = 0
+    if ($script:BackoffUntil.ContainsKey($Id)) { $script:BackoffUntil.Remove($Id) }
+}
+
+function Register-ProviderFailure {
+    param([string]$Id)
+    $n = 1
+    if ($script:FailCount.ContainsKey($Id)) { $n = [int]$script:FailCount[$Id] + 1 }
+    $script:FailCount[$Id] = $n
+    $sec = [int][Math]::Min(900, 30 * [Math]::Pow(2, [Math]::Min($n - 1, 5)))
+    $script:BackoffUntil[$Id] = [datetime]::UtcNow.AddSeconds($sec)
+    Write-WidgetLog ("backoff {0} for {1}s after {2} fail(s)" -f $Id, $sec, $n)
 }
 
 function Update-Widget {
     $ui = $script:Ui
     if (-not $ui -or $ui.Form.IsDisposed) { return }
-    if ($script:FetchRunning) { return }  # skip while a refresh is in flight
+    if ($script:FetchRunning) { return }
 
     $specs = @(Get-ProviderRows)
     $accounts = @($specs | Where-Object { $_.Kind -eq 'codex' } | ForEach-Object { $_.Auth })
@@ -1327,8 +1701,13 @@ function Update-Widget {
         Write-WidgetLog ("rows rebuilt: {0}" -f $sig)
     }
 
+    if ($specs.Count -eq 0) {
+        $ui.Stamp.Text = '未找到登录凭证'
+        if ($ui.Tray) { $ui.Tray.Text = 'AI 周用量' }
+        return
+    }
+
     $script:FetchRunning = $true
-    $ui.Stamp.Text = '更新中…'
     try {
         Start-BackgroundFetch $specs
     } catch {
@@ -1339,24 +1718,38 @@ function Update-Widget {
 }
 
 # Fetch usage off the UI thread so the card stays responsive while HTTP
-# requests are in flight. The worker runspace gets fresh copies of the
-# fetch functions plus the config paths they need via $script: variables.
+# requests are in flight. One MTA worker fetches every provider (each in
+# its own try/catch) so WinForms STA is never blocked. The worker gets
+# copies of the fetch functions plus config paths via $script: variables.
 function Get-WorkerScriptSource {
     $fnNames = @(
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
         'Format-PercentText', 'Format-ResetText', 'Format-ResetTime',
+        'Get-GrokAccountId', 'Get-GrokAccountLabel', 'Get-GrokRowName', 'Get-GrokRowId',
+        'Get-GrokSnapshotFileName', 'Get-GrokSnapshotPath', 'Read-GrokAuthFromFile',
+        'Get-GrokAccounts', 'Sync-ActiveGrokSnapshot', 'Sync-GrokAuthFromDisk',
         'Get-ProductLabel', 'Read-GrokAuth', 'Save-GrokAuth', 'Update-GrokToken',
         'Get-GrokAuthHeaders', 'Invoke-GrokGet', 'Get-GrokUsageSnapshot', 'Get-GrokRowData',
+        'Ensure-AntigravityCredType', 'Test-AntigravityCredExists', 'Read-AntigravityCred',
+        'Save-AntigravityCred', 'Update-AntigravityToken', 'Get-AntigravityAuth',
+        'Convert-GeminiQuota', 'Invoke-AntigravityQuota', 'Get-GeminiUsageSnapshot', 'Get-GeminiRowData',
         'Get-KimiHosts', 'Read-KimiAuth', 'Save-KimiAuth', 'Update-KimiToken',
         'Invoke-KimiGet', 'Get-KimiWindowLabel', 'Get-KimiUsageSnapshot', 'Get-KimiRowData',
-        'Get-AccountLabel', 'Save-CodexAuth', 'Update-CodexToken', 'Invoke-CodexGet',
-        'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData'
+        'Get-TokenEmail', 'Read-CodexAuth', 'Get-AccountLabel', 'Save-CodexAuth',
+        'Update-CodexToken', 'Sync-CodexAuthFromDisk', 'Get-CodexAuthHeaders',
+        'Invoke-CurlJson', 'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
+        'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
+        'Invoke-CommandCodeGet', 'Get-CommandCodeOrgId', 'Convert-CCWindow',
+        'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData'
     )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('param($Rows, $Cfg)')
     [void]$sb.AppendLine('$ErrorActionPreference = ''Stop''')
-    foreach ($v in 'GrokAuthPath', 'KimiCredPath', 'KimiRegionPath', 'KimiOAuthClientId',
-                   'CodexOAuthClientId', 'CodexTokenUrl', 'CodexUsageUrl', 'LogPath') {
+    foreach ($v in 'GrokAuthPath', 'WidgetDir', 'KimiCredPath', 'KimiRegionPath', 'KimiOAuthClientId',
+                   'CodexOAuthClientId', 'CodexTokenUrl', 'CodexUsageUrl', 'LogPath',
+                   'AntigravityCredTarget', 'AntigravityClientId', 'AntigravityClientSecret',
+                   'AntigravityTokenUrl', 'AntigravityQuotaUrl',
+                   'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
     }
     foreach ($n in $fnNames) {
@@ -1366,14 +1759,16 @@ function Get-WorkerScriptSource {
     }
     [void]$sb.AppendLine(@'
 $results = @()
-foreach ($row in $Rows) {
+foreach ($row in @($Rows)) {
     try {
         $d = $null
         switch ($row.Kind) {
-            'grok'  { $d = Get-GrokRowData }
+            'grok'  { $d = Get-GrokRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
+            'gemini' { $d = Get-GeminiRowData }
             'kimi'  { $d = Get-KimiRowData }
             'codex' { $d = Get-CodexRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
-            default { throw '未找到登录凭证，请运行 codex login' }
+            'commandcode' { $d = Get-CommandCodeRowData }
+            default { throw '未找到登录凭证' }
         }
         $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; Error = $null }
     } catch {
@@ -1387,66 +1782,159 @@ $results
 
 function Start-BackgroundFetch {
     param($Specs)
-    $rows = @()
-    foreach ($s in $Specs) {
-        $rows += [pscustomobject]@{ Id = $s.Id; Kind = $s.Kind; Name = $s.Name; Auth = $s.Auth }
-    }
     $cfg = @{
         GrokAuthPath       = $script:GrokAuthPath
+        WidgetDir          = $script:WidgetDir
         KimiCredPath       = $script:KimiCredPath
         KimiRegionPath     = $script:KimiRegionPath
         KimiOAuthClientId  = $script:KimiOAuthClientId
         CodexOAuthClientId = $script:CodexOAuthClientId
         CodexTokenUrl      = $script:CodexTokenUrl
-        CodexUsageUrl      = $script:CodexUsageUrl
-        LogPath            = $script:LogPath
+        CodexUsageUrl            = $script:CodexUsageUrl
+        LogPath                  = $script:LogPath
+        AntigravityCredTarget    = $script:AntigravityCredTarget
+        AntigravityClientId      = $script:AntigravityClientId
+        AntigravityClientSecret  = $script:AntigravityClientSecret
+        AntigravityTokenUrl      = $script:AntigravityTokenUrl
+        AntigravityQuotaUrl      = $script:AntigravityQuotaUrl
+        CommandCodeAuthPath      = $script:CommandCodeAuthPath
+        CommandCodeApiBaseUrl    = $script:CommandCodeApiBaseUrl
+        CommandCodeShowBalance   = $script:CommandCodeShowBalance
     }
-    $rs = [runspacefactory]::CreateRunspace()
-    $rs.ApartmentState = 'MTA'
-    $rs.ThreadOptions = 'ReuseThread'
-    $rs.Open()
+    $rows = @()
+    foreach ($s in $Specs) {
+        if (Test-ProviderBackoff $s.Id) {
+            Write-WidgetLog ("skip {0} (backoff)" -f $s.Id)
+            continue
+        }
+        $rows += [pscustomobject]@{ Id = $s.Id; Kind = $s.Kind; Name = $s.Name; Auth = $s.Auth }
+    }
+    if ($rows.Count -eq 0) {
+        $script:FetchRunning = $false
+        return
+    }
+    if (-not $script:WorkerSrc) { $script:WorkerSrc = Get-WorkerScriptSource }
+    if (-not $script:WorkerRs) {
+        $script:WorkerRs = [runspacefactory]::CreateRunspace()
+        $script:WorkerRs.ApartmentState = 'MTA'
+        $script:WorkerRs.ThreadOptions = 'ReuseThread'
+        $script:WorkerRs.Open()
+    }
     $ps = [powershell]::Create()
-    $ps.Runspace = $rs
-    [void]$ps.AddScript((Get-WorkerScriptSource))
+    $ps.Runspace = $script:WorkerRs
+    [void]$ps.AddScript($script:WorkerSrc)
     [void]$ps.AddArgument($rows)
     [void]$ps.AddArgument($cfg)
     $handle = $ps.BeginInvoke()
-    $script:FetchJob = @{ Ps = $ps; Rs = $rs; Handle = $handle; StartedAt = (Get-Date) }
+    $script:FetchJob = @{
+        Ps        = $ps
+        Handle    = $handle
+        StartedAt = Get-Date
+    }
+    $script:Ui.Stamp.Text = '更新中…'
     $script:Ui.Poll.Start()
 }
 
-function Clear-FetchJob {
+function Convert-FetchRow {
+    param($Raw, [string]$FallbackId, [string]$FallbackError)
+    $id = $FallbackId
+    $err = $FallbackError
+    $pct = $null
+    $detail = $null
+    $tip = $null
+    $reset = $null
+    if ($null -ne $Raw) {
+        try { if ($Raw.Id) { $id = [string]$Raw.Id } } catch { }
+        try { if ($Raw.Error) { $err = [string]$Raw.Error } } catch { }
+        try {
+            if (-not $err -and $null -ne $Raw.Percent -and $Raw.Percent -ne '') {
+                $pct = [double]$Raw.Percent
+            }
+        } catch { if (-not $err) { $err = $_.Exception.Message } }
+        try { if ($Raw.Detail) { $detail = [string]$Raw.Detail } } catch { }
+        try { if ($Raw.Tip) { $tip = [string]$Raw.Tip } } catch { }
+        try { if ($Raw.Reset) { $reset = [string]$Raw.Reset } } catch { }
+    }
+    if (-not $id) { $id = $FallbackId }
+    [pscustomobject]@{
+        Id      = $id
+        Percent = $pct
+        Detail  = $detail
+        Tip     = $tip
+        Reset   = $reset
+        Error   = $err
+    }
+}
+
+function Clear-FetchJobs {
     try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
     if ($script:FetchJob) {
+        try { $script:FetchJob.Ps.Stop() } catch { }
         try { $script:FetchJob.Ps.Dispose() } catch { }
-        try { $script:FetchJob.Rs.Dispose() } catch { }
         $script:FetchJob = $null
     }
     $script:FetchRunning = $false
 }
 
+function Close-WorkerRunspace {
+    Clear-FetchJobs
+    if ($script:WorkerRs) {
+        try { $script:WorkerRs.Dispose() } catch { }
+        $script:WorkerRs = $null
+    }
+}
+
 function Receive-BackgroundFetch {
     $job = $script:FetchJob
-    if (-not $job) { try { $script:Ui.Poll.Stop() } catch { } ; return }
-    if (-not $job.Handle.IsCompleted) {
-        # Safety net: never let a wedged worker block future refreshes.
+    if (-not $job) {
+        try { $script:Ui.Poll.Stop() } catch { }
+        $script:FetchRunning = $false
+        return
+    }
+    $done = $false
+    try { $done = [bool]$job.Handle.IsCompleted } catch { $done = $false }
+    if (-not $done) {
         if ((Get-Date) - $job.StartedAt -gt [timespan]::FromMinutes(3)) {
             Write-WidgetLog 'background fetch timed out, stopping'
             try { $job.Ps.Stop() } catch { }
-            Clear-FetchJob
+            Clear-FetchJobs
             if ($script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = '刷新超时，等待下次尝试' }
         }
         return
     }
     $out = $null
     try {
-        $out = $job.Ps.EndInvoke($job.Handle)
-        if ($job.Ps.HadErrors) { Write-WidgetLog ("bg fetch error: {0}" -f $job.Ps.Streams.Error[0].ToString()) }
+        $iar = $job.Handle
+        try { if ($iar.PSObject -and $iar.PSObject.BaseObject) { $iar = $iar.PSObject.BaseObject } } catch { }
+        $out = $job.Ps.EndInvoke([System.IAsyncResult]$iar)
+        if ($job.Ps.HadErrors) {
+            $err0 = $null
+            try { $err0 = $job.Ps.Streams.Error | Select-Object -First 1 } catch { }
+            if ($err0) { Write-WidgetLog ("bg fetch error: {0}" -f $err0.ToString()) }
+        }
     } catch {
         Write-WidgetLog ("bg fetch failed: {0}" -f $_.Exception.Message)
     }
-    Clear-FetchJob
-    Apply-FetchResults $out
+    $batch = @()
+    foreach ($item in @($out)) {
+        $rowData = Convert-FetchRow $item
+        if ($rowData.Id) { $batch += ,$rowData }
+    }
+    $psOld = $job.Ps
+    $script:FetchJob = $null
+    $script:FetchRunning = $false
+    if (@($batch).Count -gt 0) {
+        try {
+            Apply-FetchResults @($batch)
+            Write-WidgetLog ("applied {0}" -f @($batch).Count)
+        } catch {
+            Write-WidgetLog ("apply $($_.Exception.Message)`n$($_.ScriptStackTrace)")
+        }
+    } elseif ($script:Ui -and -not $script:Ui.Form.IsDisposed) {
+        $script:Ui.Stamp.Text = ('更新于 {0}' -f [datetime]::Now.ToString('HH:mm'))
+    }
+    try { $psOld.Dispose() } catch { }
+    try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
 }
 
 function Set-RowTip {
@@ -1490,24 +1978,27 @@ function Send-UsageAlert {
 }
 
 function Apply-FetchResults {
-    param($Results)
+    param($Results, [switch]$StillRunning)
     $ui = $script:Ui
     if (-not $ui -or $ui.Form.IsDisposed) { return }
 
-    $tipParts = @()
-    $errors = 0
+    $requestEvents = @(Get-ModelRequestEvents -Path $script:RequestEventsPath -Limit 5000)
     foreach ($r in @($Results)) {
+        if (-not $r -or -not $r.Id) { continue }
         $row = @($ui.Rows | Where-Object { $_.Id -eq $r.Id })[0]
         if (-not $row) { continue }
         if ($r.Error) {
-            $errors++
+            Register-ProviderFailure $r.Id
             Write-WidgetLog ("error {0}: {1}" -f $r.Id, $r.Error)
-            Set-RowError $row ([string]$r.Error)
-            Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), [string]$r.Error)
+            Set-RowError $row (Format-FetchError ([string]$r.Error))
+            Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError ([string]$r.Error)), [string]$r.Error)
         } else {
+            Register-ProviderSuccess $r.Id
             $pct = [double]$r.Percent
-            Set-RowUsage $row $pct ([string]$r.Detail)
-            $tipParts += [string]$r.Tip
+            $recentRequest = Get-RecentRequestLabel $row $requestEvents
+            $rowDetail = [string]$r.Detail
+            if ($recentRequest) { $rowDetail = @($rowDetail, $recentRequest) -join ' · ' }
+            Set-RowUsage $row $pct $rowDetail
             $script:LastOkAt = Get-Date
 
             $delta = $null
@@ -1522,21 +2013,34 @@ function Apply-FetchResults {
             Set-RowTip $row @(
                 ('{0} — {1}' -f $row.Name, (Format-PercentText $pct)),
                 [string]$r.Detail,
+                $recentRequest,
                 $(if ($r.Reset) { '重置时刻: ' + [string]$r.Reset }),
                 $upd,
                 '双击打开用量页面'
             )
 
-            Write-UsageHistory $r.Id $pct
+            if ($null -eq $delta -or [Math]::Abs($delta) -ge 0.05) {
+                Write-UsageHistory $r.Id $pct
+            }
             Send-UsageAlert $row $r.Id $pct
         }
     }
-    $ui.Stamp.Text = ('更新于 {0}' -f [datetime]::Now.ToString('HH:mm'))
+    if ($StillRunning) {
+        $ui.Stamp.Text = '更新中…'
+    } else {
+        $ui.Stamp.Text = ('更新于 {0}' -f [datetime]::Now.ToString('HH:mm'))
+    }
+    $tipParts = @()
+    foreach ($row in $ui.Rows) {
+        if ($row.Pct -and $row.Pct.Text -and $row.Pct.Text -ne '--%') {
+            $tipParts += ('{0} {1}' -f $row.Name, $row.Pct.Text)
+        }
+    }
     if ($tipParts.Count -gt 0) {
         $tip = $tipParts -join '  '
         if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
         $ui.Tray.Text = $tip
-    } elseif ($errors -gt 0) {
+    } elseif (-not $StillRunning) {
         $ui.Tray.Text = 'AI 用量读取失败'
     }
 }
@@ -1548,6 +2052,7 @@ if ($AddAccount) { Add-CurrentAccount; return }
 try {
     Write-WidgetLog 'starting widget'
     Ensure-SingleInstance
+    try { Remove-LegacyStartupShortcuts } catch { }
     if (-not (Test-Path -LiteralPath $script:VbsPath)) { try { Write-LauncherVbs } catch { } }
     New-WidgetForm
 } catch {

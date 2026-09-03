@@ -1,4 +1,4 @@
-# ChatGPT (Codex) weekly usage desktop widget. Supports multiple accounts.
+﻿# ChatGPT (Codex) weekly usage desktop widget. Supports multiple accounts.
 # Polls https://chatgpt.com/backend-api/wham/usage with local codex login tokens.
 #
 # Accounts are discovered from:
@@ -348,16 +348,50 @@ function Get-StartupShortcutPath {
 }
 
 function Write-LauncherVbs {
-    $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-    if (-not $pwsh) { $pwsh = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
-    $ps1 = $script:SelfPath
-    $content = @"
+    $content = @'
+Option Explicit
+
+Dim fso, sh, dirName, ps1Path, exePath
 Set fso = CreateObject("Scripting.FileSystemObject")
-Set sh = CreateObject("Wscript.Shell")
-dir = fso.GetParentFolderName(WScript.ScriptFullName)
-ps1 = dir & "\ChatGptUsageWidget.ps1"
-sh.Run """$pwsh"" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & ps1 & """", 0, False
-"@
+Set sh = CreateObject("WScript.Shell")
+
+dirName = fso.GetParentFolderName(WScript.ScriptFullName)
+ps1Path = dirName & "\ChatGptUsageWidget.ps1"
+
+If Not fso.FileExists(ps1Path) Then
+    MsgBox "Widget script not found:" & vbCrLf & ps1Path, vbExclamation, "ChatGPT Usage Widget"
+    WScript.Quit 1
+End If
+
+exePath = FindPowerShell()
+If exePath = "" Then
+    MsgBox "Neither pwsh.exe nor powershell.exe was found.", vbCritical, "ChatGPT Usage Widget"
+    WScript.Quit 1
+End If
+
+sh.Run """" & exePath & """ -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & ps1Path & """", 0, False
+
+Function FindPowerShell()
+    Dim p, d
+    FindPowerShell = ""
+    p = "C:\Program Files\PowerShell\7\pwsh.exe"
+    If fso.FileExists(p) Then
+        FindPowerShell = p
+        Exit Function
+    End If
+    For Each d In Split(sh.Environment("PROCESS")("PATH"), ";")
+        If Len(d) > 0 Then
+            p = fso.BuildPath(d, "pwsh.exe")
+            If fso.FileExists(p) Then
+                FindPowerShell = p
+                Exit Function
+            End If
+        End If
+    Next
+    p = sh.ExpandEnvironmentStrings("%WINDIR%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    If fso.FileExists(p) Then FindPowerShell = p
+End Function
+'@
     Set-Content -LiteralPath $script:VbsPath -Value $content -Encoding ascii
 }
 
