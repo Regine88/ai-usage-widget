@@ -19,5 +19,8 @@ chatgpt-auth-*.json
 # Command Code project-local runtime config
 .commandcode/
 
+# Local widget configuration (per-user settings panel state)
+ai-config.json
+ai-config.json.tmp
 # Local Grok account alias map (derived from real account identifiers)
 grok-aliases.json
