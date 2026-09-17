@@ -22,8 +22,11 @@ function Get-WidgetConfigDefaults {
         quietHours      = @{ enabled = $false; start = '22:00'; end = '07:00' }
         lockPosition    = $false
         layout          = 'full'
+        columns         = 1
+        dailySummary    = @{ enabled = $false; time = '09:00' }
         providerAlertThresholds = @{}
-        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true; claude = $true; cursor = $true; glm = $true }
+        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true; claude = $true; cursor = $true; glm = $true;
+                            copilot = $true }
     }
 }
 
@@ -123,6 +126,46 @@ function ConvertTo-ProviderAlertThresholds {
     return $result
 }
 
+# 设置窗口把按供应商阈值编辑成「kind=70,90」的多行文本；解析失败的单行忽略，不影响保存。
+function ConvertFrom-ProviderAlertThresholdsText {
+    param([string]$Text)
+    $result = @{}
+    if (-not $Text) { return $result }
+    foreach ($line in ($Text -split "`r?`n")) {
+        $item = $line.Trim()
+        if (-not $item -or $item.StartsWith('#')) { continue }
+        $parts = $item.Split('=', 2)
+        if ($parts.Count -ne 2) { continue }
+        $kind = $parts[0].Trim().ToLowerInvariant()
+        if (-not $kind) { continue }
+        $parsed = @(ConvertTo-ConfigThresholds ($parts[1] -split '[,;\s]+') @())
+        if ($parsed.Count -gt 0) { $result[$kind] = $parsed }
+    }
+    return $result
+}
+
+function Format-ProviderAlertThresholds {
+    param($Thresholds)
+    if (-not $Thresholds) { return '' }
+    $lines = @()
+    foreach ($name in @(Get-ConfigPropertyNames $Thresholds | Sort-Object)) {
+        $values = @(Get-ConfigPropertyValue $Thresholds $name)
+        if ($values.Count -eq 0) { continue }
+        $lines += ('{0}={1}' -f $name, ($values -join ','))
+    }
+    return ($lines -join "`n")
+}
+
+# 每日汇总：到点后每天只提示一次；LastDate 存 ai-state.json 里的本地日期。
+function Test-DailySummaryDue {
+    param($Config, [datetime]$Now = (Get-Date), [string]$LastDate = '')
+    if (-not $Config -or -not $Config.dailySummary -or -not $Config.dailySummary.enabled) { return $false }
+    if ($LastDate -eq $Now.ToString('yyyy-MM-dd')) { return $false }
+    $due = ConvertTo-ConfigMinutes $Config.dailySummary.time
+    if ($null -eq $due) { return $false }
+    return (($Now.Hour * 60 + $Now.Minute) -ge $due)
+}
+
 function Resolve-RefreshInterval {
     param(
         [bool]$Explicit = $false,
@@ -197,7 +240,12 @@ function Convert-WidgetConfig {
     $config.alertThresholds = ConvertTo-ConfigThresholds (Get-ConfigPropertyValue $Raw 'alertThresholds') $defaults.alertThresholds
     $config.lockPosition = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'lockPosition') $defaults.lockPosition
     $config.layout = ConvertTo-ConfigLayout (Get-ConfigPropertyValue $Raw 'layout') $defaults.layout
+    $config.columns = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'columns') $defaults.columns 1 3
     $config.providerAlertThresholds = ConvertTo-ProviderAlertThresholds (Get-ConfigPropertyValue $Raw 'providerAlertThresholds')
+
+    $rawSummary = Get-ConfigPropertyValue $Raw 'dailySummary'
+    $config.dailySummary.enabled = ConvertTo-ConfigBool (Get-ConfigPropertyValue $rawSummary 'enabled') $defaults.dailySummary.enabled
+    $config.dailySummary.time = ConvertTo-ConfigClock (Get-ConfigPropertyValue $rawSummary 'time') $defaults.dailySummary.time
 
     $rawQuiet = Get-ConfigPropertyValue $Raw 'quietHours'
     $config.quietHours.enabled = ConvertTo-ConfigBool (Get-ConfigPropertyValue $rawQuiet 'enabled') $defaults.quietHours.enabled

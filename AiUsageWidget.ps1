@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.12.0'
+$script:AppVersion = '0.13.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -134,6 +134,14 @@ $script:ZhipuApiBaseUrl = 'https://open.bigmodel.cn'
 $script:ZaiUsagePageUrl = 'https://z.ai/manage-apikey/billing'
 $script:ZaiDisplayName = 'GLM'
 
+$script:CopilotConfigDir = if ($env:COPILOT_CONFIG_DIR) { $env:COPILOT_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\github-copilot' }
+$script:CopilotHostsPath = if ($env:GH_COPILOT_HOSTS) { $env:GH_COPILOT_HOSTS } else { Join-Path $script:CopilotConfigDir 'hosts.json' }
+$script:CopilotAppsPath = Join-Path $script:CopilotConfigDir 'apps.json'
+$script:CopilotOpencodeAuthPath = Join-Path $env:USERPROFILE '.local\share\opencode\auth.json'
+$script:CopilotUsageUrl = 'https://api.github.com/copilot_internal/user'
+$script:CopilotUsagePageUrl = 'https://github.com/settings/copilot'
+$script:CopilotDisplayName = 'Copilot'
+
 $script:UpdateRepoSlug = 'Regine88/ai-usage-widget'
 $script:UpdateUserAgent = 'ai-usage-widget'
 $script:UpdatePageUrl = 'https://github.com/' + $script:UpdateRepoSlug
@@ -160,6 +168,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'ClaudeQuota.ps1')
 . (Join-Path $script:WidgetDir 'CursorQuota.ps1')
 . (Join-Path $script:WidgetDir 'ZaiQuota.ps1')
+. (Join-Path $script:WidgetDir 'CopilotQuota.ps1')
 . (Join-Path $script:WidgetDir 'WidgetUpdates.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
@@ -203,7 +212,7 @@ $script:Drag = $false
 $script:DragOffset = [System.Drawing.Point]::Empty
 $script:UiScale = $null
 $script:UiMetrics = $null
-$script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
+$script:State = @{ x = $null; y = $null; topMost = $false; interval = $null; lastSummaryDate = $null }
 # 配置在 CLI 文案之前就已读取，这里按主题取一次调色板：界面颜色全部来自它。
 $script:Palette = Get-WidgetPalette $script:Config.theme
 $script:TrendSeries = @{}
@@ -331,6 +340,7 @@ function Read-State {
         if ($null -ne $raw.topMost) { $script:State.topMost = [bool]$raw.topMost }
         else { $script:State.topMost = $false }
         if ($raw.interval) { $script:State.interval = [int]$raw.interval }
+        if ($raw.lastSummaryDate) { $script:State.lastSummaryDate = [string]$raw.lastSummaryDate }
     } catch { }
 }
 
@@ -349,6 +359,7 @@ function Save-State {
             topMost = $script:State.topMost
         }
         if ($script:State.interval) { $json.interval = [int]$script:State.interval }
+        if ($script:State.lastSummaryDate) { $json.lastSummaryDate = [string]$script:State.lastSummaryDate }
         $json = $json | ConvertTo-Json -Compress
         $tmp = "$script:StatePath.tmp"
         Set-Content -LiteralPath $tmp -Value $json -Encoding utf8
@@ -1438,6 +1449,79 @@ function Get-ZaiRowData {
     }
 }
 
+# --- GitHub Copilot ---
+
+# hosts.json / apps.json / OpenCode auth.json 的结构随版本变化，
+# 所以只按“深度优先找第一个 token 键”读取，不绑定固定层级。
+function Read-CopilotTokenFromFile {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { throw 'missing-credential' }
+    try { $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json } catch { throw 'missing-credential' }
+    $token = Find-CopilotToken $raw
+    if (-not $token) { throw 'missing-credential' }
+    return $token
+}
+
+function Get-CopilotToken {
+    foreach ($path in @($script:CopilotHostsPath, $script:CopilotAppsPath, $script:CopilotOpencodeAuthPath)) {
+        try {
+            $token = Read-CopilotTokenFromFile -Path $path
+            if ($token) { return $token }
+        } catch { }
+    }
+    return $null
+}
+
+function Test-CopilotCredExists {
+    return [bool](Get-CopilotToken)
+}
+
+function Get-CopilotAuthHeaders {
+    param([string]$Token)
+    return @{
+        Authorization          = 'token ' + $Token
+        Accept                 = 'application/json'
+        'Editor-Version'       = 'vscode/1.96.2'
+        'X-Github-Api-Version' = '2025-04-01'
+        'User-Agent'           = 'ai-usage-widget'
+    }
+}
+
+function Get-CopilotUsageSnapshot {
+    param($Auth)
+    $token = if ($Auth) { [string]$Auth } else { Get-CopilotToken }
+    if (-not $token) { throw 'missing-credential' }
+    $data = Invoke-WidgetRest -Method Get -Uri $script:CopilotUsageUrl -Headers (Get-CopilotAuthHeaders $token)
+    $usage = Convert-CopilotQuota $data
+    if (-not $usage -or -not $usage.Premium) { throw 'unexpected payload' }
+    $usage.FetchedAt = (Get-Date)
+    return $usage
+}
+
+function Get-CopilotRowData {
+    param($Auth, [string]$Name)
+    $usage = Get-CopilotUsageSnapshot -Auth $Auth
+    $premium = $usage.Premium
+    $details = @()
+    if ($usage.Plan) { $details += $usage.Plan }
+    if ($premium.Unlimited) {
+        $details += (T 'row.copilotUnlimited')
+    } else {
+        $details += (T 'row.copilotPremium' @([Math]::Round($premium.Remaining), [Math]::Round($premium.Entitlement)))
+    }
+    $reset = Format-ResetText $usage.ResetAt
+    if ($reset) { $details += $reset }
+    Write-WidgetLog ('usage copilot {0} ok' -f $premium.UsedPercent)
+    [pscustomobject]@{
+        Percent   = $premium.UsedPercent
+        Detail    = ($details -join ' · ')
+        Tip       = (T 'row.copilotTip' @((Format-PercentText $premium.UsedPercent)))
+        Reset     = $(if ($usage.ResetAt) { Format-ResetTime $usage.ResetAt } else { $null })
+        ResetAt   = $(if ($usage.ResetAt) { ConvertTo-ResetStamp $usage.ResetAt } else { $null })
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
 # --- Rows / UI ---
 
 function Get-DemoRowTable {
@@ -1451,6 +1535,7 @@ function Get-DemoRowTable {
         [pscustomobject]@{ Id = 'demo-claude'; Kind = 'claude'; Name = $script:ClaudeDisplayName; OpenUrl = $script:ClaudeUsagePageUrl; Percent = 37.0; Detail = ((T 'row.window5hPercent' @(11)) + ' · ' + (T 'row.windowWeekPercent' @(37)) + ' · ' + (T 'reset.daysHours' @(4, 8))); TrendPct = @(12, 18, 22, 27, 31, 34, 37) }
         [pscustomobject]@{ Id = 'demo-cursor'; Kind = 'cursor'; Name = $script:CursorDisplayName; OpenUrl = $script:CursorUsagePageUrl; Percent = 58.0; Detail = (T 'row.limitUsage' @(11.6, 20, 58)); TrendPct = @(20, 28, 35, 42, 48, 53, 58) }
         [pscustomobject]@{ Id = 'demo-glm'; Kind = 'glm'; Name = $script:ZaiDisplayName; OpenUrl = $script:ZaiUsagePageUrl; Percent = 22.0; Detail = ((T 'row.window5hPercent' @(8)) + ' · ' + (T 'row.windowWeekPercent' @(22)) + ' · ' + (T 'reset.hoursMinutes' @(3, 10))); TrendPct = @(4, 7, 10, 13, 16, 19, 22) }
+        [pscustomobject]@{ Id = 'demo-copilot'; Kind = 'copilot'; Name = $script:CopilotDisplayName; OpenUrl = $script:CopilotUsagePageUrl; Percent = 43.0; Detail = ((T 'row.copilotPremium' @(171, 300)) + ' · ' + (T 'reset.daysHours' @(14, 2))); TrendPct = @(6, 11, 17, 24, 31, 38, 43) }
     )
 }
 
@@ -1569,6 +1654,15 @@ function Get-ProviderRows {
             Kind    = 'glm'
             Name    = $script:ZaiDisplayName
             OpenUrl = $script:ZaiUsagePageUrl
+            Auth    = $null
+        }
+    }
+    if (Test-CopilotCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'copilot'
+            Kind    = 'copilot'
+            Name    = $script:CopilotDisplayName
+            OpenUrl = $script:CopilotUsagePageUrl
             Auth    = $null
         }
     }
@@ -1797,7 +1891,9 @@ function Get-UiMetrics {
             $showTrend = [bool]$script:Config.showTrend
         }
     } catch { }
-    $script:UiMetrics = Get-WidgetLayoutMetrics -Scale (Get-UiScale) -Layout $layout -ShowTrend $showTrend
+    $columns = 1
+    try { if ($script:Config) { $columns = [int]$script:Config.columns } } catch { }
+    $script:UiMetrics = Get-WidgetLayoutMetrics -Scale (Get-UiScale) -Layout $layout -ShowTrend $showTrend -Columns $columns
     return $script:UiMetrics
 }
 
@@ -1829,19 +1925,22 @@ function Rebuild-ProviderRows {
     $nameFont = $script:Fonts.Name
     $pctFont = $script:Fonts.Pct
     $detailFont = $script:Fonts.Detail
-    $y = $m.TopPad
+    $index = 0
     foreach ($spec in $Specs) {
-        $lblName = New-Label $Form "name-$y" $m.MarginX ($y + $m.NameTop) $m.NameW $m.NameH $nameFont $fg 'MiddleLeft'
+        $anchor = Get-WidgetLayoutRowAnchor -Metrics $m -Index $index
+        $x = $anchor.X
+        $y = $anchor.Y
+        $lblName = New-Label $Form "name-$index" $x ($y + $m.NameTop) $m.NameW $m.NameH $nameFont $fg 'MiddleLeft'
         $lblName.Text = $spec.Name
         $lblName.Tag = $spec.OpenUrl
         $lblName.AutoEllipsis = $true
-        $lblPct = New-Label $Form "pct-$y" ($m.MarginX + $m.NameW) $y $m.PctW $m.PctH $pctFont (Get-UsageColor 0) 'MiddleRight'
+        $lblPct = New-Label $Form "pct-$index" ($x + $m.NameW) $y $m.PctW $m.PctH $pctFont (Get-UsageColor 0) 'MiddleRight'
         $lblPct.Text = '--%'
         $lblPct.Tag = $spec.OpenUrl
         $lblPct.AutoEllipsis = $true
 
         $barBack = New-Object System.Windows.Forms.Panel
-        $barBack.Location = New-Object System.Drawing.Point $m.MarginX, ($y + $m.BarTop)
+        $barBack.Location = New-Object System.Drawing.Point $x, ($y + $m.BarTop)
         $barBack.Size = New-Object System.Drawing.Size $m.BarTrackW, $m.BarH
         Set-UiThemeColor $barBack 'BackColor' 'Track'
         $barBack.Parent = $Form
@@ -1855,7 +1954,7 @@ function Rebuild-ProviderRows {
 
         $lblDetail = $null
         if ($m.DetailH -gt 0) {
-            $lblDetail = New-Label $Form "detail-$y" $m.MarginX ($y + $m.DetailTop) $m.ContentW $m.DetailH $detailFont $muted 'MiddleLeft'
+            $lblDetail = New-Label $Form "detail-$index" $x ($y + $m.DetailTop) $m.ContentW $m.DetailH $detailFont $muted 'MiddleLeft'
             $lblDetail.Text = ''
             $lblDetail.Tag = $spec.OpenUrl
             $lblDetail.AutoEllipsis = $true
@@ -1866,7 +1965,7 @@ function Rebuild-ProviderRows {
         $trend = $null
         if ($m.BarTrackW -lt $m.ContentW) {
             $trend = New-Object System.Windows.Forms.Panel
-            $trend.Location = New-Object System.Drawing.Point ($m.MarginX + $m.BarTrackW + $m.TrendGap), ($y + $m.BarTop - $m.TrendPad)
+            $trend.Location = New-Object System.Drawing.Point ($x + $m.BarTrackW + $m.TrendGap), ($y + $m.BarTop - $m.TrendPad)
             $trend.Size = New-Object System.Drawing.Size $m.TrendW, $m.TrendH
             Set-UiColor $trend 'BackColor' ([System.Drawing.Color]::Transparent.ToArgb())
             $trend.Tag = @{ Url = $spec.OpenUrl; Points = @(); Argb = (Get-UsageColor 0).ToArgb() }
@@ -1920,7 +2019,7 @@ function Rebuild-ProviderRows {
                 try { $script:Ui.Tip.SetToolTip($lblDetail, $initTip) } catch { }
             }
         }
-        $y += $m.RowH
+        $index++
     }
 
     if ($script:DemoMode) {
@@ -2160,6 +2259,21 @@ function New-SettingButton {
     return $button
 }
 
+function New-SettingMultilineText {
+    param($Parent, [int]$X, [int]$Y, [int]$W, [int]$H, [string]$Value)
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.Location = New-Object System.Drawing.Point $X, $Y
+    $box.Size = New-Object System.Drawing.Size $W, $H
+    $box.Text = $Value
+    $box.Multiline = $true
+    $box.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $box.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    Set-UiThemeColor $box 'BackColor' 'Field'
+    Set-UiThemeColor $box 'ForeColor' 'Text'
+    $box.Parent = $Parent
+    return $box
+}
+
 # Settings dialog for ai-config.json. Everything is scaled with Scale-Px and
 # uses auto-sized labels, so the 150% DPI layout stays readable.
 # Saving applies the interval, opacity and row layout immediately; provider
@@ -2177,7 +2291,7 @@ function Show-WidgetSettings {
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
-    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 560))
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 586))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     Set-UiThemeColor $dialog 'BackColor' 'Background'
     Set-UiThemeColor $dialog 'ForeColor' 'Text'
@@ -2212,32 +2326,44 @@ function Show-WidgetSettings {
     [void](New-SettingLabel $dialog (T 'settings.providers') $colLabel (Scale-Px 202) $muted)
     $chkGrok = New-SettingCheckBox $dialog 'Grok' $colValue (Scale-Px 200) ([bool]$current.providers.grok)
     $chkGemini = New-SettingCheckBox $dialog 'Gemini' (Scale-Px 208) (Scale-Px 200) ([bool]$current.providers.gemini)
-    $chkKimi = New-SettingCheckBox $dialog 'Kimi' $colValue (Scale-Px 226) ([bool]$current.providers.kimi)
-    $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.codex)
+    $chkKimi = New-SettingCheckBox $dialog 'Kimi' (Scale-Px 292) (Scale-Px 200) ([bool]$current.providers.kimi)
+    $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' $colValue (Scale-Px 226) ([bool]$current.providers.codex)
+    $chkClaude = New-SettingCheckBox $dialog 'Claude' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.claude)
+    $chkCursor = New-SettingCheckBox $dialog 'Cursor' (Scale-Px 292) (Scale-Px 226) ([bool]$current.providers.cursor)
     $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
-    $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' (Scale-Px 208) (Scale-Px 252) ([bool]$current.providers.openrouter)
-    $chkDeepSeek = New-SettingCheckBox $dialog 'DeepSeek' $colValue (Scale-Px 278) ([bool]$current.providers.deepseek)
-    $chkClaude = New-SettingCheckBox $dialog 'Claude' (Scale-Px 208) (Scale-Px 278) ([bool]$current.providers.claude)
-    $chkCursor = New-SettingCheckBox $dialog 'Cursor' $colValue (Scale-Px 304) ([bool]$current.providers.cursor)
-    $chkGlm = New-SettingCheckBox $dialog 'GLM' (Scale-Px 208) (Scale-Px 304) ([bool]$current.providers.glm)
+    $chkDeepSeek = New-SettingCheckBox $dialog 'DeepSeek' (Scale-Px 208) (Scale-Px 252) ([bool]$current.providers.deepseek)
+    $chkGlm = New-SettingCheckBox $dialog 'GLM' (Scale-Px 292) (Scale-Px 252) ([bool]$current.providers.glm)
+    $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' $colValue (Scale-Px 278) ([bool]$current.providers.openrouter)
+    $chkCopilot = New-SettingCheckBox $dialog 'Copilot' (Scale-Px 208) (Scale-Px 278) ([bool]$current.providers.copilot)
 
-    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 336) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.columns') $colLabel (Scale-Px 304) $muted)
+    $numColumns = New-SettingNumber $dialog $colValue (Scale-Px 304) (Scale-Px 70) $current.columns 1 3 1
+    [void](New-SettingLabel $dialog (T 'settings.columnsHint') (Scale-Px 204) (Scale-Px 304) $muted)
+
+    $chkDailySummary = New-SettingCheckBox $dialog (T 'settings.dailySummary') $colLabel (Scale-Px 330) ([bool]$current.dailySummary.enabled)
+    $txtSummaryTime = New-SettingText $dialog (Scale-Px 124) (Scale-Px 330) (Scale-Px 62) ([string]$current.dailySummary.time)
+    [void](New-SettingLabel $dialog (T 'settings.dailySummaryHint') (Scale-Px 190) (Scale-Px 330) $muted)
+
+    [void](New-SettingLabel $dialog (T 'settings.providerThresholds') $colLabel (Scale-Px 356) $muted)
+    $txtProviderThresholds = New-SettingMultilineText $dialog $colLabel (Scale-Px 378) (Scale-Px 324) (Scale-Px 48) (Format-ProviderAlertThresholds $current.providerAlertThresholds)
+
+    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 434) $muted)
     $comboItems = @((T 'settings.languageAuto'), (T 'settings.languageZh'), (T 'settings.languageEn'))
-    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 336) (Scale-Px 150) $comboItems $languageIndex
+    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 434) (Scale-Px 150) $comboItems $languageIndex
 
-    [void](New-SettingLabel $dialog (T 'settings.theme') $colLabel (Scale-Px 366) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.theme') $colLabel (Scale-Px 460) $muted)
     $themes = @('dark', 'light')
     $themeIndex = [Math]::Max(0, [Array]::IndexOf($themes, [string]$current.theme))
     $themeItems = @((T 'settings.themeDark'), (T 'settings.themeLight'))
-    $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 366) (Scale-Px 150) $themeItems $themeIndex
+    $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 460) (Scale-Px 150) $themeItems $themeIndex
 
-    $chkCompact = New-SettingCheckBox $dialog (T 'settings.compact') $colLabel (Scale-Px 396) ([string]$current.layout -eq 'compact')
-    $chkLock = New-SettingCheckBox $dialog (T 'settings.lockPosition') (Scale-Px 208) (Scale-Px 396) ([bool]$current.lockPosition)
+    $chkCompact = New-SettingCheckBox $dialog (T 'settings.compact') $colLabel (Scale-Px 486) ([string]$current.layout -eq 'compact')
+    $chkLock = New-SettingCheckBox $dialog (T 'settings.lockPosition') (Scale-Px 208) (Scale-Px 486) ([bool]$current.lockPosition)
 
-    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 424) $muted
+    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 514) $muted
 
-    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 454)
-    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 454)
+    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 544)
+    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 544)
 
     $dialog.AcceptButton = $btnSave
     $dialog.CancelButton = $btnCancel
@@ -2268,11 +2394,17 @@ function Show-WidgetSettings {
                     claude      = [bool]$chkClaude.Checked
                     cursor      = [bool]$chkCursor.Checked
                     glm         = [bool]$chkGlm.Checked
+                    copilot     = [bool]$chkCopilot.Checked
                 }
                 theme           = $themes[$cmbTheme.SelectedIndex]
                 layout          = $(if ($chkCompact.Checked) { 'compact' } else { 'full' })
+                columns         = [int]$numColumns.Value
+                dailySummary    = @{
+                    enabled = [bool]$chkDailySummary.Checked
+                    time    = $txtSummaryTime.Text
+                }
                 lockPosition    = [bool]$chkLock.Checked
-                providerAlertThresholds = $current.providerAlertThresholds
+                providerAlertThresholds = ConvertFrom-ProviderAlertThresholdsText $txtProviderThresholds.Text
             }
             $script:Config = Convert-WidgetConfig $picked
             $script:State.interval = [int]$script:Config.intervalSeconds
@@ -2280,7 +2412,7 @@ function Show-WidgetSettings {
                 [void](Write-WidgetConfig -Config $script:Config)
                 Save-State $script:Ui.Form
             }
-            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6} deepseek={7} theme={8} layout={9} lock={10}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter, $script:Config.providers.deepseek, $script:Config.theme, $script:Config.layout, $script:Config.lockPosition)
+            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6} deepseek={7} theme={8} layout={9} lock={10} columns={11}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter, $script:Config.providers.deepseek, $script:Config.theme, $script:Config.layout, $script:Config.lockPosition, $script:Config.columns)
             Apply-WidgetConfig
             $dialog.Close()
         } catch {
@@ -2476,7 +2608,7 @@ function New-WidgetForm {
 
     $dim = (Get-WidgetColor 'Dim')
     $footFont = New-Object System.Drawing.Font('Segoe UI', 8.5)
-    $lblStamp = New-Label $form 'stamp' $m.MarginX ($form.Height - $m.StampInset) $m.ContentW $m.StampH $footFont $dim 'MiddleCenter'
+    $lblStamp = New-Label $form 'stamp' $m.MarginX ($form.Height - $m.StampInset) ($m.FormWidth - $m.MarginX * 2) $m.StampH $footFont $dim 'MiddleCenter'
     $lblStamp.Text = ''
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -2501,6 +2633,7 @@ function New-WidgetForm {
     $miOpenClaude = $miOpen.DropDownItems.Add('Claude')
     $miOpenCursor = $miOpen.DropDownItems.Add('Cursor')
     $miOpenGlm = $miOpen.DropDownItems.Add('GLM')
+    $miOpenCopilot = $miOpen.DropDownItems.Add('Copilot')
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
@@ -2589,6 +2722,7 @@ function New-WidgetForm {
     $miOpenClaude.Add_Click({ Start-Process $script:ClaudeUsagePageUrl })
     $miOpenCursor.Add_Click({ Start-Process $script:CursorUsagePageUrl })
     $miOpenGlm.Add_Click({ Start-Process $script:ZaiUsagePageUrl })
+    $miOpenCopilot.Add_Click({ Start-Process $script:CopilotUsagePageUrl })
     $miLock.Add_Click({
         $script:Config.lockPosition = -not [bool]$script:Config.lockPosition
         $miLock.Checked = [bool]$script:Config.lockPosition
@@ -2799,7 +2933,11 @@ function Get-WorkerScriptSource {
         'Get-CursorStateDbPath', 'Read-CursorAuth', 'Test-CursorCredExists', 'Get-CursorUsageSnapshot', 'Get-CursorRowData',
         'Convert-ZaiResetTime', 'Convert-ZaiLimitItem', 'Test-ZaiFiveHourType', 'Test-ZaiWeeklyType', 'Convert-ZaiQuota',
         'Get-ZaiResolvedAuthPath', 'Get-ZaiEnvironmentKey', 'Get-ZaiResolvedBaseUrl', 'Test-ZaiCredExists',
-        'Get-ZaiAuthHeaders', 'Get-ZaiUsageSnapshot', 'Get-ZaiRowData'
+        'Get-ZaiAuthHeaders', 'Get-ZaiUsageSnapshot', 'Get-ZaiRowData',
+        'Get-CopilotProperty', 'Convert-CopilotQuotaDetail', 'Convert-CopilotResetDate', 'Convert-CopilotQuota',
+        'ConvertTo-CopilotTokenText', 'Find-CopilotToken',
+        'Read-CopilotTokenFromFile', 'Get-CopilotToken', 'Test-CopilotCredExists', 'Get-CopilotAuthHeaders',
+        'Get-CopilotUsageSnapshot', 'Get-CopilotRowData'
     )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('param($Rows, $Cfg)')
@@ -2814,6 +2952,7 @@ function Get-WorkerScriptSource {
                    'ClaudeCredPath', 'ClaudeUsageUrl', 'ClaudeTokenUrl', 'ClaudeTokenUrlLegacy', 'ClaudeOAuthClientId', 'ClaudeDisplayName',
                    'CursorStateDbPath', 'CursorUsageUrl', 'CursorDisplayName', 'CursorTokenCache',
                    'ZaiAuthPath', 'ZhipuAuthPath', 'ZaiApiBaseUrl', 'ZhipuApiBaseUrl', 'ZaiDisplayName',
+                   'CopilotHostsPath', 'CopilotAppsPath', 'CopilotOpencodeAuthPath', 'CopilotUsageUrl', 'CopilotDisplayName',
                    'SecureSnapshotRoot',
                    'WidgetStrings', 'Language') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
@@ -2839,6 +2978,7 @@ foreach ($row in @($Rows)) {
             'claude' { $d = Get-ClaudeRowData -Auth $row.Auth -Name $row.Name }
             'cursor' { $d = Get-CursorRowData -Auth $row.Auth -Name $row.Name }
             'glm' { $d = Get-ZaiRowData -Auth $row.Auth -Name $row.Name }
+            'copilot' { $d = Get-CopilotRowData -Auth $row.Auth -Name $row.Name }
             default { throw '未找到登录凭证' }
         }
         $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Display = $d.Display; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
@@ -2893,6 +3033,11 @@ function Start-BackgroundFetch {
         ZaiApiBaseUrl            = $script:ZaiApiBaseUrl
         ZhipuApiBaseUrl          = $script:ZhipuApiBaseUrl
         ZaiDisplayName           = $script:ZaiDisplayName
+        CopilotHostsPath        = $script:CopilotHostsPath
+        CopilotAppsPath         = $script:CopilotAppsPath
+        CopilotOpencodeAuthPath = $script:CopilotOpencodeAuthPath
+        CopilotUsageUrl         = $script:CopilotUsageUrl
+        CopilotDisplayName      = $script:CopilotDisplayName
         SecureSnapshotRoot       = $script:SecureSnapshotRoot
         WidgetStrings            = $script:WidgetStrings
         Language                 = $script:Language
@@ -3124,6 +3269,31 @@ function Send-UsageAlert {
     }
 }
 
+# 每日汇总：到点后每天最多弹一次气泡；日期写进 ai-state.json，重启后不会重复提醒。
+function Send-DailySummaryIfDue {
+    if ($script:DemoMode) { return }
+    $now = Get-Date
+    $last = [string]::Empty
+    try { if ($script:State.lastSummaryDate) { $last = [string]$script:State.lastSummaryDate } } catch { }
+    $due = $false
+    try { $due = Test-DailySummaryDue -Config $script:Config -Now $now -LastDate $last } catch { return }
+    if (-not $due) { return }
+    $parts = @()
+    foreach ($row in @($script:Ui.Rows)) {
+        if ($row.Pct -and $row.Pct.Text -and $row.Pct.Text -ne '--%') {
+            $parts += ('{0} {1}' -f $row.Name, $row.Pct.Text)
+        }
+    }
+    if ($parts.Count -eq 0) { return }
+    $script:State.lastSummaryDate = $now.ToString('yyyy-MM-dd')
+    Save-State $null
+    Write-WidgetLog ('daily summary sent: {0} rows' -f $parts.Count)
+    $body = T 'alert.summaryBody' @($now.ToString('HH:mm'), $parts.Count, ($parts -join ', '))
+    try {
+        $script:Ui.Tray.ShowBalloonTip(8000, (T 'alert.summaryTitle'), $body, [System.Windows.Forms.ToolTipIcon]::Info)
+    } catch { }
+}
+
 function Apply-FetchResults {
     param($Results, [switch]$StillRunning)
     $ui = $script:Ui
@@ -3214,6 +3384,7 @@ function Apply-FetchResults {
             Send-UsageAlert $row $r.Id $pct
         }
     }
+    Send-DailySummaryIfDue
     if ($StillRunning) {
         $ui.Stamp.Text = (T 'status.refreshing')
     } else {

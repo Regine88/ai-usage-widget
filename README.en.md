@@ -31,8 +31,9 @@ The light theme uses the same layout (switch in the settings dialog, or run with
 | **Claude Code** | 5-hour and weekly window usage | Single account | `~/.claude/.credentials.json` (OAuth, not an API key) |
 | **Cursor** | Current billing-cycle used percent and remaining pool | Single account | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
 | **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Single account | `~/.zai/auth.json`, `~/.zhipu/auth.json`, or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
+| **GitHub Copilot** | Used share of the premium requests and the quota reset date | Single account | `~/.config/github-copilot/hosts.json` / `apps.json` (OpenCode `auth.json` works too) |
 
-If you already signed in to the matching CLI (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity)
+If you already signed in to the matching CLI or extension (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity, GitHub Copilot for VS Code)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
 when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the widget reads
 `~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) for one row per key, and
@@ -48,7 +49,9 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 - **Double-click to open** - double-click any row to jump to that provider's official usage page.
 - **Trend sparkline** - a 7-day mini chart next to each progress bar, colored by current usage.
 - **Exhaustion forecast** - the tooltip estimates when the quota runs out and whether that happens before the next reset.
-- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, theme, opacity, thresholds, quiet hours), applied live on save, and the full history exports to CSV.
+- **One to three columns** - lay the card out as 2 or 3 columns so a long provider list stops growing downward; the column count lives in the settings dialog and in `ai-config.json`.
+- **Daily summary** - optionally raise one tray balloon per day at a fixed time, listing every row as it stands; never fires twice on the same day.
+- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, columns, theme, opacity, thresholds, per-provider thresholds, quiet hours, daily summary), applied live on save, and the full history exports to CSV.
 - **Graceful degradation** - one slow provider only affects its own row and backs off exponentially (30s up to 15min).
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
 - **Two engines** - works on Windows PowerShell 5.1 and PowerShell 7.x; CI runs the same offline suites on both.
@@ -123,7 +126,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.12.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.13.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -136,7 +139,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.12.0
+# AI Usage Widget 0.13.0
 ```
 
 ### Multiple accounts
@@ -187,6 +190,7 @@ and never published with the repository.
 | `opacity` | `0.96` | Window opacity (0.5 - 1.0) |
 | `theme` | `"dark"` | UI theme: `dark` / `light`, applied live when saved from the settings dialog |
 | `layout` | `"full"` | Row layout: `full` (name + bar + detail) / `compact` (shorter single row) |
+| `columns` | `1` | Column count (1 - 3); 2 or 3 columns widen the window and fold the rows into bands |
 | `lockPosition` | `false` | When true, dragging the card does not move it |
 | `providerAlertThresholds` | `{}` | Optional per-provider overlay of `alertThresholds`, e.g. `{ "grok": [80, 95] }` |
 | `showTrend` | `true` | Draw the 7-day sparkline next to each progress bar |
@@ -194,7 +198,8 @@ and never published with the repository.
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
 | `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
-| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` |
+| `dailySummary` | `{ "enabled": false, "time": "09:00" }` | Daily summary balloon; fires once per day at that clock time, the date is kept in `ai-state.json` |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` / `copilot` |
 | `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
 
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
@@ -260,6 +265,7 @@ DeepSeekQuota.ps1        DeepSeek balance parsing
 ClaudeQuota.ps1          Claude Code quota parsing
 CursorQuota.ps1          Cursor billing-cycle parsing
 ZaiQuota.ps1             GLM / Z.AI Coding Plan quota parsing
+CopilotQuota.ps1         GitHub Copilot quota parsing and token discovery
 WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
@@ -289,8 +295,9 @@ docs/                    Architecture, provider, troubleshooting docs and screen
 
 ## Contributing
 
-Issues and pull requests are welcome: new providers, more themes and layout modes (mini / multi-column),
-and packaging are all on the roadmap. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
+Issues and pull requests are welcome: new providers, more themes and layout modes (mini), and packaging
+are all on the roadmap. The compact layout and position lock shipped in 0.11.0, the multi-column layout
+and the daily summary shipped in 0.13.0. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
 testing requirement (both PowerShell versions) and the security ground rules (never commit credentials,
 logs or files containing personal data).
 
@@ -299,6 +306,6 @@ logs or files containing personal data).
 Released under the [MIT License](LICENSE).
 
 This is an **unofficial** tool. It is not affiliated with or endorsed by Grok / xAI, Kimi / Moonshot,
-OpenAI, Google, Command Code, OpenRouter, DeepSeek, Anthropic, Cursor or Z.AI / Zhipu. It only reads the credentials already present on your machine to display
+OpenAI, Google, Command Code, OpenRouter, DeepSeek, Anthropic, Cursor, Z.AI / Zhipu or GitHub. It only reads the credentials already present on your machine to display
 quota information and never bypasses any paywall, rate limit or authorization mechanism; make sure your
 use complies with each service's terms.

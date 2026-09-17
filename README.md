@@ -31,8 +31,9 @@
 | **Claude Code** | 5 小时窗与周窗口的用量 | 单账号 | `~/.claude/.credentials.json`（OAuth，不是 API key） |
 | **Cursor** | 当前计费周期已用百分比与剩余额度 | 单账号 | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
 | **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 单账号 | `~/.zai/auth.json`、`~/.zhipu/auth.json` 或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
+| **GitHub Copilot** | Premium requests 的已用占比与配额重置日期 | 单账号 | `~/.config/github-copilot/hosts.json` / `apps.json`（也支持 OpenCode 的 `auth.json`） |
 
-已经登录过对应 CLI（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity）就不会有额外配置负担：
+已经登录过对应 CLI 或扩展（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity、GitHub Copilot for VS Code）就不会有额外配置负担：
 卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行；DeepSeek 同样只看 API-key（`~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY`），卡片显示账户余额而不是百分比。
 
 ## 特性
@@ -45,7 +46,9 @@
 - **双击直达**：双击任意一行直接打开该服务的官方用量页面。
 - **趋势可视**：每行进度条右侧画出最近 7 天迷你折线，颜色跟随当前用量（绿 / 黄 / 橙 / 红）。
 - **耗尽预测**：悬停提示按最近趋势估算额度耗尽时间，并提示是否早于本次重置。
-- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、主题、不透明度、阈值、静音时段），保存后即时生效，历史可一键导出 CSV。
+- **1 - 3 列卡片**：同一张卡片可以横向排成 2 列或 3 列，供应商多时不再拉得很长；列数在设置窗口或 `ai-config.json` 里调。
+- **每日汇总**：可选在每天固定时刻弹一次汇总气泡，列出当时各行的用量；同一天只提醒一次。
+- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、列数、主题、不透明度、阈值、分供应商阈值、静音时段、每日汇总），保存后即时生效，历史可一键导出 CSV。
 - **失败可降级**：单个供应商超时或报错只影响自己那一行，并进入指数退避（30 秒起，最长 15 分钟）。
 - **本地优先**：账号快照用 Windows DPAPI 加密，日志与错误文本统一脱敏，账号只以短哈希出现。
 - **双引擎可用**：Windows PowerShell 5.1 与 PowerShell 7.x 都支持，CI 双版本跑同一套离线测试。
@@ -118,7 +121,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.12.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.13.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -131,7 +134,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.12.0
+# AI Usage Widget 0.13.0
 ```
 
 ### 多账号
@@ -179,6 +182,7 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `opacity` | `0.96` | 窗口不透明度（0.5 – 1.0） |
 | `theme` | `"dark"` | 界面主题：`dark` / `light`，设置窗口保存后即时切换 |
 | `layout` | `"full"` | 行布局：`full`（名称 + 进度条 + 明细）/ `compact`（单行更矮） |
+| `columns` | `1` | 卡片列数（1 - 3）；2 / 3 列时窗口按列加宽、行按行带折算 |
 | `lockPosition` | `false` | 为 true 时禁止拖拽移动卡片 |
 | `providerAlertThresholds` | `{}` | 可选，按供应商覆盖全局阈值，例如 `{ "grok": [80, 95] }` |
 | `showTrend` | `true` | 在每行进度条右侧显示 7 天迷你折线 |
@@ -186,7 +190,8 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `trendDays` | `7` | 折线与预测使用的天数（1 – 14） |
 | `alertThresholds` | `[70, 90]` | 触发气泡提醒的已用百分比，自动升序去重 |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | 静音时段，跨午夜自动识别 |
-| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` |
+| `dailySummary` | `{ "enabled": false, "time": "09:00" }` | 每日汇总气泡；到点后每天只弹一次，日期记在 `ai-state.json` |
+| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` / `copilot` |
 | `language` | `"auto"` | 界面语言：`auto`（跟随系统）/ `zh-CN` / `en-US` |
 
 任何非法值（超范围、类型不对、时间格式错误）都会回退成默认值，不用担心把配置改坏。
@@ -250,6 +255,7 @@ DeepSeekQuota.ps1        DeepSeek 余额解析
 ClaudeQuota.ps1          Claude Code 配额解析
 CursorQuota.ps1          Cursor 计费周期解析
 ZaiQuota.ps1             GLM / Z.AI Coding Plan 配额解析
+CopilotQuota.ps1         GitHub Copilot 配额解析与 token 发现
 WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
@@ -279,7 +285,7 @@ docs/                    架构、供应商、排错文档与截图
 
 ## 参与贡献
 
-欢迎提交 Issue 与 PR：新供应商、多列布局、分发方式都在路线图上。紧凑布局与锁定位置已在 0.11.0 提供。
+欢迎提交 Issue 与 PR：新供应商、更多分发方式仍在路线图上。紧凑布局与锁定位置在 0.11.0 提供，多列布局与每日汇总在 0.13.0 提供。
 提之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了测试要求（双 PowerShell 版本）与安全红线
 （绝不提交凭据、日志与含个人信息的文件）。
 
@@ -287,6 +293,6 @@ docs/                    架构、供应商、排错文档与截图
 
 本项目以 [MIT 许可证](LICENSE) 发布。
 
-这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter、DeepSeek、Anthropic、Cursor、Z.AI / 智谱 均无关联，
+这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter、DeepSeek、Anthropic、Cursor、Z.AI / 智谱、GitHub 均无关联，
 也未获得其背书。它只读取你本机已存在的登录凭证来显示配额，不绕过任何付费、限流或授权机制；
 请自行确认使用方式符合各服务的条款。

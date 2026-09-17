@@ -16,6 +16,7 @@
 | Claude Code | `claude` | `~/.claude/.credentials.json`（或 `$env:CLAUDE_HOME`） | `https://api.anthropic.com/api/oauth/usage` | 1 |
 | Cursor | `cursor` | `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（或 `$env:CURSOR_STATE_DB`） | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | 1 |
 | GLM / Z.AI | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json`，`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（国内站 `open.bigmodel.cn`） | 1 |
+| GitHub Copilot | `copilot` | `~/.config/github-copilot/hosts.json` / `apps.json`、`~/.local/share/opencode/auth.json`（或 `$env:COPILOT_CONFIG_DIR` / `$env:GH_COPILOT_HOSTS`） | `https://api.github.com/copilot_internal/user` | 1 |
 
 ## 各供应商细节
 
@@ -107,6 +108,26 @@
 - **主机**：默认 `https://api.z.ai`。存在 `.zhipu` 凭证或只设置了 `ZHIPU_API_KEY` 时改走 `https://open.bigmodel.cn`。也可用 `$env:ZAI_API_BASE` 覆盖。
 - **窗口**：`GET /api/monitor/usage/quota/limit` 的 `limits[]`，匹配 5 小时与周两类 `type`；`percentage` 是已用百分比。
 - **降级**：没有密钥时这一行不出现。`limits` 为空或无法识别窗口时该行报错。
+
+### GitHub Copilot
+
+- **凭证**：按顺序尝试 `~/.config/github-copilot/hosts.json`（`github.com.oauth_token`）、同目录的 `apps.json`（`access_token`）、
+  `~/.local/share/opencode/auth.json`（`github-copilot.access`）。`$env:COPILOT_CONFIG_DIR` 换配置目录，`$env:GH_COPILOT_HOSTS` 直接指定 hosts.json。
+- **解析**：这些文件的结构随扩展版本变化，所以 `Find-CopilotToken` 深度优先地找第一个非空字符串形式的 `oauth_token` / `oauthToken` / `access_token` / `accessToken` / `access`，不绑定固定层级；数字与布尔值一律忽略。
+- **请求头**：`Authorization: token <token>`，另加 `Editor-Version: vscode/1.96.2` 与 `X-Github-Api-Version: 2025-04-01`。这是社区通用做法，不是官方文档接口，GitHub 改版时这里最先失效。
+- **数据映射**：主数值取 `quota_snapshots.premium_interactions`。`Convert-CopilotQuotaDetail` 优先用 `entitlement` / `remaining` 算已用百分比，缺计数时退回 `percent_remaining`；`unlimited: true`（chat / completions 常见）按 0% 处理，明细里直接写「不限量」。
+- **重置**：`quota_reset_date` 给出下一个配额周期的起始日，换算成本地时间后进明细与耗尽预测。
+- **降级**：三处都找不到 token 时这一行不出现；载荷缺少 `premium_interactions` 时该行报错，不影响其他行。
+
+### 暂不接入的供应商
+
+下面两家目前没有稳定的配额接口，接进来只会变成"永远读不到数据"，因此本轮不接入。
+真要继续，先确认接口存在，再按下面的七步走。
+
+| 供应商 | 现状 |
+| --- | --- |
+| 通义千问 Qwen（qwen-code OAuth） | `portal.qwen.ai` 只有 chat 端点，`~/.qwen/oauth_creds.json` 里没有配额字段，官方也没有公开的用量接口。 |
+| 豆包 / 火山引擎 Ark | 用量只出现在控制台的浏览器会话里（`console.volcengine.com/api/top/...`），或者需要 AK/SK 签名（`open.volcengineapi.com?Action=GetCodingPlanUsage`）；前者要抓 Cookie，后者要实现一套签名，都不适合放进只读卡片。 |
 
 ## 新增一个供应商
 

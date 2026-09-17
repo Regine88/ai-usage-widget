@@ -6,6 +6,27 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.13.0] - 2026-09-17
+
+第四个新供应商 GitHub Copilot，加上两块长期挂在路线图上的界面能力：多列布局与每日汇总。
+
+### Added
+
+- `CopilotQuota.ps1`：解析 `https://api.github.com/copilot_internal/user` 的 `quota_snapshots.premium_interactions`，
+  优先进位用 `entitlement` / `remaining` 算已用百分比，缺计数时退回 `percent_remaining`，`unlimited` 记为 0%。
+  token 按 hosts.json → apps.json → OpenCode `auth.json` 的顺序深度优先查找，不绑定固定层级。
+- `columns`（1 - 3）：卡片可排成多列。`WidgetLayout.ps1` 新增 `Get-WidgetLayoutRowAnchor`，
+  `Get-WidgetLayoutMetrics` 新增 `-Columns`，`Get-WidgetFormHeight` 改按行带折算高度；设置窗口新增「窗口列数」。
+- `dailySummary`：每天固定时刻弹一次汇总气泡，日期写入 `ai-state.json` 的 `lastSummaryDate`，同一天不会重复。
+- `providerAlertThresholds` 现在可以在设置窗口的多行文本框里直接编辑（`kind=70,90`，`#` 起注释行，坏行忽略）。
+- 设置窗口新增 Copilot 开关，供应商复选框改成三列排布；右键「打开用量页」新增 Copilot 条目。
+- `test-CopilotQuota.ps1` / `test-CopilotProvider.ps1`：载荷换算、token 发现与 worker 注入的离线测试。
+
+### Changed
+
+- 底部状态行的宽度改为跟随整张卡片，多列时不再只居中在第一列。
+- 文档补充 Copilot 的凭证与接口说明，以及通义千问 / 豆包暂不接入的原因。
+
 ## [0.12.0] - 2026-09-17
 
 三个新供应商：Claude Code、Cursor、GLM / Z.AI。没有本机凭证的行不会出现。

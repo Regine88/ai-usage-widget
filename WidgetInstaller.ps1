@@ -20,6 +20,7 @@ $script:WidgetRuntimeFiles = @(
     'ClaudeQuota.ps1'
     'CursorQuota.ps1'
     'ZaiQuota.ps1'
+    'CopilotQuota.ps1'
     'ApiKeyAuth.ps1'
     'WidgetPalette.ps1'
     'WidgetLayout.ps1'

@@ -49,6 +49,36 @@ $compactH = Get-WidgetFormHeight -Metrics $compact -RowCount 10
 Assert-Eq ($compactH -lt $fullH) 'True' 'ten compact rows are shorter than ten full rows'
 Assert-Eq (Get-WidgetFormHeight -Metrics $full -RowCount 0) (Get-WidgetFormHeight -Metrics $full -RowCount 1) 'zero rows still reserve one row of height'
 
+# 多列布局：1 列保持经典宽度；2-3 列变宽，并把行数折算成行带。
+Assert-Eq (ConvertTo-WidgetLayoutColumns 1) '1' 'one column'
+Assert-Eq (ConvertTo-WidgetLayoutColumns 2) '2' 'two columns'
+Assert-Eq (ConvertTo-WidgetLayoutColumns 3) '3' 'three columns'
+Assert-Eq (ConvertTo-WidgetLayoutColumns 0) '1' 'zero columns falls back'
+Assert-Eq (ConvertTo-WidgetLayoutColumns 9) '1' 'too many columns falls back'
+Assert-Eq (ConvertTo-WidgetLayoutColumns 'abc') '1' 'junk columns falls back'
+
+$two = Get-WidgetLayoutMetrics -Scale 1 -Layout 'full' -ShowTrend $true -Columns 2
+Assert-Eq $two.Columns 2 'two columns recorded'
+Assert-Eq $two.ColumnStride 260 'two column stride'
+Assert-Eq $two.FormWidth 540 'two column form width'
+$one = Get-WidgetLayoutMetrics -Scale 1 -Layout 'full' -ShowTrend $true
+Assert-Eq $one.FormWidth 280 'single column keeps the classic width'
+$three = Get-WidgetLayoutMetrics -Scale 1 -Layout 'compact' -ShowTrend $true -Columns 3
+Assert-Eq $three.FormWidth 800 'three compact columns add two gaps'
+
+$anchor0 = Get-WidgetLayoutRowAnchor -Metrics $two -Index 0
+$anchor1 = Get-WidgetLayoutRowAnchor -Metrics $two -Index 1
+$anchor2 = Get-WidgetLayoutRowAnchor -Metrics $two -Index 2
+Assert-Eq $anchor0.X 16 'first row starts at the left margin'
+Assert-Eq $anchor0.Y 14 'first row starts at the top padding'
+Assert-Eq $anchor1.X 276 'second row moves one column right'
+Assert-Eq $anchor1.Y 14 'second row stays in the first band'
+Assert-Eq $anchor2.X 16 'third row wraps back to the first column'
+Assert-Eq $anchor2.Y 88 'third row starts the second band'
+
+Assert-Eq (Get-WidgetFormHeight -Metrics $two -RowCount 10) (Get-WidgetFormHeight -Metrics $one -RowCount 5) 'two columns halve ten rows into five bands'
+Assert-Eq (Get-WidgetFormHeight -Metrics $two -RowCount 11) (Get-WidgetFormHeight -Metrics $one -RowCount 6) 'odd row counts round up a band'
+
 if ($failed -gt 0) {
     Write-Host ("FAILED {0}" -f $failed)
     exit 1

@@ -19,11 +19,21 @@ function ConvertTo-WidgetLayoutScale {
     return $scale
 }
 
+# 多列：1 = 经典单列，2-3 列时窗体变宽、行数不变但高度按行带折算。
+function ConvertTo-WidgetLayoutColumns {
+    param($Value, [int]$Default = 1)
+    if (-not (Test-FiniteNumber $Value)) { return $Default }
+    $columns = [int][Math]::Round([double]$Value)
+    if ($columns -lt 1 -or $columns -gt 3) { return $Default }
+    return $columns
+}
+
 function Get-WidgetLayoutMetrics {
     param(
         $Scale = 1.0,
         $Layout = 'full',
-        [bool]$ShowTrend = $true
+        [bool]$ShowTrend = $true,
+        $Columns = 1
     )
     $scale = ConvertTo-WidgetLayoutScale $Scale 1.0
     $layout = ConvertTo-WidgetLayoutName $Layout 'full'
@@ -35,6 +45,7 @@ function Get-WidgetLayoutMetrics {
     if ($layout -eq 'compact') {
         $metrics = @{
             Layout     = 'compact'
+            ColumnGap  = (& $px 12)
             FormWidth  = (& $px 280)
             MarginX    = (& $px 16)
             ContentW   = (& $px 248)
@@ -67,6 +78,7 @@ function Get-WidgetLayoutMetrics {
     } else {
         $metrics = @{
             Layout     = 'full'
+            ColumnGap  = (& $px 12)
             FormWidth  = (& $px 280)
             MarginX    = (& $px 16)
             ContentW   = (& $px 248)
@@ -101,12 +113,38 @@ function Get-WidgetLayoutMetrics {
     $trendSpace = if ($ShowTrend) { $metrics.TrendW + $metrics.TrendGap } else { 0 }
     $metrics.BarTrackW = [Math]::Max((& $px 80), ($metrics.ContentW - $trendSpace))
     $metrics.ShowTrend = [bool]$ShowTrend
+
+    # 多列：每列各占一份 ContentW，窗体宽度随列数增长，行高按行带数折算。
+    $columnCount = ConvertTo-WidgetLayoutColumns $Columns 1
+    $metrics.Columns = $columnCount
+    $metrics.ColumnStride = $metrics.ContentW + $metrics.ColumnGap
+    $metrics.FormWidth = $metrics.MarginX * 2 + $columnCount * $metrics.ContentW + ($columnCount - 1) * $metrics.ColumnGap
     return $metrics
+}
+
+# 第 Index 行（0 起）在网格里的左上角坐标：先横向填满一行，再换行带。
+function Get-WidgetLayoutRowAnchor {
+    param($Metrics, [int]$Index)
+    if (-not $Metrics) { $Metrics = Get-WidgetLayoutMetrics }
+    $columns = 1
+    if ($Metrics['Columns']) { $columns = [Math]::Max(1, [int]$Metrics.Columns) }
+    $i = [Math]::Max(0, $Index)
+    $column = $i % $columns
+    $band = [int][Math]::Floor($i / [double]$columns)
+    return @{
+        Column = $column
+        Band   = $band
+        X      = [int]($Metrics.MarginX + $column * [int]$Metrics.ColumnStride)
+        Y      = [int]($Metrics.TopPad + $band * [int]$Metrics.RowH)
+    }
 }
 
 function Get-WidgetFormHeight {
     param($Metrics, [int]$RowCount)
     if (-not $Metrics) { $Metrics = Get-WidgetLayoutMetrics }
     $n = [Math]::Max(1, $RowCount)
-    return $Metrics.TopPad + $n * $Metrics.RowH - $Metrics.BarInset + $Metrics.BottomPad
+    $columns = 1
+    if ($Metrics['Columns']) { $columns = [Math]::Max(1, [int]$Metrics.Columns) }
+    $bands = [int][Math]::Ceiling($n / [double]$columns)
+    return $Metrics.TopPad + $bands * $Metrics.RowH - $Metrics.BarInset + $Metrics.BottomPad
 }

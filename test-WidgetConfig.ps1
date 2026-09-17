@@ -205,6 +205,32 @@ Assert-Eq (ConvertTo-ConfigMinutes '23:59') 1439 'minutes last minute'
 Assert-Eq (ConvertTo-ConfigMinutes '7:5') 425 'minutes tolerates single digits'
 Assert-Eq (ConvertTo-ConfigMinutes 'oops') '' 'minutes invalid'
 
+# ---------- 多列 / 每日汇总 / 供应商阈值 ----------
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ columns = 2 })).columns 2 'columns honored'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ columns = 0 })).columns 1 'columns clamp to one'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ columns = 9 })).columns 3 'columns clamp to three'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ columns = 'abc' })).columns 1 'junk columns fall back'
+Assert-Eq (Convert-WidgetConfig $null).columns 1 'columns default'
+
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ dailySummary = @{ enabled = $true; time = '8:5' } })).dailySummary.time '08:05' 'daily summary time normalized'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ dailySummary = @{ enabled = $true; time = 'oops' } })).dailySummary.time '09:00' 'invalid daily summary time falls back'
+Assert-Eq (Convert-WidgetConfig $null).dailySummary.enabled 'False' 'daily summary off by default'
+
+$summaryOn = @{ dailySummary = @{ enabled = $true; time = '09:00' } }
+Assert-Eq (Test-DailySummaryDue -Config $summaryOn -Now ([datetime]'2026-09-17 08:59') -LastDate '') 'False' 'summary waits for its time'
+Assert-Eq (Test-DailySummaryDue -Config $summaryOn -Now ([datetime]'2026-09-17 09:00') -LastDate '') 'True' 'summary fires at its time'
+Assert-Eq (Test-DailySummaryDue -Config $summaryOn -Now ([datetime]'2026-09-17 09:00') -LastDate '2026-09-17') 'False' 'summary fires once a day'
+Assert-Eq (Test-DailySummaryDue -Config @{ dailySummary = @{ enabled = $false; time = '09:00' } } -Now ([datetime]'2026-09-17 12:00')) 'False' 'disabled summary never fires'
+
+$thresholdText = "grok=70,90`n# comment`ncodex = 80`nbroken`nkimi="
+$parsedThresholds = ConvertFrom-ProviderAlertThresholdsText $thresholdText
+Assert-Eq ($parsedThresholds.grok -join ',') '70,90' 'text thresholds parse grok'
+Assert-Eq ($parsedThresholds.codex -join ',') '80' 'text thresholds trim spaces'
+Assert-Eq $parsedThresholds.ContainsKey('kimi') 'False' 'empty values are dropped'
+Assert-Eq $parsedThresholds.ContainsKey('broken') 'False' 'broken lines are dropped'
+Assert-Eq ((Format-ProviderAlertThresholds $parsedThresholds) -split "`n")[0] 'codex=80' 'format sorts kinds'
+Assert-Eq (Format-ProviderAlertThresholds @{}) '' 'format empty map'
+
 # ---------- 文件读写 ----------
 $dir = Join-Path $env:TEMP ('widget-config-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $dir | Out-Null
@@ -225,6 +251,8 @@ try {
         trendDays       = 3
         alertThresholds = @(60, 85)
         quietHours      = @{ enabled = $true; start = '23:00'; end = '06:30' }
+        columns         = 2
+        dailySummary    = @{ enabled = $true; time = '08:30' }
         providers       = @{ gemini = $false }
     })
     Assert-Eq (Write-WidgetConfig $configPath $written) 'True' 'write returns true'
@@ -242,6 +270,9 @@ Assert-Eq $loaded.theme 'light' 'round trip theme'
     Assert-Eq $loaded.quietHours.end '06:30' 'round trip quiet end'
     Assert-Eq $loaded.providers.gemini 'False' 'round trip provider off'
     Assert-Eq $loaded.providers.grok 'True' 'round trip provider on'
+    Assert-Eq $loaded.columns 2 'round trip columns'
+    Assert-Eq $loaded.dailySummary.enabled 'True' 'round trip daily summary enabled'
+    Assert-Eq $loaded.dailySummary.time '08:30' 'round trip daily summary time'
     Assert-Eq ((Get-WidgetConfigFileStamp $configPath) -gt 0) 'True' 'stamp after write'
 
     $rawBytes = [IO.File]::ReadAllBytes($configPath)

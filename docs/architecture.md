@@ -50,6 +50,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `ClaudeQuota.ps1` | Claude Code OAuth 用量解析：5 小时 / 周窗口、`utilization` 百分比 |
 | `CursorQuota.ps1` | Cursor 计费周期解析，以及从 state.vscdb 取出 JWT 的扫描函数 |
 | `ZaiQuota.ps1` | GLM / Z.AI Coding Plan 配额解析：5 小时 / 周窗口 |
+| `CopilotQuota.ps1` | GitHub Copilot 配额解析纯函数：`entitlement` / `remaining` / `percent_remaining` 换算、重置日期解析，以及从 hosts.json / apps.json / OpenCode auth.json 里深度优先找 token |
 | `WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
@@ -147,6 +148,24 @@ wscript.exe  Start-AiUsageWidget.vbs
 `Ensure-SingleInstance` 使用命名互斥体 `Local\AiUsageDesktopWidget`；演示模式使用 `Local\AiUsageDesktopWidgetDemo`，
 因此可以同时开一个真实卡片和一个演示卡片做对比。
 
+### 多列布局
+
+`columns`（1 - 3）只影响 `WidgetLayout.ps1` 与 `Rebuild-ProviderRows` 两处：
+
+- `Get-WidgetLayoutMetrics` 多了 `-Columns`，算出 `Columns`、`ColumnStride`（`ContentW + ColumnGap`）与 `FormWidth`；
+  `Get-WidgetFormHeight` 按**行带数**折算高度（`Ceiling(行数 / 列数)`），所以 3 列 9 行和 1 列 3 行一样高。
+- `Get-WidgetLayoutRowAnchor -Metrics -Index` 是唯一的行列换算入口：先横向填满一行，再换行带，返回 `@{ Column; Band; X; Y }`。
+  行控件用返回的 `X` / `Y` 定位，控件名用行序号（`name-0` / `pct-0`）而不是 Y 坐标，避免同一行带里重名。
+- 列数变化会让 `Apply-WidgetConfig` 清掉 `$script:UiMetrics` 并重建行，不需要重启卡片。
+
+### 每日汇总
+
+`ai-config.json` 的 `dailySummary` 是 `{ enabled, time }`。判定在 `Test-DailySummaryDue`（纯函数）：
+开启、当天还没发过、且本地时间已过 `time` 三条同时成立才算到点。
+
+`Send-DailySummaryIfDue` 在每轮抓取结束后调用：到点就收集当前各行文本、弹一次气泡，
+并把日期写进 `ai-state.json` 的 `lastSummaryDate`，因此重启卡片也不会在同一天重复提醒。
+
 ## worker 边界（新增供应商最容易踩的地方）
 
 worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没有主脚本的变量。`Get-WorkerScriptSource` 负责：
@@ -190,4 +209,5 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 - 主程序仍是单文件（UI 与调度耦合），但布局计算在 `WidgetLayout.ps1`、文案格式化在 `WidgetFormat.ps1`，均可离线测试。
 - WinForms 没有原生暗色主题支持，当前的暗色 / 浅色卡片是自绘圆角面板 + `WidgetPalette.ps1` 调色板。
 - 提醒阈值可全局配置，也可在 `ai-config.json` 的 `providerAlertThresholds` 里按供应商覆盖；设置窗口仍只编辑全局阈值。
-- 紧凑布局已提供；多列仍未做。跨显示器 DPI 不会在拖动时重算（`UiScale` 在进程内缓存）。
+- 紧凑布局与多列布局都已提供；跨显示器 DPI 不会在拖动时重算（`UiScale` 在进程内缓存）。
+- 每日汇总只汇总"当下快照"，不做历史上的对比，也没有节假日 / 工作日区分。
