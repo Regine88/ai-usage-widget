@@ -6,6 +6,12 @@
 > 通义与豆包经调研确认没有可用的配额接口，已在 `docs/providers.md` 记录原因并关闭。
 > P2 浅色主题、紧凑布局、锁定位置、更新检查、多列布局、每日汇总、按供应商阈值均已完成，
 > 该计划的 P1 / P2 功能项全部收口。
+>
+> **0.14.0 进度（2026-09-17）：** 历史月度报表与导出增强（`UsageReport.ps1` + 「导出历史」子菜单）、
+> 发布流程的打包内容校验（`WidgetPackage.ps1` + `tools/verify-package.ps1` + CI `Package contents` job）、
+> GitHub Pages 落地页（`site/` + `pages.yml`）已完成；智谱 BigModel（含 ZCode 凭证）并入 GLM 行，
+> Trae / Amp / CodeBuddy 因缺少「可读凭证 + 可验证接口」记录为暂不接入。
+> 验收记录见 `docs/superpowers/reports/2026-09-17-ai-usage-widget-0.14.0-acceptance.md`。
 
 **目标：** 把当前内部工具补齐为可公开、可贡献、可发布的开源项目，并按用户价值排序扩展功能。
 
@@ -87,7 +93,7 @@
 7. 提醒增强：**重置提醒已完成**（0.9.0）；**每日汇总与按供应商自定义阈值已完成**（0.13.0，
    `Test-DailySummaryDue` + `providerAlertThresholds` 多行文本框）。
 8. **更新检查与“关于”窗口**（已完成，0.9.0）：右键菜单 → **关于…**，显示版本 / 许可证 / 项目链接，手动检查 GitHub 最新 Release；`WidgetUpdates.ps1` 负责版本比较与载荷解析。
-9. 工程质量：布局与格式化逻辑抽成可测模块，补布局回归测试。
+9. 工程质量（已完成）：布局与格式化逻辑抽成可测模块（`WidgetLayout.ps1` / `WidgetFormat.ps1`），同名离线测试覆盖布局回归。
 
 ---
 
