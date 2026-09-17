@@ -1,6 +1,15 @@
 ﻿# Combined Grok / Kimi / ChatGPT / Gemini / Command Code weekly usage desktop widget.
 # One window, one row per provider. Grok and ChatGPT expand to one row per account.
 
+# Switches:
+#   -Version         print the widget version and exit
+#   -Demo            render fixed demo rows without credentials or network access
+#   -Install         register the widget in the current user's startup folder
+#   -Uninstall       remove the startup registration
+#   -AddAccount      register the current ChatGPT / Codex account
+#   -AddGrokAccount  register the current Grok account
+#   -MigrateSecrets  migrate legacy project-local snapshots into DPAPI storage
+
 [CmdletBinding()]
 param(
     [switch]$Install,
@@ -8,10 +17,22 @@ param(
     [switch]$AddAccount,
     [switch]$AddGrokAccount,
     [switch]$MigrateSecrets,
+    [switch]$Version,
+    [switch]$Demo,
     [int]$IntervalSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Demo mode renders fixed rows so screenshots and UI checks need neither
+# credentials nor network access; it never touches credentials, history or state.
+$script:AppVersion = '0.6.0'
+$script:DemoMode = $false
+
+if ($Version) {
+    Write-Host ('AI Usage Widget {0}' -f $script:AppVersion)
+    return
+}
 
 function Get-TrustedPowerShellPath {
     $candidates = @(
@@ -35,10 +56,13 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     if ($AddAccount) { $argList += '-AddAccount' }
     if ($AddGrokAccount) { $argList += '-AddGrokAccount' }
     if ($MigrateSecrets) { $argList += '-MigrateSecrets' }
+    if ($Demo) { $argList += '-Demo' }
     if ($PSBoundParameters.ContainsKey('IntervalSeconds')) { $argList += @('-IntervalSeconds', "$IntervalSeconds") }
     Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden
     exit 0
 }
+
+$script:DemoMode = [bool]$Demo
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -219,6 +243,7 @@ function Read-State {
 function Save-State {
     param($Form)
     try {
+        if ($script:DemoMode) { return }
         if ($Form) {
             $script:State.x = $Form.Left
             $script:State.y = $Form.Top
@@ -1043,7 +1068,33 @@ function Get-CommandCodeRowData {
 
 # --- Rows / UI ---
 
+function Get-DemoRowTable {
+    return @(
+        [pscustomobject]@{ Id = 'demo-grok'; Kind = 'grok'; Name = 'Grok a'; OpenUrl = $script:GrokUsagePageUrl; Percent = 9.0; Detail = 'Build 9% · 重置还有 4 天 22 小时' }
+        [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = '5小时窗 12% · 重置还有 4 天 4 小时' }
+        [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = '5小时窗 31% · 重置还有 5 天 4 小时' }
+        [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = '5小时 41% · 周 93% · 重置还有 3 天 6 小时' }
+    )
+}
+
+function Get-DemoFetchResults {
+    param($Rows)
+    $results = @()
+    foreach ($row in @($Rows)) {
+        $results += [pscustomobject]@{
+            Id      = $row.Id
+            Percent = [double]$row.Percent
+            Detail  = [string]$row.Detail
+            Tip     = ('{0} {1}' -f $row.Name, (Format-PercentText $row.Percent))
+            Reset   = $null
+            Error   = $null
+        }
+    }
+    return $results
+}
+
 function Get-ProviderRows {
+    if ($script:DemoMode) { return @(Get-DemoRowTable) }
     $rows = @()
     try { Sync-ActiveGrokSnapshot } catch { Write-WidgetLog ("grok snapshot $($_.Exception.Message)") }
     foreach ($acct in @(Get-GrokAccounts)) {
@@ -1152,7 +1203,9 @@ Function FindPowerShell()
     If fso.FileExists(p) Then FindPowerShell = p
 End Function
 '@
-    Set-Content -LiteralPath $script:VbsPath -Value $content -Encoding ascii
+    # Write the bytes verbatim: Set-Content appends a platform newline, which turned the
+    # tracked launcher into a permanently "modified" file in a git checkout.
+    [IO.File]::WriteAllText($script:VbsPath, ($content.TrimEnd("`r", "`n") + "`n"), [Text.Encoding]::ASCII)
 }
 
 function New-Shortcut {
@@ -1181,7 +1234,8 @@ function Uninstall-Widget {
 }
 
 function Ensure-SingleInstance {
-    $script:Mutex = New-Object System.Threading.Mutex($false, 'Local\AiUsageDesktopWidget')
+    $name = if ($script:DemoMode) { 'Local\AiUsageDesktopWidgetDemo' } else { 'Local\AiUsageDesktopWidget' }
+    $script:Mutex = New-Object System.Threading.Mutex($false, $name)
     if (-not $script:Mutex.WaitOne(0, $false)) {
         Write-WidgetLog 'another instance is already running'
         exit 0
@@ -1780,6 +1834,11 @@ function Update-Widget {
         if ($ui.Tray) { $ui.Tray.Text = 'AI 周用量' }
         return
     }
+    if ($script:DemoMode) {
+        Apply-FetchResults (Get-DemoFetchResults $specs)
+        $ui.Stamp.Text = '演示模式 · 固定数据'
+        return
+    }
 
     $script:FetchRunning = $true
     try {
@@ -2030,6 +2089,7 @@ function Set-RowTip {
 function Write-UsageHistory {
     param([string]$Id, [double]$Percent)
     try {
+        if ($script:DemoMode) { return }
         $line = [pscustomobject]@{ ts = [datetime]::Now.ToString('o'); id = $Id; pct = $Percent } | ConvertTo-Json -Compress
         Add-Content -LiteralPath $script:HistoryPath -Value $line -Encoding utf8
         $f = Get-Item -LiteralPath $script:HistoryPath
@@ -2042,6 +2102,7 @@ function Write-UsageHistory {
 
 function Send-UsageAlert {
     param($Row, [string]$Id, [double]$Percent)
+    if ($script:DemoMode) { return }
     $usagePercent = Convert-DisplayPercentToUsagePercent $Percent $Row.Kind
     $level = 0
     if ($usagePercent -ge 90) { $level = 90 } elseif ($usagePercent -ge 70) { $level = 70 }
@@ -2144,10 +2205,12 @@ if ($AddGrokAccount) { Add-CurrentGrokAccount; return }
 if ($MigrateSecrets) { Migrate-ProjectSnapshots; return }
 
 try {
-    Write-WidgetLog 'starting widget'
+    Write-WidgetLog ('starting widget v{0}{1}' -f $script:AppVersion, $(if ($script:DemoMode) { ' (demo mode)' } else { '' }))
     Ensure-SingleInstance
-    try { Remove-LegacyStartupShortcuts } catch { }
-    if (-not (Test-Path -LiteralPath $script:VbsPath)) { try { Write-LauncherVbs } catch { } }
+    if (-not $script:DemoMode) {
+        try { Remove-LegacyStartupShortcuts } catch { }
+        if (-not (Test-Path -LiteralPath $script:VbsPath)) { try { Write-LauncherVbs } catch { } }
+    }
     New-WidgetForm
 } catch {
     Write-WidgetLog ("fatal $($_.Exception.Message)")
