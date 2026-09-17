@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.13.0'
+$script:AppVersion = '0.14.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -133,6 +133,8 @@ $script:ZaiApiBaseUrl = 'https://api.z.ai'
 $script:ZhipuApiBaseUrl = 'https://open.bigmodel.cn'
 $script:ZaiUsagePageUrl = 'https://z.ai/manage-apikey/billing'
 $script:ZaiDisplayName = 'GLM'
+$script:BigModelAuthPath = if ($env:BIGMODEL_HOME) { Join-Path $env:BIGMODEL_HOME 'auth.json' } else { Join-Path $env:USERPROFILE '.bigmodel\auth.json' }
+$script:ZcodeConfigPath = if ($env:ZCODE_CONFIG) { $env:ZCODE_CONFIG } else { Join-Path $env:USERPROFILE '.zcode\v2\config.json' }
 
 $script:CopilotConfigDir = if ($env:COPILOT_CONFIG_DIR) { $env:COPILOT_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\github-copilot' }
 $script:CopilotHostsPath = if ($env:GH_COPILOT_HOSTS) { $env:GH_COPILOT_HOSTS } else { Join-Path $script:CopilotConfigDir 'hosts.json' }
@@ -172,6 +174,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'WidgetUpdates.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
+. (Join-Path $script:WidgetDir 'UsageReport.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
 . (Join-Path $script:WidgetDir 'WidgetPalette.ps1')
 . (Join-Path $script:WidgetDir 'WidgetStrings.ps1')
@@ -1387,27 +1390,36 @@ function Get-CursorRowData {
 
 # --- GLM / Z.AI ---
 
-function Get-ZaiResolvedAuthPath {
-    if (Test-Path -LiteralPath $script:ZaiAuthPath) { return $script:ZaiAuthPath }
-    if (Test-Path -LiteralPath $script:ZhipuAuthPath) { return $script:ZhipuAuthPath }
-    return $script:ZaiAuthPath
+# ZCode 把智谱 BigModel 的密钥放在 <home>/.zcode/v2/config.json，只读文件，不打印任何内容。
+function Get-ZaiZcodeKey {
+    param([string]$Path)
+    if (-not $Path) { $Path = $script:ZcodeConfigPath }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    try { $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json } catch { return $null }
+    return (Get-ZaiBigModelKey $raw)
 }
 
-function Get-ZaiEnvironmentKey {
-    if ($env:ZAI_API_KEY) { return $env:ZAI_API_KEY }
-    return $env:ZHIPU_API_KEY
-}
-
-function Get-ZaiResolvedBaseUrl {
-    if ($env:ZAI_API_BASE) { return $env:ZAI_API_BASE.Trim().TrimEnd('/') }
-    $path = Get-ZaiResolvedAuthPath
-    if ($env:ZHIPU_API_KEY -and -not $env:ZAI_API_KEY) { return $script:ZhipuApiBaseUrl }
-    if ($path -and ($path -replace '/', '\').ToLowerInvariant().Contains('\.zhipu\')) { return $script:ZhipuApiBaseUrl }
-    return $script:ZaiApiBaseUrl
+# 统一的凭证解析：环境变量 > 本机凭证文件 > ZCode 配置。
+# 返回的 BaseUrl 决定走国际站还是中国站（两边接口路径一致）。
+function Resolve-ZaiCredential {
+    if ($env:ZAI_API_KEY) { return @{ Key = $env:ZAI_API_KEY; BaseUrl = $script:ZaiApiBaseUrl; Source = 'ZAI_API_KEY' } }
+    if ($env:ZHIPU_API_KEY) { return @{ Key = $env:ZHIPU_API_KEY; BaseUrl = $script:ZhipuApiBaseUrl; Source = 'ZHIPU_API_KEY' } }
+    if ($env:BIGMODEL_API_KEY) { return @{ Key = $env:BIGMODEL_API_KEY; BaseUrl = $script:ZhipuApiBaseUrl; Source = 'BIGMODEL_API_KEY' } }
+    foreach ($file in @(
+            @{ Path = $script:ZaiAuthPath; BaseUrl = $script:ZaiApiBaseUrl },
+            @{ Path = $script:ZhipuAuthPath; BaseUrl = $script:ZhipuApiBaseUrl },
+            @{ Path = $script:BigModelAuthPath; BaseUrl = $script:ZhipuApiBaseUrl })) {
+        if (-not $file.Path -or -not (Test-Path -LiteralPath $file.Path)) { continue }
+        $keys = @(Get-ApiKeyFileSources -Path $file.Path)
+        if ($keys.Count -gt 0) { return @{ Key = $keys[0]; BaseUrl = $file.BaseUrl; Source = $file.Path } }
+    }
+    $zcodeKey = Get-ZaiZcodeKey
+    if ($zcodeKey) { return @{ Key = $zcodeKey; BaseUrl = $script:ZhipuApiBaseUrl; Source = 'zcode' } }
+    return $null
 }
 
 function Test-ZaiCredExists {
-    Test-ApiKeyCredExists -AuthPath (Get-ZaiResolvedAuthPath) -EnvironmentValue (Get-ZaiEnvironmentKey)
+    return [bool](Resolve-ZaiCredential)
 }
 
 function Get-ZaiAuthHeaders {
@@ -1422,9 +1434,14 @@ function Get-ZaiAuthHeaders {
 
 function Get-ZaiUsageSnapshot {
     param($Auth)
-    $auth = if ($Auth) { $Auth } else { Read-ApiKeyAuth -AuthPath (Get-ZaiResolvedAuthPath) -EnvironmentValue (Get-ZaiEnvironmentKey) }
-    $url = (Get-ZaiResolvedBaseUrl) + '/api/monitor/usage/quota/limit'
-    $data = Invoke-WidgetRest -Method Get -Uri $url -Headers (Get-ZaiAuthHeaders $auth)
+    $credential = $null
+    if ($Auth) { $credential = @{ Key = [string]$Auth.ApiKey; BaseUrl = $script:ZaiApiBaseUrl } }
+    else { $credential = Resolve-ZaiCredential }
+    if (-not $credential) { throw 'missing-credential' }
+    $baseUrl = $credential.BaseUrl
+    if ($env:ZAI_API_BASE) { $baseUrl = $env:ZAI_API_BASE.Trim().TrimEnd('/') }
+    $url = $baseUrl + '/api/monitor/usage/quota/limit'
+    $data = Invoke-WidgetRest -Method Get -Uri $url -Headers (Get-ZaiAuthHeaders @{ ApiKey = $credential.Key })
     return (Convert-ZaiQuota $data)
 }
 
@@ -2635,7 +2652,12 @@ function New-WidgetForm {
     $miOpenGlm = $miOpen.DropDownItems.Add('GLM')
     $miOpenCopilot = $miOpen.DropDownItems.Add('Copilot')
     [void]$menu.Items.Add($miOpen)
-    $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
+    $miExport = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.export')
+    $miExportRaw = $miExport.DropDownItems.Add((T 'menu.exportRawCsv'))
+    $miExportDaily = $miExport.DropDownItems.Add((T 'menu.exportDailyCsv'))
+    $miExportReportMd = $miExport.DropDownItems.Add((T 'menu.exportReportMd'))
+    $miExportReportHtml = $miExport.DropDownItems.Add((T 'menu.exportReportHtml'))
+    [void]$menu.Items.Add($miExport)
     $miSettings = $menu.Items.Add((T 'menu.settings'))
     $miAbout = $menu.Items.Add((T 'menu.about'))
     $miTop = $menu.Items.Add((T 'menu.topMost'))
@@ -2687,7 +2709,10 @@ function New-WidgetForm {
     })
 
     $miRefresh.Add_Click({ try { Update-Widget } catch { Write-WidgetLog ("refresh $($_.Exception.Message)") } })
-    $miExportCsv.Add_Click({ Export-UsageHistoryInteractive })
+    $miExportRaw.Add_Click({ Export-UsageHistoryInteractive })
+    $miExportDaily.Add_Click({ Export-UsageReportInteractive -Kind 'daily' })
+    $miExportReportMd.Add_Click({ Export-UsageReportInteractive -Kind 'markdown' })
+    $miExportReportHtml.Add_Click({ Export-UsageReportInteractive -Kind 'html' })
     $miSettings.Add_Click({ Show-WidgetSettings })
     $miAbout.Add_Click({ Show-WidgetAbout })
     foreach ($sec in $script:IntervalItems.Keys) {
@@ -2931,8 +2956,9 @@ function Get-WorkerScriptSource {
         'ConvertTo-CursorDollars', 'Convert-CursorUnixMs', 'Get-CursorPlanUsageObject', 'Convert-CursorPeriodUsage',
         'Find-Utf8NeedleIndex', 'Get-CursorJwtFromBytes', 'Get-CursorSqliteTextValue',
         'Get-CursorStateDbPath', 'Read-CursorAuth', 'Test-CursorCredExists', 'Get-CursorUsageSnapshot', 'Get-CursorRowData',
-        'Convert-ZaiResetTime', 'Convert-ZaiLimitItem', 'Test-ZaiFiveHourType', 'Test-ZaiWeeklyType', 'Convert-ZaiQuota',
-        'Get-ZaiResolvedAuthPath', 'Get-ZaiEnvironmentKey', 'Get-ZaiResolvedBaseUrl', 'Test-ZaiCredExists',
+        'Convert-ZaiResetTime', 'Convert-ZaiLimitItem', 'Test-ZaiFiveHourType', 'Test-ZaiWeeklyType',
+        'Get-ZaiBusinessError', 'Get-ZaiBigModelKey', 'Convert-ZaiQuota',
+        'Get-ZaiZcodeKey', 'Resolve-ZaiCredential', 'Test-ZaiCredExists',
         'Get-ZaiAuthHeaders', 'Get-ZaiUsageSnapshot', 'Get-ZaiRowData',
         'Get-CopilotProperty', 'Convert-CopilotQuotaDetail', 'Convert-CopilotResetDate', 'Convert-CopilotQuota',
         'ConvertTo-CopilotTokenText', 'Find-CopilotToken',
@@ -2951,7 +2977,7 @@ function Get-WorkerScriptSource {
                    'DeepSeekAuthPath', 'DeepSeekApiBaseUrl', 'DeepSeekDisplayName',
                    'ClaudeCredPath', 'ClaudeUsageUrl', 'ClaudeTokenUrl', 'ClaudeTokenUrlLegacy', 'ClaudeOAuthClientId', 'ClaudeDisplayName',
                    'CursorStateDbPath', 'CursorUsageUrl', 'CursorDisplayName', 'CursorTokenCache',
-                   'ZaiAuthPath', 'ZhipuAuthPath', 'ZaiApiBaseUrl', 'ZhipuApiBaseUrl', 'ZaiDisplayName',
+                   'ZaiAuthPath', 'ZhipuAuthPath', 'BigModelAuthPath', 'ZcodeConfigPath', 'ZaiApiBaseUrl', 'ZhipuApiBaseUrl', 'ZaiDisplayName',
                    'CopilotHostsPath', 'CopilotAppsPath', 'CopilotOpencodeAuthPath', 'CopilotUsageUrl', 'CopilotDisplayName',
                    'SecureSnapshotRoot',
                    'WidgetStrings', 'Language') {
@@ -3030,6 +3056,8 @@ function Start-BackgroundFetch {
         CursorTokenCache         = $script:CursorTokenCache
         ZaiAuthPath              = $script:ZaiAuthPath
         ZhipuAuthPath            = $script:ZhipuAuthPath
+        BigModelAuthPath         = $script:BigModelAuthPath
+        ZcodeConfigPath          = $script:ZcodeConfigPath
         ZaiApiBaseUrl            = $script:ZaiApiBaseUrl
         ZhipuApiBaseUrl          = $script:ZhipuApiBaseUrl
         ZaiDisplayName           = $script:ZaiDisplayName
@@ -3220,8 +3248,56 @@ function Export-UsageHistoryInteractive {
     }
 }
 
-function Write-UsageHistory {
-    param([string]$Id, [double]$Percent)
+# 月度报表导出：默认导出“最近有数据的月份”，没有历史时给出明确提示。
+function Export-UsageReportInteractive {
+    param([string]$Kind)
+    try {
+        $now = [datetime]::Now
+        $records = @(Read-UsageHistory -Path $script:HistoryPath)
+        if ($records.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.empty'), (T 'csv.title'), 'OK', 'Information') | Out-Null
+            return
+        }
+        $months = @(Get-UsageHistoryMonths $records)
+        $month = if ($months.Count -gt 0) { $months[0] } else { ConvertTo-UsageReportMonth -Value $null -Now $now }
+        $rollup = @(Get-UsageHistoryDailyRollup -Records $records -Month $month -Now $now)
+        $summary = @(Get-UsageHistoryMonthlySummary -Records $records -Month $month -Now $now)
+
+        $extension = 'csv'
+        $content = $null
+        switch ($Kind) {
+            'markdown' {
+                $extension = 'md'
+                $content = ConvertTo-UsageReportMarkdown -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now
+            }
+            'html' {
+                $extension = 'html'
+                $content = ConvertTo-UsageReportHtml -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now
+            }
+            default {
+                $content = ConvertTo-UsageReportCsv $rollup
+            }
+        }
+        if (-not $content) {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.empty'), (T 'csv.title'), 'OK', 'Information') | Out-Null
+            return
+        }
+        $target = Join-Path $script:WidgetDir (Get-UsageReportFileName -Month $month -Extension $extension)
+        # CSV 带 BOM 让 Excel 直接认出中文；Markdown / HTML 不需要 BOM。
+        [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new(($extension -eq 'csv')))
+        Write-WidgetLog ("report export {0} {1}" -f $extension, $target)
+        [System.Windows.Forms.MessageBox]::Show(
+            (T 'report.exported' @([Environment]::NewLine, $target)),
+            (T 'csv.title'), 'OK', 'Information') | Out-Null
+    } catch {
+        Write-WidgetLog ("report export failed: $($_.Exception.Message)")
+        try {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.failed'), (T 'csv.title'), 'OK', 'Warning') | Out-Null
+        } catch { }
+    }
+}
+
+function Write-UsageHistory {    param([string]$Id, [double]$Percent)
     try {
         if ($script:DemoMode) { return }
         $line = [pscustomobject]@{ ts = [datetime]::Now.ToString('o'); id = $Id; pct = $Percent } | ConvertTo-Json -Compress

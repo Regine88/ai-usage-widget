@@ -72,7 +72,7 @@ foreach ($key in @('menu.refresh', 'menu.settings', 'settings.save', 'error.time
 Assert-Eq $untranslated.Count 0 'key phrases are actually translated'
 
 # 关键键必须存在，避免漏改代码时才发现
-foreach ($key in @('app.title', 'menu.exportCsv', 'status.noCredentials', 'reset.unknown', 'forecast.never',
+foreach ($key in @('app.title', 'menu.export', 'status.noCredentials', 'reset.unknown', 'forecast.never',
                    'csv.exported', 'settings.restartHint', 'cli.migrateDone')) {
     Assert-Eq $zh.ContainsKey($key) 'True' ('zh pack has ' + $key)
 }

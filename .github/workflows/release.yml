@@ -76,6 +76,12 @@ jobs:
           pwsh -NoProfile -File .\tools\package-release.ps1 -Version $version -OutDir dist
           Get-ChildItem -Path dist -File | Select-Object Name, Length | Format-Table -AutoSize
 
+      - name: Verify package contents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -File .\tools\verify-package.ps1 -Version '${{ steps.version.outputs.version }}' -OutDir dist
+
       - name: Publish
         shell: pwsh
         env:

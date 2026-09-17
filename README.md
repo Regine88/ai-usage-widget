@@ -30,10 +30,10 @@
 | **DeepSeek** | 账户总余额与充值 / 赠额明细（余额型，没有百分比） | 单账号 | `~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY` |
 | **Claude Code** | 5 小时窗与周窗口的用量 | 单账号 | `~/.claude/.credentials.json`（OAuth，不是 API key） |
 | **Cursor** | 当前计费周期已用百分比与剩余额度 | 单账号 | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
-| **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 单账号 | `~/.zai/auth.json`、`~/.zhipu/auth.json` 或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
+| **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 单账号 | `~/.zai/auth.json`、`~/.zhipu/auth.json`、`~/.bigmodel/auth.json`（或 ZCode 的 `~/.zcode/v2/config.json`）或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
 | **GitHub Copilot** | Premium requests 的已用占比与配额重置日期 | 单账号 | `~/.config/github-copilot/hosts.json` / `apps.json`（也支持 OpenCode 的 `auth.json`） |
 
-已经登录过对应 CLI 或扩展（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity、GitHub Copilot for VS Code）就不会有额外配置负担：
+已经登录过对应 CLI 或扩展（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity、GitHub Copilot for VS Code、ZCode）就不会有额外配置负担：
 卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行；DeepSeek 同样只看 API-key（`~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY`），卡片显示账户余额而不是百分比。
 
 ## 特性
@@ -48,7 +48,8 @@
 - **耗尽预测**：悬停提示按最近趋势估算额度耗尽时间，并提示是否早于本次重置。
 - **1 - 3 列卡片**：同一张卡片可以横向排成 2 列或 3 列，供应商多时不再拉得很长；列数在设置窗口或 `ai-config.json` 里调。
 - **每日汇总**：可选在每天固定时刻弹一次汇总气泡，列出当时各行的用量；同一天只提醒一次。
-- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、列数、主题、不透明度、阈值、分供应商阈值、静音时段、每日汇总），保存后即时生效，历史可一键导出 CSV。
+- **历史报表导出**：右键 → **导出历史**，可选原始采样 CSV、按天汇总 CSV、月度报表 Markdown 与自包含 HTML；默认导出最近一个有数据的月份，历史为空时明确提示而不是生成空文件。
+- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、列数、主题、不透明度、阈值、分供应商阈值、静音时段、每日汇总），保存后即时生效。
 - **失败可降级**：单个供应商超时或报错只影响自己那一行，并进入指数退避（30 秒起，最长 15 分钟）。
 - **本地优先**：账号快照用 Windows DPAPI 加密，日志与错误文本统一脱敏，账号只以短哈希出现。
 - **双引擎可用**：Windows PowerShell 5.1 与 PowerShell 7.x 都支持，CI 双版本跑同一套离线测试。
@@ -65,12 +66,13 @@
 | 双击托盘图标 | 显示 / 隐藏卡片 |
 | 右键卡片 | 打开菜单（见下图） |
 | 悬停某一行 | 显示明细提示（含重置时间与耗尽预测） |
-| 右键卡片 → **导出用量 CSV** | 把全部历史写到程序目录的 `ai-usage-<时间戳>.csv`（UTF-8，Excel 可直接打开） |
+| 右键卡片 → **导出历史** | 子菜单四项：原始采样 CSV（全部历史，`ai-usage-<时间戳>.csv`）、按天汇总 CSV、月度报表 Markdown、月度报表 HTML；默认导出最近一个有数据的月份 |
 
 ![右键菜单](docs/images/demo-menu.png)
 
 右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记 Grok 账号、登记 ChatGPT 账号、
-打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek）、导出用量 CSV、设置…、关于…、浮在窗口上、开机启动、退出。
+打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot）、
+导出历史（原始采样 CSV / 按天汇总 CSV / 月度报表 Markdown / 月度报表 HTML）、设置…、关于…、浮在窗口上、开机启动、退出。
 
 ## 快速开始
 
@@ -121,7 +123,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.13.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.14.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -134,7 +136,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.13.0
+# AI Usage Widget 0.14.0
 ```
 
 ### 多账号
@@ -259,6 +261,7 @@ CopilotQuota.ps1         GitHub Copilot 配额解析与 token 发现
 WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
+UsageReport.ps1          月度报表：按天 / 月度汇总与 CSV / Markdown / HTML 渲染
 WidgetConfig.ps1         ai-config.json 的读写与校验
 WidgetPalette.ps1        深色 / 浅色调色板（界面颜色的唯一来源）
 WidgetLayout.ps1         卡片行高与窗体尺寸（full / compact）
@@ -266,8 +269,10 @@ WidgetFormat.ps1         百分比、重置时间与错误文案
 WidgetStrings.ps1        界面文案的语言包加载与查询
 strings/                 语言包（zh-CN.json / en-US.json）
 WidgetInstaller.ps1      安装 / 升级 / 卸载实现
+WidgetPackage.ps1        发布包内容校验（期望清单、包内版本号、Scoop manifest）
 install.ps1              安装入口脚本
-tools/                   Release 打包脚本
+tools/                   发布打包、打包校验与落地页构建脚本
+site/                    GitHub Pages 落地页（中英双语，构建时注入版本号）
 Record-ModelRequest.ps1  外部写入请求事件的独立入口
 test-*.ps1               每个模块对应的离线测试
 Start-AiUsageWidget.vbs  无窗口启动器
@@ -281,11 +286,12 @@ docs/                    架构、供应商、排错文档与截图
 - [架构说明](docs/architecture.md)：进程与线程模型、数据流、行模型约定、存储布局
 - [供应商支持与扩展](docs/providers.md)：每个供应商的数据来源，以及新增供应商的七步改造点
 - [排错手册](docs/troubleshooting.md)：卡片不显示、登录过期、超时、DPI、开机启动等常见问题
+- [项目主页](https://regine88.github.io/ai-usage-widget/)：GitHub Pages 自动构建的中英双语落地页
 - [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [行为准则](CODE_OF_CONDUCT.md)
 
 ## 参与贡献
 
-欢迎提交 Issue 与 PR：新供应商、更多分发方式仍在路线图上。紧凑布局与锁定位置在 0.11.0 提供，多列布局与每日汇总在 0.13.0 提供。
+欢迎提交 Issue 与 PR：新供应商、更多分发方式仍在路线图上。紧凑布局与锁定位置在 0.11.0 提供，多列布局与每日汇总在 0.13.0 提供，历史报表导出与发布包内容校验在 0.14.0 提供。
 提之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了测试要求（双 PowerShell 版本）与安全红线
 （绝不提交凭据、日志与含个人信息的文件）。
 

@@ -15,7 +15,7 @@
 | DeepSeek | `deepseek` | `~/.deepseek/auth.json`（或 `$env:DEEPSEEK_HOME`）、`$env:DEEPSEEK_API_KEY` | `https://api.deepseek.com/user/balance` | 1 |
 | Claude Code | `claude` | `~/.claude/.credentials.json`（或 `$env:CLAUDE_HOME`） | `https://api.anthropic.com/api/oauth/usage` | 1 |
 | Cursor | `cursor` | `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（或 `$env:CURSOR_STATE_DB`） | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | 1 |
-| GLM / Z.AI | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json`，`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（国内站 `open.bigmodel.cn`） | 1 |
+| GLM / Z.AI / 智谱 BigModel | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json` / `~/.bigmodel/auth.json`、ZCode 的 `~/.zcode/v2/config.json`、`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（中国站 `https://open.bigmodel.cn/api/monitor/usage/quota/limit`） | 1 |
 | GitHub Copilot | `copilot` | `~/.config/github-copilot/hosts.json` / `apps.json`、`~/.local/share/opencode/auth.json`（或 `$env:COPILOT_CONFIG_DIR` / `$env:GH_COPILOT_HOSTS`） | `https://api.github.com/copilot_internal/user` | 1 |
 
 ## 各供应商细节
@@ -104,10 +104,18 @@
 
 ### GLM / Z.AI
 
-- **凭证**：`~/.zai/auth.json` 或 `~/.zhipu/auth.json`，以及 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY`。请求头是 `Authorization: <key>`，**没有** `Bearer ` 前缀。
-- **主机**：默认 `https://api.z.ai`。存在 `.zhipu` 凭证或只设置了 `ZHIPU_API_KEY` 时改走 `https://open.bigmodel.cn`。也可用 `$env:ZAI_API_BASE` 覆盖。
+- **凭证**：按 `Resolve-ZaiCredential` 的顺序查找：`$env:ZAI_API_KEY` → `$env:ZHIPU_API_KEY` → `$env:BIGMODEL_API_KEY`
+  → `~/.zai/auth.json` → `~/.zhipu/auth.json` → `~/.bigmodel/auth.json` → ZCode 的 `~/.zcode/v2/config.json`
+  （读 `builtin:bigmodel-coding-plan` 或 `builtin:bigmodel` 的 `options.apiKey`；可用 `$env:ZCODE_CONFIG` 换路径）。
+  请求头是 `Authorization: <key>`，**没有** `Bearer ` 前缀。找不到任何凭证时这一行不出现。
+- **主机**：默认 `https://api.z.ai`；凭证来自智谱中国站（`ZHIPU_API_KEY` / `BIGMODEL_API_KEY` / `.zhipu` / `.bigmodel` / ZCode）时改走
+  `https://open.bigmodel.cn`。也可用 `$env:ZAI_API_BASE` 覆盖。
 - **窗口**：`GET /api/monitor/usage/quota/limit` 的 `limits[]`，匹配 5 小时与周两类 `type`；`percentage` 是已用百分比。
-- **降级**：没有密钥时这一行不出现。`limits` 为空或无法识别窗口时该行报错。
+  中国站与国际站路径一致、鉴权方式也一致（2026-09-17 实测：同一把密钥在两个主机上返回同一种业务错误）。
+- **业务错误**：服务端用 `{"code":500,"msg":"当前用户不存在coding plan","success":false}` 这类信封表达
+  「账号没有 Coding Plan」。`Get-ZaiBusinessError` 把 `msg` 交给 `Format-FetchError`，
+  该行显示本地化的「该账号未开通 Coding Plan」，而不是笼统的读取失败。
+- **降级**：`limits` 为空或无法识别窗口时该行报错，不影响其他行。
 
 ### GitHub Copilot
 
@@ -128,6 +136,12 @@
 | --- | --- |
 | 通义千问 Qwen（qwen-code OAuth） | `portal.qwen.ai` 只有 chat 端点，`~/.qwen/oauth_creds.json` 里没有配额字段，官方也没有公开的用量接口。 |
 | 豆包 / 火山引擎 Ark | 用量只出现在控制台的浏览器会话里（`console.volcengine.com/api/top/...`），或者需要 AK/SK 签名（`open.volcengineapi.com?Action=GetCodingPlanUsage`）；前者要抓 Cookie，后者要实现一套签名，都不适合放进只读卡片。 |
+| Trae（字节） | 只有内部接口 `coresg-normal.trae.ai/api/v1/commercial/get_mode_info` 与 `/api/v1/commercial/chat_mode`（POST，约 19 个请求头，含 `Cloud-IDE-JWT`），token 存在 `%APPDATA%\Trae\User\globalStorage\state.vscdb`，拿不到可离线验证的成功载荷。 |
+| Amp（Sourcegraph） | 2026-09-17 在本机扫描时 `~/.amp` 只有 CLI 安装包（`bin/`、`package/`）与两个 bootstrap 脚本，没有可读的凭证文件，无法验证配额接口。 |
+| CodeBuddy（腾讯） | 本机只有 IDE 数据目录（`%APPDATA%\CodeBuddy`）与 `~/.codebuddy` 的插件配置，没有 CLI 凭证文件，同样无法验证配额接口。 |
+
+调研记录（2026-09-17）：智谱 BigModel 已并入 GLM 行（见上一节）；Trae / Amp / CodeBuddy 在本机都有使用痕迹，
+但不具备「可读凭证 + 可验证接口」的组合，因此本轮不接入，等条件具备再按下面的七步走。
 
 ## 新增一个供应商
 
@@ -177,10 +191,13 @@ function Convert-ClaudeWindow {
 
 在 `New-WidgetForm` 的"打开用量页"子菜单里增加条目，指向该供应商的官方用量页面。
 
-### 7. 文档
+### 7. 文档与打包清单
 
 在本文的"支持情况总览"里补一行，并写清字段来源、限流与失败降级策略。
 同时更新 `README.md` / `README.en.md` 的支持列表与 `CHANGELOG.md`。
+
+新模块必须加进 `WidgetInstaller.ps1` 的运行文件清单；漏掉会出现「装完就缺模块」，
+Release 包也会缺文件，`tools/verify-package.ps1`（以及 CI 的 `Package contents` job）会直接报「缺少条目」。
 
 ## 测试要求
 
@@ -198,4 +215,5 @@ function Convert-ClaudeWindow {
 | 中文乱码 | 新增 `.ps1` 文件没带 UTF-8 BOM，Windows PowerShell 5.1 会按 ANSI 读取 |
 | 一个供应商慢导致整轮卡住 | 请求没有走 `Invoke-WidgetRest`，丢失了硬超时保护 |
 | 设置窗口里没有新供应商的开关 | 忘了在 `Get-WidgetConfigDefaults` 的 `providers` 里加键（只是无法在界面关闭，功能正常） |
+| Release 包里缺了新模块 | 忘了把它加进 `WidgetInstaller.ps1` 的运行文件清单；本地 `tools/verify-package.ps1` 与 CI 的 `Package contents` job 都会拦住 |
 | 日志里出现 token 片段 | 直接写了原始异常或响应体，应改用 `Convert-SafeLogText` |

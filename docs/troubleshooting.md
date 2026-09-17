@@ -151,6 +151,27 @@ Copilot 行只在**本机存在凭证**时才出现，按顺序尝试下面三�
 - 有凭证却报错：`copilot_internal/user` 是社区在用的内部接口，不是官方文档接口，
   GitHub 改版后可能返回 401 / 404，日志里会记下状态码，请连同版本号一起反馈。
 
+## 导出历史没有生成文件
+
+按顺序检查这五条：
+
+1. 弹出的是「还没有历史数据可导出」：`ai-history.jsonl` 一条记录都没有，先让卡片正常运行一段时间；
+2. 导出的是**最近一个有数据的月份**，不是全部历史，文件在程序目录，形如 `ai-usage-report-2026-09.csv` / `.md` / `.html`；
+3. 选中月份没有采样时会提示「该月没有历史采样」，换回有数据的月份即可；
+4. CSV 里的中文乱码：导出写的是 UTF-8 带 BOM，如果被编辑器 / Excel 以外的工具转存过，BOM 可能丢失；
+5. 提示「导出失败，请查看日志」：`ai-widget.log` 里有 `report export failed` 一行，通常会带出真实的文件系统错误。
+
+Markdown / HTML 报表是该月按天 + 按供应商的汇总，不包含逐条原始采样；要原始数据请用同一子菜单里的「原始采样 CSV」。
+
+## GLM 一行提示「该账号未开通 Coding Plan」
+
+这是服务端返回的业务错误（`code != 0`），说明凭证有效、请求也被接受，但该账号没有可查询的 Coding Plan 配额：
+
+- 用 ZCode 凭证时，ZCode 里登录的账号与开通 Coding Plan 的账号必须是同一个；
+- 确认开通的是 Coding Plan；普通 API 按量计费的 key 没有这套 5 小时 / 周窗口配额；
+- 试一下其他凭证来源（`$env:ZAI_API_KEY` / `~/.zai/auth.json` / `~/.bigmodel/auth.json`）：
+  换成别的来源能显示，说明只是 ZCode 那个账号没开通。
+
 ## 报告问题前请准备
 
 - `pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version` 的输出。

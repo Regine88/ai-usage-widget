@@ -27,3 +27,6 @@ grok-aliases.json
 
 # Release build output
 /dist/
+
+# GitHub Pages build output
+/_site/

@@ -49,6 +49,30 @@ Assert-Throws { Convert-ZaiQuota (@{ data = @{ limits = @() } } | ConvertTo-Json
 Assert-Eq (Test-ZaiFiveHourType 'tokens_five_hours') 'True' 'five-hour type matches'
 Assert-Eq (Test-ZaiWeeklyType 'TOKENS_SEVEN_DAYS') 'True' 'weekly type matches'
 
-if ($failed -gt 0) { Write-Host ("FAILED {0}" -f $failed); exit 1 }
-Write-Host 'ALL PASSED'
+# ---------- BigModel / ZCode 配置解析 ----------
+$zcodeConfig = @{
+    provider = @{
+        'builtin:bigmodel-coding-plan' = @{ options = @{ apiKey = 'bm-key'; baseURL = 'https://open.bigmodel.cn/api/anthropic' } }
+        'builtin:bigmodel' = @{ options = @{ apiKey = '' } }
+    }
+} | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+Assert-Eq (Get-ZaiBigModelKey $zcodeConfig) 'bm-key' 'zcode coding plan key is found'
+$zcodeFallback = @{ provider = @{ 'builtin:bigmodel' = @{ options = @{ apiKey = 'plain-key' } } } } | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+Assert-Eq (Get-ZaiBigModelKey $zcodeFallback) 'plain-key' 'plain bigmodel entry is used as a fallback'
+Assert-Eq (Get-ZaiBigModelKey (@{ provider = @{ 'builtin:zai' = @{ options = @{ apiKey = 'x' } } } } | ConvertTo-Json -Depth 8 | ConvertFrom-Json)) '' 'unrelated providers are ignored'
+Assert-Eq (Get-ZaiBigModelKey $null) '' 'null config has no key'
+
+# ---------- 业务错误 ----------
+Assert-Eq (Get-ZaiBusinessError (@{ code = 500; msg = 'no plan'; success = $false } | ConvertTo-Json | ConvertFrom-Json)) 'no plan' 'business error keeps the server message'
+Assert-Eq (Get-ZaiBusinessError (@{ code = 0; msg = '' } | ConvertTo-Json | ConvertFrom-Json)) '' 'code 0 is not an error'
+Assert-Eq (Get-ZaiBusinessError (@{ data = @{ limits = @() } } | ConvertTo-Json -Depth 4 | ConvertFrom-Json)) '' 'payloads without a code are not errors'
+Assert-Eq (Get-ZaiBusinessError (@{ code = 500 } | ConvertTo-Json | ConvertFrom-Json)) '' 'errors without a message stay silent'
+Assert-Throws { Convert-ZaiQuota (@{ code = 500; msg = 'no coding plan'; success = $false } | ConvertTo-Json | ConvertFrom-Json) } 'a business error is thrown as plan-missing'
+try {
+    Convert-ZaiQuota (@{ code = 500; msg = 'no coding plan' } | ConvertTo-Json | ConvertFrom-Json) | Out-Null
+} catch {
+    Assert-Eq ($_.Exception.Message -like 'plan-missing*') 'True' 'plan-missing keeps the server text'
+}
+
+if ($failed -gt 0) { Write-Host ("FAILED {0}" -f $failed); exit 1 }Write-Host 'ALL PASSED'
 exit 0

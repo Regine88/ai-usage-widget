@@ -6,6 +6,39 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.14.0] - 2026-09-17
+
+历史报表与导出增强、发布包内容校验、GitHub Pages 落地页，外加智谱 BigModel（含 ZCode 凭证）并入 GLM 行。
+
+### Added
+
+- `UsageReport.ps1` + `test-UsageReport.ps1`：按天汇总（`Get-UsageHistoryDailyRollup`）、月度汇总
+  （`Get-UsageHistoryMonthlySummary`，复用 `Get-UsageTrendSlope` 算日均斜率）与月份清单，
+  并能渲染成 CSV / Markdown / HTML；HTML 自包含，不引用任何外部资源。
+- 右键菜单新增「导出历史」子菜单：原始采样 CSV、按天汇总 CSV、月度报表 Markdown、月度报表 HTML。
+  默认导出最近一个有数据的月份，没有历史时明确提示而不是生成空文件。
+- `WidgetPackage.ps1` + `test-WidgetPackage.ps1` + `tools/verify-package.ps1`：发布包内容校验——
+  期望清单与压缩包条目比对（缺文件 / 多余文件 / 数据与凭证文件）、包内版本号、`.sha256` 一致性，
+  以及 Scoop manifest 的 version / hash / url / extract_dir / checkver / persist。
+- CI 新增 `Package contents` job；Release 工作流在打包之后增加 `Verify package contents` 步骤，
+  校验不通过就不发布。
+- `site/` + `tools/build-site.ps1` + `test-SiteAssets.ps1` + `.github/workflows/pages.yml`：
+  中英双语落地页，构建时注入版本号并复制截图，引用了不存在资源的页面会直接构建失败。
+- 智谱 BigModel 并入 GLM 行：新增凭证来源 `~/.bigmodel/auth.json`、`$env:BIGMODEL_API_KEY`
+  与 ZCode 的 `~/.zcode/v2/config.json`（读 `builtin:bigmodel-coding-plan` / `builtin:bigmodel`
+  的 `options.apiKey`），中国站统一走 `open.bigmodel.cn`。
+
+### Changed
+
+- GLM 的凭证解析收敛成单一入口 `Resolve-ZaiCredential`（环境变量 > 凭证文件 > ZCode 配置），
+  移除 `Get-ZaiResolvedAuthPath` / `Get-ZaiEnvironmentKey` / `Get-ZaiResolvedBaseUrl` 三个旧函数。
+- 服务端用 `code != 0` 表达业务错误时（例如账号没开通 Coding Plan），该行改为提示
+  本地化的「该账号未开通 Coding Plan」，而不是笼统的「读取失败」。
+
+### Fixed
+
+- `Compare-WidgetPackageEntries` 统一了仓库路径与压缩包条目的目录分隔符，子目录文件不再被误报为缺失或多余。
+- `Test-WidgetPackageVersionText` 的匹配模式改用 `[regex]::Escape` 拼接，不再被 PowerShell 变量插值破坏。
 ## [0.13.0] - 2026-09-17
 
 第四个新供应商 GitHub Copilot，加上两块长期挂在路线图上的界面能力：多列布局与每日汇总。

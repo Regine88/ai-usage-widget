@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Usage Widget · Windows 桌面 AI 用量卡片</title>
+<meta name="description" content="Windows 桌面卡片：一屏查看 Grok / ChatGPT / Codex / Kimi / Gemini / Claude Code / Cursor / GitHub Copilot / GLM / OpenRouter / DeepSeek 的用量与配额。PowerShell + WinForms，零依赖，MIT 许可。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <nav class="lang">
+      <a href="#zh">中文</a>
+      <a href="#en">English</a>
+      <span class="spacer"></span>
+      <a href="{{REPO}}">GitHub</a>
+      <a href="{{REPO}}/releases/latest">Release</a>
+    </nav>
+    <h1>AI Usage Widget</h1>
+    <p class="tagline">一屏看清 11 家 AI 服务的用量与配额 · 常驻桌面的小卡片</p>
+    <p class="meta">当前版本 {{VERSION}} · MIT License · Windows 10/11 · PowerShell + WinForms，零第三方依赖</p>
+    <p class="cta">
+      <a class="primary" href="{{REPO}}/releases/latest">下载最新版</a>
+      <a href="#install">安装说明</a>
+      <a href="{{REPO}}/blob/main/README.md">完整文档</a>
+    </p>
+    <img class="shot" src="assets/demo-card.png" alt="AI Usage Widget 卡片界面（演示数据）">
+  </div>
+</header>
+
+<main class="wrap">
+<section id="zh" class="lang-block">
+  <h2>中文</h2>
+  <p>卡片贴着桌面边缘常驻，每行一个供应商，显示已用百分比、窗口重置时间与趋势；悬停即可看到明细，
+     双击打开对应的官方用量页。数据全部来自你本机已有的登录凭证，不经过任何中转服务器。</p>
+
+  <h3>支持的供应商</h3>
+  <table>
+    <thead>
+      <tr><th>供应商</th><th>显示内容</th><th>凭证来源</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Grok</td><td>Build / Chat 等产品的周用量与重置时间（多账号，每个账号一行）</td><td><code>~/.grok/auth.json</code></td></tr>
+      <tr><td>Kimi</td><td>5 小时窗与周窗口用量</td><td><code>~/.kimi-code/credentials/kimi-code.json</code></td></tr>
+      <tr><td>ChatGPT / Codex</td><td>5 小时窗与周窗口用量（多账号）</td><td><code>~/.codex/auth.json</code></td></tr>
+      <tr><td>Gemini / Antigravity</td><td>配额百分比与重置时间</td><td>Windows 凭据管理器 <code>gemini:antigravity</code></td></tr>
+      <tr><td>Command Code</td><td>5 小时窗与周窗口用量，可选余额</td><td><code>~/.commandcode/auth.json</code></td></tr>
+      <tr><td>OpenRouter</td><td>密钥额度与上限（每个密钥一行）</td><td><code>~/.openrouter/auth.json</code> 或环境变量</td></tr>
+      <tr><td>DeepSeek</td><td>账户余额与充值 / 赠额明细</td><td><code>~/.deepseek/auth.json</code> 或环境变量</td></tr>
+      <tr><td>Claude Code</td><td>5 小时窗与周窗口用量</td><td><code>~/.claude/.credentials.json</code></td></tr>
+      <tr><td>Cursor</td><td>计费周期已用百分比与剩余额度</td><td>Cursor 的 <code>state.vscdb</code></td></tr>
+      <tr><td>GLM / Z.AI / 智谱 BigModel</td><td>Coding Plan 的 5 小时窗与周窗口</td><td><code>~/.zai</code>、<code>~/.zhipu</code>、<code>~/.bigmodel</code> 或 ZCode 配置</td></tr>
+      <tr><td>GitHub Copilot</td><td>Premium requests 已用占比与重置日期</td><td><code>~/.config/github-copilot</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>主要能力</h3>
+  <ul class="features">
+    <li>额度预警与重置提醒，支持每个供应商单独设置阈值</li>
+    <li>7 天迷你趋势线、额度耗尽时间预测、按供应商静音时段</li>
+    <li>1 - 3 列布局、浅色 / 深色主题、透明度与紧凑模式、锁定位置</li>
+    <li>历史记录落盘为 JSONL，可导出原始采样 CSV、按天汇总 CSV、月度报表 Markdown / HTML</li>
+    <li>每日汇总气泡、托盘菜单、中英双语界面（跟随系统或手动指定）</li>
+    <li>右键「关于…」可检查 GitHub 最新 Release</li>
+  </ul>
+</section>
+<section id="en" class="lang-block">
+  <h2>English</h2>
+  <p>A small always-on-top card that docks to the edge of your desktop. One row per provider shows the used
+     percentage, the window reset time and a trend line; hover for details and double-click to open the
+     provider's own usage page. Everything is read from credentials already on your machine - nothing is
+     proxied through a third-party server.</p>
+
+  <h3>Providers</h3>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Shows</th><th>Credential source</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Grok</td><td>Weekly usage and reset time (one row per account)</td><td><code>~/.grok/auth.json</code></td></tr>
+      <tr><td>Kimi</td><td>5-hour and weekly windows</td><td><code>~/.kimi-code/credentials/kimi-code.json</code></td></tr>
+      <tr><td>ChatGPT / Codex</td><td>5-hour and weekly windows (multi account)</td><td><code>~/.codex/auth.json</code></td></tr>
+      <tr><td>Gemini / Antigravity</td><td>Quota percentage and reset time</td><td>Windows Credential Manager <code>gemini:antigravity</code></td></tr>
+      <tr><td>Command Code</td><td>5-hour and weekly windows, optional balance</td><td><code>~/.commandcode/auth.json</code></td></tr>
+      <tr><td>OpenRouter</td><td>Key credit usage and limit (one row per key)</td><td><code>~/.openrouter/auth.json</code> or an environment variable</td></tr>
+      <tr><td>DeepSeek</td><td>Account balance and top-up detail</td><td><code>~/.deepseek/auth.json</code> or an environment variable</td></tr>
+      <tr><td>Claude Code</td><td>5-hour and weekly windows</td><td><code>~/.claude/.credentials.json</code></td></tr>
+      <tr><td>Cursor</td><td>Billing period percentage and remaining credit</td><td>Cursor <code>state.vscdb</code></td></tr>
+      <tr><td>GLM / Z.AI / Zhipu BigModel</td><td>Coding Plan 5-hour and weekly windows</td><td><code>~/.zai</code>, <code>~/.zhipu</code>, <code>~/.bigmodel</code> or the ZCode config</td></tr>
+      <tr><td>GitHub Copilot</td><td>Premium request percentage and reset date</td><td><code>~/.config/github-copilot</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Highlights</h3>
+  <ul class="features">
+    <li>Alert thresholds per provider, plus reset notifications</li>
+    <li>7-day sparkline, exhaustion forecast, quiet hours</li>
+    <li>1 - 3 column layout, light and dark theme, opacity, compact mode, position lock</li>
+    <li>History is stored as JSONL and can be exported as raw CSV, daily totals CSV or a monthly Markdown / HTML report</li>
+    <li>Daily summary balloon, tray menu, Chinese and English UI</li>
+    <li>"About..." in the tray menu checks the latest GitHub release</li>
+  </ul>
+</section>
+
+<section id="install" class="lang-block">
+  <h2>安装 / Install</h2>
+  <p>仓库自带安装器，重复执行即为升级，不需要管理员权限：</p>
+  <pre><code>git clone https://github.com/Regine88/ai-usage-widget
+cd ai-usage-widget
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1</code></pre>
+  <p>常用参数：<code>.\install.ps1 -Status</code> 查看状态，<code>.\install.ps1 -Uninstall</code> 卸载，
+     <code>.\install.ps1 -Uninstall -Purge</code> 连数据一起清掉。</p>
+  <p>也可以直接下载 Release 里的 zip 安装，或让 Scoop 管理：</p>
+  <pre><code>.\install.ps1 -Zip .\ai-usage-widget-{{VERSION}}.zip
+scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/download/ai-usage-widget.json</code></pre>
+  <p>不想安装时，双击仓库里的 <code>Start-AiUsageWidget.vbs</code> 就能免安装运行；
+     想先看界面效果，用 <code>-Demo</code> 参数启动即可看到固定演示数据。</p>
+
+  <div class="shots">
+    <img src="assets/demo-card.light.png" alt="Light theme">
+    <img src="assets/demo-menu.png" alt="Tray menu">
+    <img src="assets/demo-card.en.png" alt="English UI">
+  </div>
+</section>
+
+<section id="config" class="lang-block">
+  <h2>配置 / Configuration</h2>
+  <p>所有开关都在 <code>ai-config.json</code>，也可以在卡片右键「设置…」里改：刷新间隔、供应商开关、透明度、
+     阈值、静音时段、界面语言、窗口列数、每日汇总与分供应商阈值。配置文件与历史记录只写在本机，
+     发布包里不会包含任何个人数据。</p>
+  <pre><code>{
+  "intervalSeconds": 300,
+  "columns": 2,
+  "dailySummary": true,
+  "providers": { "grok": true, "copilot": true }
+}</code></pre>
+</section>
+
+<section id="docs" class="lang-block">
+  <h2>文档 / Docs</h2>
+  <ul class="features">
+    <li><a href="{{REPO}}/blob/main/README.md">README（中文）</a> · <a href="{{REPO}}/blob/main/README.en.md">README (English)</a></li>
+    <li><a href="{{REPO}}/blob/main/docs/providers.md">各供应商字段来源与失败降级</a></li>
+    <li><a href="{{REPO}}/blob/main/docs/architecture.md">架构与数据流</a></li>
+    <li><a href="{{REPO}}/blob/main/docs/troubleshooting.md">排错手册</a></li>
+    <li><a href="{{REPO}}/blob/main/CHANGELOG.md">更新日志</a> · <a href="{{REPO}}/blob/main/CONTRIBUTING.md">参与贡献</a> · <a href="{{REPO}}/blob/main/SECURITY.md">安全策略</a></li>
+  </ul>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>AI Usage Widget {{VERSION}} · MIT License · 与各供应商官方无关，仅读取本机凭证做本地展示。</p>
+  </div>
+</footer>
+</body>
+</html>

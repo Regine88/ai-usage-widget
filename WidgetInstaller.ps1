@@ -28,6 +28,7 @@ $script:WidgetRuntimeFiles = @(
     'WidgetUpdates.ps1'
     'ModelRequestRecorder.ps1'
     'UsageHistory.ps1'
+    'UsageReport.ps1'
     'WidgetConfig.ps1'
     'WidgetStrings.ps1'
     'WidgetInstaller.ps1'

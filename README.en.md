@@ -30,10 +30,10 @@ The light theme uses the same layout (switch in the settings dialog, or run with
 | **DeepSeek** | Account balance with the topped-up / granted breakdown (no percentage) | Single account | `~/.deepseek/auth.json` or `$env:DEEPSEEK_API_KEY` |
 | **Claude Code** | 5-hour and weekly window usage | Single account | `~/.claude/.credentials.json` (OAuth, not an API key) |
 | **Cursor** | Current billing-cycle used percent and remaining pool | Single account | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
-| **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Single account | `~/.zai/auth.json`, `~/.zhipu/auth.json`, or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
+| **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Single account | `~/.zai/auth.json`, `~/.zhipu/auth.json`, `~/.bigmodel/auth.json` (or ZCode's `~/.zcode/v2/config.json`), or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
 | **GitHub Copilot** | Used share of the premium requests and the quota reset date | Single account | `~/.config/github-copilot/hosts.json` / `apps.json` (OpenCode `auth.json` works too) |
 
-If you already signed in to the matching CLI or extension (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity, GitHub Copilot for VS Code)
+If you already signed in to the matching CLI or extension (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity, GitHub Copilot for VS Code, ZCode)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
 when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the widget reads
 `~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) for one row per key, and
@@ -51,7 +51,8 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 - **Exhaustion forecast** - the tooltip estimates when the quota runs out and whether that happens before the next reset.
 - **One to three columns** - lay the card out as 2 or 3 columns so a long provider list stops growing downward; the column count lives in the settings dialog and in `ai-config.json`.
 - **Daily summary** - optionally raise one tray balloon per day at a fixed time, listing every row as it stands; never fires twice on the same day.
-- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, columns, theme, opacity, thresholds, per-provider thresholds, quiet hours, daily summary), applied live on save, and the full history exports to CSV.
+- **History reports** - right-click, **Export history**: raw sample CSV, per-day rollup CSV, a monthly Markdown report and a self-contained HTML report; defaults to the most recent month with data and says so instead of writing an empty file.
+- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, columns, theme, opacity, thresholds, per-provider thresholds, quiet hours, daily summary), applied live on save.
 - **Graceful degradation** - one slow provider only affects its own row and backs off exponentially (30s up to 15min).
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
 - **Two engines** - works on Windows PowerShell 5.1 and PowerShell 7.x; CI runs the same offline suites on both.
@@ -68,13 +69,14 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 | Double-click the tray icon | Show or hide the card |
 | Right-click the card | Opens the menu (see below) |
 | Hover a row | Shows a tooltip with details, reset time and the exhaustion forecast |
-| Right-click, **Export usage CSV** | Writes the whole history to `ai-usage-<timestamp>.csv` in the app directory (UTF-8, opens in Excel) |
+| Right-click, **Export history** | Four entries: raw sample CSV (the whole history, `ai-usage-<timestamp>.csv`), per-day rollup CSV, monthly Markdown report, monthly HTML report; defaults to the most recent month with data |
 
 ![Context menu](docs/images/demo-menu.en.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
-register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek),
-export usage CSV, settings, about, always on top, run at startup, quit.
+register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot),
+export history (raw sample CSV / per-day rollup CSV / monthly Markdown report / monthly HTML report),
+settings, about, always on top, run at startup, quit.
 
 ## Quick start
 
@@ -126,7 +128,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.13.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.14.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -139,7 +141,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.13.0
+# AI Usage Widget 0.14.0
 ```
 
 ### Multiple accounts
@@ -269,6 +271,7 @@ CopilotQuota.ps1         GitHub Copilot quota parsing and token discovery
 WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
+UsageReport.ps1          Monthly reports: per-day / monthly rollups rendered as CSV / Markdown / HTML
 WidgetConfig.ps1         ai-config.json read/write and validation
 WidgetPalette.ps1        Dark / light palette (single source of UI colours)
 WidgetLayout.ps1         Card row metrics (full / compact)
@@ -276,8 +279,10 @@ WidgetFormat.ps1         Percent, reset and error text
 WidgetStrings.ps1        Language pack loading and string lookup
 strings/                 Language packs (zh-CN.json / en-US.json)
 WidgetInstaller.ps1      Install / upgrade / uninstall implementation
+WidgetPackage.ps1        Release package content checks (expected entries, embedded version, Scoop manifest)
 install.ps1              Installer entry point
-tools/                   Release packaging script
+tools/                   Release packaging, package verification and landing-page build scripts
+site/                    GitHub Pages landing page (bilingual, version injected at build time)
 Record-ModelRequest.ps1  Standalone entry point for recording events
 test-*.ps1               Offline test suite per module
 Start-AiUsageWidget.vbs  Windowless launcher
@@ -291,13 +296,14 @@ docs/                    Architecture, provider, troubleshooting docs and screen
 - [Architecture](docs/architecture.md): process and thread model, data flow, row contract, storage layout
 - [Providers](docs/providers.md): data source per provider and the seven steps to add a new one
 - [Troubleshooting](docs/troubleshooting.md): missing card, expired login, timeouts, DPI, startup issues
+- [Project site](https://regine88.github.io/ai-usage-widget/): bilingual landing page built by GitHub Pages
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Contributing
 
 Issues and pull requests are welcome: new providers, more themes and layout modes (mini), and packaging
 are all on the roadmap. The compact layout and position lock shipped in 0.11.0, the multi-column layout
-and the daily summary shipped in 0.13.0. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
+and the daily summary shipped in 0.13.0, history reports and release-package verification shipped in 0.14.0. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
 testing requirement (both PowerShell versions) and the security ground rules (never commit credentials,
 logs or files containing personal data).
 

@@ -54,6 +54,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
+| `UsageReport.ps1` | 历史报表纯函数：月份归一与边界、按天汇总、月度汇总（复用趋势斜率）、CSV / Markdown / 自包含 HTML 渲染与文件名生成 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、主题、布局、锁定位置、不透明度、阈值、静音时段、语言），非法值回退默认 |
 | `WidgetPalette.ps1` | 深色 / 浅色调色板：`ConvertTo-WidgetTheme` 白名单解析、`Get-WidgetPalette` 返回 13 键颜色表，界面颜色的唯一来源 |
 | `WidgetLayout.ps1` | 卡片尺寸纯函数：`Get-WidgetLayoutMetrics`（full / compact）与 `Get-WidgetFormHeight`，不引用 WinForms |
@@ -61,7 +62,11 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `WidgetStrings.ps1` | 界面文案：语言代码白名单解析、语言包读取与兜底表、`T` / `Get-WidgetText` 取值（主进程与 worker 共用同一张表） |
 | `strings/*.json` | 语言包：纯键值 JSON，多种语言的键集必须一致，`_` 前缀的键在加载时忽略 |
 | `WidgetInstaller.ps1` | 安装 / 升级 / 卸载实现：运行文件清单、用户数据判定与开始菜单快捷方式；安装器与发布打包共用这份清单 |
+| `WidgetPackage.ps1` | 发布包内容校验纯函数：期望条目清单、禁止条目判定、压缩包条目比对、包内版本号与 Scoop manifest 检查 |
 | `tools/package-release.ps1` | Release 打包：按清单组装 zip、生成 SHA256 与 Scoop manifest（本地与 CI 共用） |
+| `tools/verify-package.ps1` | 打包后校验入口：解压 zip 后调 `WidgetPackage.ps1` 比对条目、版本号与 manifest，失败即非零退出 |
+| `tools/build-site.ps1` | 落地页构建：替换 `site/` 里的 `{{VERSION}}` / `{{REPO}}` 占位符输出到 `_site/`，并校验相对引用存在 |
+| `site/` | 中英双语落地页源码（`index.html` / `style.css` / `.nojekyll`），由 Pages 工作流构建 |
 | `Record-ModelRequest.ps1` | 供外部工具调用的独立入口：追加一条请求事件 |
 | `Start-*.vbs` | 无窗口启动器；`Start-AiUsageWidget.vbs` 对应聚合卡片 |
 | `test-*.ps1` | 每个模块对应的离线测试套件，成功时打印 `ALL PASSED` |
@@ -166,6 +171,17 @@ wscript.exe  Start-AiUsageWidget.vbs
 `Send-DailySummaryIfDue` 在每轮抓取结束后调用：到点就收集当前各行文本、弹一次气泡，
 并把日期写进 `ai-state.json` 的 `lastSummaryDate`，因此重启卡片也不会在同一天重复提醒。
 
+### 历史报表导出
+
+`UsageReport.ps1` 全部是纯函数：`ConvertTo-UsageReportMonth` / `Get-UsageReportMonthStart` 负责月份归一与边界，
+`Get-UsageHistoryDailyRollup` 按天聚出「起始 / 结束百分比、样本数、最小值、最大值、变化量」，
+`Get-UsageHistoryMonthlySummary` 在此基础上按供应商汇总，并复用 `Get-UsageTrendSlope` 算日均斜率。
+
+渲染层三选一：`ConvertTo-UsageReportCsv`（按天汇总，UTF-8 带 BOM 让 Excel 认出中文）、
+`ConvertTo-UsageReportMarkdown`、`ConvertTo-UsageReportHtml`（自包含，样式内联、不引用任何外部资源）。
+菜单的「导出历史」默认取最近一个有数据的月份，输出到程序目录的 `ai-usage-report-<YYYY-MM>.<ext>`；
+没有任何历史记录时只提示 `report.empty`，不会生成空文件。
+
 ## worker 边界（新增供应商最容易踩的地方）
 
 worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没有主脚本的变量。`Get-WorkerScriptSource` 负责：
@@ -186,6 +202,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 | `<安装目录>\ai-install.json` | 安装元数据：版本、安装时间与文件清单（由安装器维护） | 否 |
 | `<程序目录>\ai-config.json` | 供应商开关、刷新间隔、主题、不透明度、趋势与提醒设置 | 否（`.gitignore`） |
 | `<程序目录>\ai-history.jsonl` | 用量百分比时间序列（超过 1MB 自动保留最后 2000 行） | 否 |
+| `<程序目录>\ai-usage-report-<YYYY-MM>.csv / .md / .html` | 手动导出的历史报表（按天汇总 CSV / Markdown / HTML） | 否 |
 | `<程序目录>\ai-request-events.jsonl` | 请求事件元数据 | 否 |
 | `<程序目录>\ai-widget.log` | 日志，自动轮转 | 否 |
 | `~/.grok/auth.json` 等 | 各供应商自己的凭证，本程序只读 | 否 |
@@ -204,10 +221,23 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 - 涉及 WinForms 的代码不写测试，改用 `-Demo` 模式做人工回归：固定数据渲染、不写状态、不联网。
 - CI 在两个 PowerShell 版本上跑同样的套件，任何一侧失败都视为构建失败。
 
+## 发布流水线
+
+打包与校验是两条独立路径，共用同一份 `WidgetInstaller.ps1` 运行文件清单：
+
+1. `tools/package-release.ps1` 按清单组装 zip，并生成 `.sha256` 与 Scoop manifest；
+2. `tools/verify-package.ps1` 解压 zip 后用 `WidgetPackage.ps1` 比对「期望条目 vs 压缩包条目」，
+   检查禁止文件（数据 / 凭证 / 日志）、包内版本号、`.sha256` 与 manifest 的 version / hash / url / extract_dir / checkver / persist；
+3. CI 的 `package` job 与 Release 工作流的 `Verify package contents` 步骤都会跑第 2 步，校验失败即构建失败。
+
+落地页走独立的 `pages.yml`：`tools/build-site.ps1` 注入版本号与仓库地址后输出 `_site/`，
+引用了缺失资源的页面会直接构建失败。
+
 ## 已知取舍与后续方向
 
 - 主程序仍是单文件（UI 与调度耦合），但布局计算在 `WidgetLayout.ps1`、文案格式化在 `WidgetFormat.ps1`，均可离线测试。
 - WinForms 没有原生暗色主题支持，当前的暗色 / 浅色卡片是自绘圆角面板 + `WidgetPalette.ps1` 调色板。
-- 提醒阈值可全局配置，也可在 `ai-config.json` 的 `providerAlertThresholds` 里按供应商覆盖；设置窗口仍只编辑全局阈值。
+- 提醒阈值可全局配置，也可在 `ai-config.json` 的 `providerAlertThresholds` 里按供应商覆盖，两者都能在设置窗口编辑。
 - 紧凑布局与多列布局都已提供；跨显示器 DPI 不会在拖动时重算（`UiScale` 在进程内缓存）。
 - 每日汇总只汇总"当下快照"，不做历史上的对比，也没有节假日 / 工作日区分。
+- 历史报表按月导出，月份来自历史记录里已经出现的数据；没有界面内图表，跨月对比需要手工打开两份报表。
