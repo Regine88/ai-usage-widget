@@ -118,6 +118,39 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
 5. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
 6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek`、`~/.claude`、`~/.zai`、`~/.zhipu` 以及 Cursor 的 `%APPDATA%\Cursor` 是各供应商自己的数据，本程序不会写入（Claude 令牌过期时会原地刷新），按需自行保留。
 
+## 想改列数 / 卡片变得很宽
+
+卡片按 `columns` 排成 1 - 3 列。3 列时窗体宽度约等于单列的 3 倍，屏幕放不下时会被夹在屏幕边缘。
+右键 → **设置…** → 「窗口列数」调小即可，也可以直接改 `ai-config.json` 的 `columns`，保存后立即重排，不用重启。
+
+多列不会压缩每一行：行宽仍是单列宽度，只是把行折成多条"行带"（例如 9 行 3 列 = 3 条行带）。
+所以 3 列 9 行和 1 列 3 行一样高。
+
+## 每日汇总没有弹出来
+
+按顺序检查这五条：
+
+1. `ai-config.json` 里 `dailySummary.enabled` 是不是 `true`（对应设置窗口里的「每日汇总」勾选框）；
+2. 当前时间是否已经过了 `dailySummary.time`（默认 `09:00`），没到点不会提前弹；
+3. 当天是否已经弹过一次：日期写在 `ai-state.json` 的 `lastSummaryDate`，同一天只弹一次，删掉这个字段即可重置；
+4. 是否落在静音时段（`quietHours`），静音对所有气泡都生效；
+5. 卡片上是否已经有数据：一行都没读到数据时不发汇总。
+
+## GitHub Copilot 一行没有数据
+
+Copilot 行只在**本机存在凭证**时才出现，按顺序尝试下面三处：
+
+| 顺序 | 路径 | 取的键 |
+| --- | --- | --- |
+| 1 | `~/.config/github-copilot/hosts.json` | `oauth_token` |
+| 2 | `~/.config/github-copilot/apps.json` | `access_token` |
+| 3 | `~/.local/share/opencode/auth.json` | `github-copilot.access` |
+
+- 三处都没有时这一行完全不出现，不会显示成空行。
+- 路径不在默认位置时用 `$env:GH_COPILOT_HOSTS` 直接指定 hosts.json，或用 `$env:COPILOT_CONFIG_DIR` 换配置目录。
+- 有凭证却报错：`copilot_internal/user` 是社区在用的内部接口，不是官方文档接口，
+  GitHub 改版后可能返回 401 / 404，日志里会记下状态码，请连同版本号一起反馈。
+
 ## 报告问题前请准备
 
 - `pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version` 的输出。
