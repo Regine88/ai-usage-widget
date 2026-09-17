@@ -6,6 +6,15 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.11.1] - 2026-09-17
+
+让 PSScriptAnalyzer 的 Error 门禁真正能绿：修掉自动变量名冲突，并标明 DPAPI 包装不是明文密码。
+
+### Fixed
+
+- `Write-ModelRequestEvent` / `Record-ModelRequest.ps1` 的参数名 `$Error` 与 PowerShell 只读自动变量冲突。
+- `ConvertTo-SnapshotCipherText` 对 `ConvertTo-SecureString -AsPlainText` 加上抑制说明：这是当前用户 DPAPI 包装快照 JSON，不是口令。
+
 ## [0.11.0] - 2026-09-17
 
 工程收口：把布局和文案抽成可测模块，修刷新间隔被状态文件盖掉的回归，并补上锁定位置与紧凑布局。

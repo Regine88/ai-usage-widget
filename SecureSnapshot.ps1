@@ -33,6 +33,7 @@ function Get-SecureSnapshotPath {
 }
 
 function ConvertTo-SnapshotCipherText {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '', Justification = 'Current-user DPAPI wrap of the snapshot JSON; this is not a password.')]
     param([Parameter(Mandatory)][string]$Json)
     $secure = ConvertTo-SecureString -String $Json -AsPlainText -Force
     return (ConvertFrom-SecureString -SecureString $secure)

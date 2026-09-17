@@ -98,7 +98,7 @@ function Write-ModelRequestEvent {
         [datetime]$StartedAt = [datetime]::MinValue,
         [datetime]$CompletedAt = [datetime]::MinValue,
         [Nullable[double]]$DurationMs,
-        [string]$Error,
+        [string]$ErrorMessage,
         [string]$Path,
         [switch]$Strict
     )
@@ -135,7 +135,7 @@ function Write-ModelRequestEvent {
         status     = $Status
         durationMs = $duration
         source     = Convert-RequestEventValue $Source 80
-        error      = Convert-RequestEventValue $Error 240
+        error      = Convert-RequestEventValue $ErrorMessage 240
     }
 
     try {
@@ -180,7 +180,7 @@ function Invoke-RecordedModelRequest {
         $completed = [datetime]::UtcNow
         Write-ModelRequestEvent -Provider $Provider -Model $Model -AccountId $AccountId `
             -RequestId $requestId -Status failed -Operation $Operation -Source $Source `
-            -StartedAt $started -CompletedAt $completed -Error $_.Exception.Message -Path $Path
+            -StartedAt $started -CompletedAt $completed -ErrorMessage $_.Exception.Message -Path $Path
         throw
     }
 }

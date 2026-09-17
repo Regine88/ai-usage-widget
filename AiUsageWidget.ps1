@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.11.0'
+$script:AppVersion = '0.11.1'
 $script:DemoMode = $false
 
 if ($Version) {

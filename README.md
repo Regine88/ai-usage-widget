@@ -115,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.11.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.11.1.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -128,7 +128,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.11.0
+# AI Usage Widget 0.11.1
 ```
 
 ### 多账号

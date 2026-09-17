@@ -120,7 +120,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.11.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.11.1.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -133,7 +133,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.11.0
+# AI Usage Widget 0.11.1
 ```
 
 ### Multiple accounts

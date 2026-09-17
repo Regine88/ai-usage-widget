@@ -8,7 +8,7 @@ param(
     [string]$Operation = 'chat',
     [string]$Source = 'external',
     [Nullable[double]]$DurationMs,
-    [string]$Error,
+    [string]$ErrorMessage,
     [string]$Path,
     [switch]$Strict
 )

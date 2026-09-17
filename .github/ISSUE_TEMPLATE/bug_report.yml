@@ -30,7 +30,7 @@ body:
     attributes:
       label: 小组件版本
       description: 运行 `.\AiUsageWidget.ps1 -Version` 的输出
-      placeholder: AI Usage Widget 0.11.0
+      placeholder: AI Usage Widget 0.11.1
     validations:
       required: true
   - type: dropdown
