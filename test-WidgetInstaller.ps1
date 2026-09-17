@@ -136,10 +136,13 @@ $relDir = Join-Path (Join-Path $relRoot 'strings') '~extra'
 New-Item -ItemType Directory -Path $relDir -Force | Out-Null
 try {
     [IO.File]::WriteAllText((Join-Path $relRoot 'AiUsageWidget.ps1'), ('$script:AppVersion = ''9.9.12''' + [Environment]::NewLine), $utf8)
-    [IO.File]::WriteAllText((Join-Path $relDir 'zh-CN.json'), '{ "hello": "world" }', $utf8)
+    [IO.File]::WriteAllText((Join-Path $relRoot (Join-Path 'strings' 'zh-CN.json')), '{ "hello": "world" }', $utf8)
+    [IO.File]::WriteAllText((Join-Path $relDir 'en-US.json'), '{ "hello": "world" }', $utf8)
     $relList = @(Get-WidgetRuntimeFileList $relRoot)
-    Assert-Eq ($relList -contains 'strings\~extra\zh-CN.json') 'True' 'nested file keeps its relative path'
+    Assert-Eq ($relList -contains 'strings\zh-CN.json') 'True' 'file in the runtime dir keeps its relative path'
+    Assert-Eq ($relList -contains 'strings\~extra\en-US.json') 'True' 'nested file keeps its relative path'
     Assert-Eq (@($relList | Where-Object { -not (Test-Path -LiteralPath (Join-Path $relRoot $_)) }) -join ',') '' 'every listed file resolves from the source dir'
+    Assert-Eq (@($relList).Count) 3 'runtime dir list has no duplicates'
 } finally {
     Remove-Item -LiteralPath $relRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -55,14 +55,25 @@ function Get-WidgetPathStem {
     return $stem
 }
 
-# 取 $Full 相对 $Stem 的部分，大小写不一致也接受，返回的仍是 $Full 里的原始写法。
-function Get-WidgetPathRelativeTo {
-    param([string]$Full, [string]$Stem)
-    $full = [string]$Full
-    if (-not $full.StartsWith($Stem, [StringComparison]::OrdinalIgnoreCase)) {
-        throw ('路径不在预期目录内: ' + $full)
+# 目录相对某个祖先目录的部分：逐级向上比。Windows PowerShell 5.1 没有
+# Path.GetRelativePath，所以自己走目录名。两个路径都来自同一次 Get-ChildItem，
+# 写法必然一致（Windows runner 上 8.3 短名会展开成长名，不能和调用方的写法比）。
+function Get-WidgetPathRelativeToSub {
+    param([string]$Dir, [string]$SubDir)
+    $dir = ([string]$Dir).TrimEnd([char]92, [char]47)
+    $sub = ([string]$SubDir).TrimEnd([char]92, [char]47)
+    $parts = New-Object System.Collections.ArrayList
+    while ($dir.Length -gt $sub.Length) {
+        $leaf = Split-Path -Leaf $dir
+        if (-not $leaf) { break }
+        $dir = ([string](Split-Path -Parent $dir)).TrimEnd([char]92, [char]47)
+        if (-not $dir) { break }
+        $parts.Insert(0, $leaf)
     }
-    return $full.Substring($Stem.Length).TrimStart([char]92, [char]47)
+    if (-not $dir.Equals($sub, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ('路径不在预期目录内: ' + $Dir)
+    }
+    return ($parts -join '\')
 }
 
 function Get-WidgetRuntimeFileList {
@@ -75,13 +86,14 @@ function Get-WidgetRuntimeFileList {
         foreach ($sub in $script:WidgetRuntimeDirs) {
             $subDir = Join-Path $Dir $sub
             if (-not (Test-Path -LiteralPath $subDir -PathType Container)) { continue }
-            # 只相对 $subDir 取相对路径：$subDir 由调用方传入的 $Dir 写法逐级拼出，
-            # 而 $file.FullName 的写法可能不同（8.3 短名 RUNNER~1 会展开成长名
-            # runneradmin），直接拿根目录做前缀会砍错长度，把 strings\zh-CN.json
-            # 变成 rce\strings\zh-CN.json。
-            $subStem = Get-WidgetPathStem $subDir
+            # Get-ChildItem 报出的 FullName 和 $Dir 的写法可以不同：Windows runner 上
+            # TEMP 写作 8.3 短名 RUNNER~1，而 FullName 展开成长名 runneradmin。所以
+            # 相对路径只能拿同一次列目录里的两个路径去比，不能和 $subDir 比：按长度
+            # 截取会把 strings\zh-CN.json 变成 rce\strings\zh-CN.json。
             foreach ($file in (Get-ChildItem -LiteralPath $subDir -Recurse -File)) {
-                [void]$list.Add((Join-Path $sub (Get-WidgetPathRelativeTo $file.FullName $subStem)))
+                $inner = Get-WidgetPathRelativeToSub $file.Directory.FullName $subDir
+                $rel = if ($inner) { Join-Path $sub $inner } else { $sub }
+                [void]$list.Add((Join-Path $rel $file.Name))
             }
         }
     }
