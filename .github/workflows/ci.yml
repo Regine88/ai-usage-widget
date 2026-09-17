@@ -27,7 +27,7 @@ jobs:
             host: powershell
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # `shell:` does not accept the matrix context, so every step runs on pwsh
       # and the engine under test is invoked as a child process instead.
@@ -67,7 +67,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Analyze
         shell: pwsh
