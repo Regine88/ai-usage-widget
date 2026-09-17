@@ -102,6 +102,8 @@ $script:IntervalItems = @{}
 $script:IntervalExplicit = $PSBoundParameters.ContainsKey('IntervalSeconds')
 $script:Drag = $false
 $script:DragOffset = [System.Drawing.Point]::Empty
+$script:UiScale = $null
+$script:UiMetrics = $null
 $script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
 
 function Write-WidgetLog {
@@ -1252,10 +1254,72 @@ function Bind-Drag {
     })
 }
 
+# The layout below is authored in 96-DPI pixels, but the widget runs DPI aware
+# (Hide-ConsoleWindow calls SetProcessDPIAware), so fonts declared in points
+# render at the device DPI. Scaling every literal by the device scale keeps the
+# design proportions on 125%/150%/200% displays; otherwise the percent label and
+# the detail line overflow their fixed-size boxes and get clipped.
+function Get-UiScale {
+    param($Form)
+    if ($null -ne $script:UiScale) { return $script:UiScale }
+    $dpi = 0.0
+    try {
+        if ($Form -and -not $Form.IsDisposed) {
+            $null = $Form.Handle
+            $dpi = [double]$Form.DeviceDpi
+        }
+    } catch { }
+    if ($dpi -le 0) {
+        try {
+            $g = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+            try { $dpi = [double]$g.DpiX } finally { $g.Dispose() }
+        } catch { }
+    }
+    if ($dpi -le 0 -or $dpi -gt 960) { $dpi = 96.0 }
+    $script:UiScale = $dpi / 96.0
+    return $script:UiScale
+}
+
+function Scale-Px {
+    param([double]$Value)
+    return [int][Math]::Round($Value * (Get-UiScale))
+}
+
+function Get-UiMetrics {
+    param($Form)
+    if ($null -ne $script:UiMetrics) { return $script:UiMetrics }
+    $null = Get-UiScale $Form
+    $script:UiMetrics = @{
+        FormWidth  = (Scale-Px 280)
+        MarginX    = (Scale-Px 16)
+        ContentW   = (Scale-Px 248)
+        TopPad     = (Scale-Px 14)
+        RowH       = (Scale-Px 74)
+        BarInset   = (Scale-Px 10)
+        BottomPad  = (Scale-Px 26)
+        NameTop    = (Scale-Px 4)
+        NameW      = (Scale-Px 172)
+        NameH      = (Scale-Px 18)
+        PctW       = (Scale-Px 76)
+        PctH       = (Scale-Px 26)
+        BarTop     = (Scale-Px 30)
+        BarH       = (Scale-Px 8)
+        BarSeedW   = (Scale-Px 6)
+        DetailTop  = (Scale-Px 44)
+        DetailH    = (Scale-Px 16)
+        StampInset = (Scale-Px 24)
+        StampH     = (Scale-Px 18)
+        Radius     = (Scale-Px 18)
+        EdgeInset  = (Scale-Px 24)
+    }
+    return $script:UiMetrics
+}
+
 function Get-FormHeight {
     param([int]$RowCount)
+    $m = Get-UiMetrics
     $n = [Math]::Max(1, $RowCount)
-    return 14 + $n * 74 - 10 + 26
+    return $m.TopPad + $n * $m.RowH - $m.BarInset + $m.BottomPad
 }
 
 function Rebuild-ProviderRows {
@@ -1281,32 +1345,35 @@ function Rebuild-ProviderRows {
     $pctFont = $script:Fonts.Pct
     $detailFont = $script:Fonts.Detail
 
-    $y = 14
+    $m = Get-UiMetrics $Form
+    $y = $m.TopPad
     foreach ($spec in $Specs) {
-        $lblName = New-Label $Form "name-$y" 16 ($y + 4) 180 18 $nameFont $fg 'MiddleLeft'
+        $lblName = New-Label $Form "name-$y" $m.MarginX ($y + $m.NameTop) $m.NameW $m.NameH $nameFont $fg 'MiddleLeft'
         $lblName.Text = $spec.Name
         $lblName.Tag = $spec.OpenUrl
         $lblName.AutoEllipsis = $true
-        $lblPct = New-Label $Form "pct-$y" 196 $y 68 26 $pctFont (Get-UsageColor 0) 'MiddleRight'
+        $lblPct = New-Label $Form "pct-$y" ($m.MarginX + $m.NameW) $y $m.PctW $m.PctH $pctFont (Get-UsageColor 0) 'MiddleRight'
         $lblPct.Text = '--%'
         $lblPct.Tag = $spec.OpenUrl
+        $lblPct.AutoEllipsis = $true
 
         $barBack = New-Object System.Windows.Forms.Panel
-        $barBack.Location = New-Object System.Drawing.Point 16, ($y + 30)
-        $barBack.Size = New-Object System.Drawing.Size 248, 8
+        $barBack.Location = New-Object System.Drawing.Point $m.MarginX, ($y + $m.BarTop)
+        $barBack.Size = New-Object System.Drawing.Size $m.ContentW, $m.BarH
         Set-UiColor $barBack 'BackColor' ([System.Drawing.Color]::FromArgb(42, 42, 50).ToArgb())
         $barBack.Parent = $Form
         $barBack.Tag = $spec.OpenUrl
         $barFill = New-Object System.Windows.Forms.Panel
         $barFill.Location = New-Object System.Drawing.Point 0, 0
-        $barFill.Size = New-Object System.Drawing.Size 6, 8
+        $barFill.Size = New-Object System.Drawing.Size $m.BarSeedW, $m.BarH
         Set-UiColor $barFill 'BackColor' ((Get-UsageColor 0).ToArgb())
         $barFill.Parent = $barBack
         $barFill.Tag = $spec.OpenUrl
 
-        $lblDetail = New-Label $Form "detail-$y" 16 ($y + 44) 248 16 $detailFont $muted 'MiddleLeft'
+        $lblDetail = New-Label $Form "detail-$y" $m.MarginX ($y + $m.DetailTop) $m.ContentW $m.DetailH $detailFont $muted 'MiddleLeft'
         $lblDetail.Text = ''
         $lblDetail.Tag = $spec.OpenUrl
+        $lblDetail.AutoEllipsis = $true
 
         foreach ($c in @($lblName, $lblPct, $barBack, $barFill, $lblDetail)) {
             $c.ContextMenuStrip = $script:Ui.Menu
@@ -1329,12 +1396,12 @@ function Rebuild-ProviderRows {
                 try { $script:Ui.Tip.SetToolTip($c, $initTip) } catch { }
             }
         }
-        $y += 74
+        $y += $m.RowH
     }
 
     $h = Get-FormHeight $Specs.Count
-    $Form.Size = New-Object System.Drawing.Size(280, $h)
-    $round = New-RoundRectPath 0 0 $Form.Width $Form.Height 18
+    $Form.Size = New-Object System.Drawing.Size($m.FormWidth, $h)
+    $round = New-RoundRectPath 0 0 $Form.Width $Form.Height $m.Radius
     $old = $Form.Region
     try {
         $region = New-Object System.Drawing.Region($round)
@@ -1343,7 +1410,7 @@ function Rebuild-ProviderRows {
         $Form.Region = New-Object System.Drawing.Region($round)
     }
     if ($old) { try { $old.Dispose() } catch { } }
-    $script:Ui.Stamp.Top = $h - 24
+    $script:Ui.Stamp.Top = $h - $m.StampInset
     $script:Ui.Sig = (($Specs | ForEach-Object { $_.Id }) -join ',')
 }
 
@@ -1356,7 +1423,8 @@ function Set-RowUsage {
     if ($Row.Pct.Text -ne $text) { $Row.Pct.Text = [string]$text }
     Set-UiColor $Row.Pct 'ForeColor' $argb
     Set-UiColor $Row.BarFill 'BackColor' $argb
-    $w = [Math]::Max(0, [Math]::Min(248, [int][Math]::Round(248.0 * $colorPct / 100.0)))
+    $track = (Get-UiMetrics).ContentW
+    $w = [Math]::Max(0, [Math]::Min($track, [int][Math]::Round($track * $colorPct / 100.0)))
     if ($Row.BarFill.Width -ne $w) { $Row.BarFill.Width = $w }
     if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
     Set-UiColor $Row.Detail 'ForeColor' ([System.Drawing.Color]::FromArgb(152, 152, 160).ToArgb())
@@ -1468,7 +1536,8 @@ function New-WidgetForm {
     $form.Text = 'AI 周用量'
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-    $form.Size = New-Object System.Drawing.Size(280, (Get-FormHeight 3))
+    $m = Get-UiMetrics $form
+    $form.Size = New-Object System.Drawing.Size($m.FormWidth, (Get-FormHeight 3))
     Set-UiColor $form 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
     $form.Opacity = 0.96
     $form.TopMost = $false
@@ -1480,11 +1549,11 @@ function New-WidgetForm {
     if ($null -ne $script:State.x -and $null -ne $script:State.y) {
         $form.Location = Get-ClampedLocation ([int]$script:State.x) ([int]$script:State.y) $form.Width $form.Height
     } else {
-        $form.Location = New-Object System.Drawing.Point ($wa.Right - $form.Width - 24), ($wa.Top + 24)
+        $form.Location = New-Object System.Drawing.Point ($wa.Right - $form.Width - $m.EdgeInset), ($wa.Top + $m.EdgeInset)
     }
     Write-WidgetLog ("form location $($form.Left),$($form.Top)")
 
-    $round = New-RoundRectPath 0 0 $form.Width $form.Height 18
+    $round = New-RoundRectPath 0 0 $form.Width $form.Height $m.Radius
     try {
         $region = New-Object System.Drawing.Region($round)
         $form.GetType().GetProperty('Region').SetValue($form, $region, $null)
@@ -1494,7 +1563,7 @@ function New-WidgetForm {
 
     $dim = [System.Drawing.Color]::FromArgb(108, 108, 116)
     $footFont = New-Object System.Drawing.Font('Segoe UI', 8.5)
-    $lblStamp = New-Label $form 'stamp' 16 ($form.Height - 24) 248 18 $footFont $dim 'MiddleCenter'
+    $lblStamp = New-Label $form 'stamp' $m.MarginX ($form.Height - $m.StampInset) $m.ContentW $m.StampH $footFont $dim 'MiddleCenter'
     $lblStamp.Text = ''
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
