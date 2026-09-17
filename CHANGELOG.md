@@ -40,11 +40,11 @@
 
 ## [0.5.0] - 2026-09-17
 
-加固集成与显示修正（提交 [`5e766de`](https://github.com/Regine88/ai-usage-widget/commit/5e766de)）。
+加固集成与显示修正（提交 [`837cd1f`](https://github.com/Regine88/ai-usage-widget/commit/837cd1f)）。
 
 ### Added
 
-- 离线校验模块 `UsageValidation.ps1`、DPAPI 快照模块 `SecureSnapshot.ps1`、Kimi 配额解析模块 `KimiQuota.ps1` 及各自测试（[`640572d`](https://github.com/Regine88/ai-usage-widget/commit/640572d)）。
+- 离线校验模块 `UsageValidation.ps1`、DPAPI 快照模块 `SecureSnapshot.ps1`、Kimi 配额解析模块 `KimiQuota.ps1` 及各自测试（[`21b448a`](https://github.com/Regine88/ai-usage-widget/commit/21b448a)）。
 
 ### Changed
 
@@ -58,7 +58,7 @@
 
 ## [0.4.0] - 2026-09-17
 
-高 DPI 布局修复（提交 [`2e24c36`](https://github.com/Regine88/ai-usage-widget/commit/2e24c36)）。
+高 DPI 布局修复（提交 [`cabee6f`](https://github.com/Regine88/ai-usage-widget/commit/cabee6f)）。
 
 ### Fixed
 
@@ -66,7 +66,7 @@
 
 ## [0.3.0] - 2026-09-03
 
-接入 Command Code 与 Antigravity Gemini（提交 [`3dcf9bd`](https://github.com/Regine88/ai-usage-widget/commit/3dcf9bd)）。
+接入 Command Code 与 Antigravity Gemini（提交 [`663942a`](https://github.com/Regine88/ai-usage-widget/commit/663942a)）。
 
 ### Added
 
@@ -80,7 +80,7 @@
 
 ## [0.2.0] - 2026-08-25
 
-初始公开提交（[`eb58997`](https://github.com/Regine88/ai-usage-widget/commit/eb58997)）。
+初始公开提交（[`7205460`](https://github.com/Regine88/ai-usage-widget/commit/7205460)）。
 
 ### Added
 
