@@ -8,7 +8,7 @@
   再额外附带 install.ps1 与文档。输出目录默认是仓库根目录下的 dist。
 
 .EXAMPLE
-  pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.8.0
+  pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.9.0
 #>
 [CmdletBinding()]
 param(

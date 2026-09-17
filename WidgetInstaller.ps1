@@ -16,6 +16,7 @@ $script:WidgetRuntimeFiles = @(
     'KimiQuota.ps1'
     'CommandCodeQuota.ps1'
     'OpenRouterQuota.ps1'
+    'WidgetUpdates.ps1'
     'ModelRequestRecorder.ps1'
     'UsageHistory.ps1'
     'WidgetConfig.ps1'

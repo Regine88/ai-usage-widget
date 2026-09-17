@@ -42,6 +42,7 @@ when a token needs refreshing. OpenRouter is API-key only: the widget reads `~/.
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
 - **Two engines** - works on Windows PowerShell 5.1 and PowerShell 7.x; CI runs the same offline suites on both.
 - **Offline verification** - `-Demo` renders fixed data, ideal for screenshots and for telling UI bugs apart from credential bugs.
+- **Update check** - the About dialog shows the version, licence and project link, and checks GitHub for the latest release; a newer release brings its summary and a download button.
 
 ## Using the card
 
@@ -59,7 +60,7 @@ when a token needs refreshing. OpenRouter is API-key only: the widget reads `~/.
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
 register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter),
-export usage CSV, settings, always on top, run at startup, quit.
+export usage CSV, settings, about, always on top, run at startup, quit.
 
 ## Quick start
 
@@ -111,7 +112,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.8.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.9.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -124,7 +125,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.8.0
+# AI Usage Widget 0.9.0
 ```
 
 ### Multiple accounts
@@ -238,6 +239,7 @@ GeminiAntigravity.ps1    Gemini / Antigravity quota
 KimiQuota.ps1            Kimi payload parsing
 CommandCodeQuota.ps1     Command Code quota parsing
 OpenRouterQuota.ps1      OpenRouter key quota parsing
+WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
 WidgetConfig.ps1         ai-config.json read/write and validation

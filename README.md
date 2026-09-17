@@ -41,6 +41,7 @@
 - **本地优先**：账号快照用 Windows DPAPI 加密，日志与错误文本统一脱敏，账号只以短哈希出现。
 - **双引擎可用**：Windows PowerShell 5.1 与 PowerShell 7.x 都支持，CI 双版本跑同一套离线测试。
 - **可离线验证**：`-Demo` 用固定数据渲染界面，适合截图、录屏与排查"是界面问题还是凭证问题"。
+- **更新检查**：右键菜单 → **关于…** 显示版本、许可证与项目地址，一键检查 GitHub 上的最新 Release；有新版本时给出说明摘要与下载入口。
 
 ## 界面操作
 
@@ -57,7 +58,7 @@
 ![右键菜单](docs/images/demo-menu.png)
 
 右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记 Grok 账号、登记 ChatGPT 账号、
-打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter）、导出用量 CSV、设置…、浮在窗口上、开机启动、退出。
+打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter）、导出用量 CSV、设置…、关于…、浮在窗口上、开机启动、退出。
 
 ## 快速开始
 
@@ -108,7 +109,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.8.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.9.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -121,7 +122,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.8.0
+# AI Usage Widget 0.9.0
 ```
 
 ### 多账号
@@ -230,6 +231,7 @@ GeminiAntigravity.ps1    Gemini / Antigravity 配额
 KimiQuota.ps1            Kimi 载荷解析
 CommandCodeQuota.ps1     Command Code 配额解析
 OpenRouterQuota.ps1      OpenRouter 密钥配额解析
+WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
 WidgetConfig.ps1         ai-config.json 的读写与校验

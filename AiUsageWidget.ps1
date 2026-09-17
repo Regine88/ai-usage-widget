@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.8.0'
+$script:AppVersion = '0.9.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -101,6 +101,12 @@ $script:OpenRouterApiBaseUrl = 'https://openrouter.ai/api/v1'
 $script:OpenRouterUsagePageUrl = 'https://openrouter.ai/settings/keys'
 $script:OpenRouterDisplayName = 'OpenRouter'
 
+$script:UpdateRepoSlug = 'Regine88/ai-usage-widget'
+$script:UpdateUserAgent = 'ai-usage-widget'
+$script:UpdatePageUrl = 'https://github.com/' + $script:UpdateRepoSlug
+$script:UpdateReleasesUrl = $script:UpdatePageUrl + '/releases'
+$script:UpdateApiUrl = 'https://api.github.com/repos/' + $script:UpdateRepoSlug + '/releases/latest'
+
 $script:SelfPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 $script:WidgetDir = Split-Path -Parent $script:SelfPath
 $script:SecureSnapshotRoot = Join-Path $env:LOCALAPPDATA 'AIUsageWidget\accounts'
@@ -116,6 +122,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'KimiQuota.ps1')
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'OpenRouterQuota.ps1')
+. (Join-Path $script:WidgetDir 'WidgetUpdates.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
@@ -344,6 +351,8 @@ function Format-FetchError {
     if (-not $Message) { return (T 'error.readFailed') }
     $safe = Convert-SafeLogText $Message 160
     if ($safe -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return (T 'error.timeout') }
+    # 公开接口常用 403 表达匿名速率限制，先于通用的 403 分支匹配。
+    if ($safe -match 'rate limit|速率限制') { return (T 'error.tooMany') }
     if ($safe -match 'SSL|certificate|信任关系|could not be established') { return (T 'error.network') }
     if ($safe -match 'HTTP 401|\b401\b|Unauthorized|auth-expired|token-refresh') { return (T 'error.unauthorized') }
     if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return (T 'error.forbidden') }
@@ -1961,6 +1970,119 @@ function Show-WidgetSettings {
     $dialog.Dispose()
 }
 
+# About dialog: version, licence, project link and a manual GitHub update check.
+# The check runs synchronously on the UI thread; a manual click tolerates the
+# short freeze and keeps the dialog free of extra moving parts. The version
+# comparison itself lives in WidgetUpdates.ps1 and is covered by offline tests.
+function Show-WidgetAbout {
+    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
+    $linkColor = [System.Drawing.Color]::FromArgb(120, 190, 255)
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = (T 'about.title')
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowInTaskbar = $false
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 420), (Scale-Px 268))
+    $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    Set-UiColor $dialog 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
+    Set-UiColor $dialog 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+
+    $lblApp = New-SettingLabel $dialog (T 'app.title') (Scale-Px 18) (Scale-Px 16) $null
+    $lblApp.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
+    [void](New-SettingLabel $dialog (T 'about.version' @($script:AppVersion)) (Scale-Px 18) (Scale-Px 48) $muted)
+    [void](New-SettingLabel $dialog (T 'about.license') (Scale-Px 18) (Scale-Px 70) $muted)
+
+    $link = New-Object System.Windows.Forms.LinkLabel
+    $link.Text = $script:UpdatePageUrl
+    $link.AutoSize = $true
+    $link.Location = New-Object System.Drawing.Point ((Scale-Px 18), (Scale-Px 94))
+    $link.LinkColor = $linkColor
+    $link.ActiveLinkColor = $linkColor
+    $link.VisitedLinkColor = $linkColor
+    $link.LinkBehavior = [System.Windows.Forms.LinkBehavior]::HoverUnderline
+    $link.Add_LinkClicked({ Start-Process $script:UpdatePageUrl })
+    $link.Parent = $dialog
+
+    $lblStatus = New-SettingLabel $dialog '' (Scale-Px 18) (Scale-Px 126) $null
+    $lblStatus.MaximumSize = New-Object System.Drawing.Size ((Scale-Px 384), 0)
+
+    $lblNotes = New-SettingLabel $dialog '' (Scale-Px 18) (Scale-Px 152) $muted
+    $lblNotes.MaximumSize = New-Object System.Drawing.Size ((Scale-Px 384), 0)
+
+    # 按钮宽度跟着文案走：英文按钮比中文长，固定宽度会把 Open download page 裁掉。
+    $btnCheck = New-SettingButton $dialog (T 'about.checkUpdate') 0 (Scale-Px 222)
+    $btnOpen = New-SettingButton $dialog (T 'about.openReleases') 0 (Scale-Px 222)
+    $btnOpen.Visible = $false
+    $btnClose = New-SettingButton $dialog (T 'about.close') 0 (Scale-Px 222)
+    foreach ($button in @($btnClose, $btnOpen, $btnCheck)) {
+        $button.AutoSize = $true
+        $button.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+        $button.Padding = New-Object System.Windows.Forms.Padding ((Scale-Px 10), (Scale-Px 3), (Scale-Px 10), (Scale-Px 3))
+    }
+    # 隐藏的按钮不占位：先排「检查更新 + 关闭」，出现新版本后再把「打开下载页」排进去。
+    $layoutButtons = {
+        $order = @($btnCheck)
+        if ($btnOpen.Visible) { $order += $btnOpen }
+        $order += $btnClose
+        $gap = Scale-Px 10
+        $right = (Scale-Px 420) - (Scale-Px 18)
+        $total = 0
+        foreach ($button in $order) { $total += $button.Width }
+        if (($total + $gap * ($order.Count - 1)) -gt ($right - (Scale-Px 18))) { $gap = Scale-Px 6 }
+        $x = $right - $total - ($gap * ($order.Count - 1))
+        foreach ($button in $order) {
+            $button.Location = New-Object System.Drawing.Point $x, (Scale-Px 222)
+            $x += $button.Width + $gap
+        }
+    }
+    & $layoutButtons
+
+    $btnClose.Add_Click({ $dialog.Close() })
+    $dialog.CancelButton = $btnClose
+    $btnOpen.Add_Click({ Start-Process $script:UpdateReleasesUrl })
+    $btnCheck.Add_Click({
+        $btnCheck.Enabled = $false
+        $btnOpen.Visible = $false
+        & $layoutButtons
+        $lblNotes.Text = ''
+        $lblStatus.ForeColor = $muted
+        $lblStatus.Text = (T 'about.checking')
+        # 同步请求前先把「正在检查…」画出来，否则窗口看起来像卡住了。
+        $dialog.Refresh()
+        try {
+            $headers = @{
+                'User-Agent' = $script:UpdateUserAgent
+                'Accept'     = 'application/vnd.github+json'
+            }
+            $release = Invoke-WidgetRest -Uri $script:UpdateApiUrl -Headers $headers -TimeoutSec 15
+            $info = Get-WidgetUpdateInfo -Release $release -CurrentVersion $script:AppVersion
+            Write-WidgetLog ('update check: reason={0} latest={1}' -f $info.Reason, $info.LatestVersion)
+            if ($info.HasUpdate) {
+                $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 160)
+                $lblStatus.Text = (T 'about.updateAvailable' @($info.LatestVersion, $script:AppVersion))
+                $lblNotes.Text = $(if ($info.Notes) { $info.Notes } else { $info.Name })
+                $btnOpen.Visible = $true
+                & $layoutButtons
+            } elseif ($info.Reason -eq 'not-newer') {
+                $lblStatus.Text = (T 'about.upToDate' @($script:AppVersion))
+            } else {
+                $lblStatus.Text = (T 'about.noRelease')
+            }
+        } catch {
+            Write-WidgetLog ('update check failed: ' + (Convert-SafeLogText $_.Exception.Message 160))
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 138, 128)
+            $lblStatus.Text = (T 'about.checkFailed' @((Format-FetchError $_.Exception.Message)))
+        } finally {
+            $btnCheck.Enabled = $true
+        }
+    })
+
+    [void]$dialog.ShowDialog($script:Ui.Form)
+    $dialog.Dispose()
+}
 # Push the saved config into the live window without a restart.
 function Apply-WidgetConfig {
     try {
@@ -2040,6 +2162,7 @@ function New-WidgetForm {
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
+    $miAbout = $menu.Items.Add((T 'menu.about'))
     $miTop = $menu.Items.Add((T 'menu.topMost'))
     $miTop.Checked = [bool]$script:State.topMost
     [void]$menu.Items.Add('-')
@@ -2088,6 +2211,7 @@ function New-WidgetForm {
     $miRefresh.Add_Click({ Update-Widget })
     $miExportCsv.Add_Click({ Export-UsageHistoryInteractive })
     $miSettings.Add_Click({ Show-WidgetSettings })
+    $miAbout.Add_Click({ Show-WidgetAbout })
     foreach ($sec in $script:IntervalItems.Keys) {
         $script:IntervalItems[$sec].Add_Click({
             $chosen = [int]$this.Tag

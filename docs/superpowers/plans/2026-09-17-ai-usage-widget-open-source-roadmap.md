@@ -2,7 +2,7 @@
 
 > **状态（2026-09-17）：** 已确认并执行。P0 九项任务全部完成，验收记录见 `docs/superpowers/reports/2026-09-17-ai-usage-widget-open-source-acceptance.md`。
 
-> **P1 进度（2026-09-17）：** 第 1 项「更多供应商」进行中，首个供应商 OpenRouter 已随 0.8.0 发布（OpenRouterQuota.ps1 + 	est-OpenRouterProvider.ps1），其余候选待评估。
+> **P1 进度（2026-09-17）：** 第 1 项「更多供应商」进行中，首个供应商 OpenRouter 已随 0.8.0 发布（OpenRouterQuota.ps1 + test-OpenRouterProvider.ps1），其余候选待评估。
 
 **目标：** 把当前内部工具补齐为可公开、可贡献、可发布的开源项目，并按用户价值排序扩展功能。
 
@@ -16,12 +16,12 @@
 
 ### 已具备
 
-- 5 个供应商：Grok（多账号）、Gemini / Antigravity、Kimi、ChatGPT / Codex（多账号）、Command Code
+- 6 个供应商：Grok（多账号）、Gemini / Antigravity、Kimi、ChatGPT / Codex（多账号）、Command Code、OpenRouter（多账号）
 - 暗色圆角常驻卡片：拖拽与贴边吸附、置顶开关、双击打开用量页、右键菜单（立即刷新 / 刷新间隔 / 登记账号 / 打开用量页 / 浮在窗口上 / 开机启动 / 退出）
 - 托盘图标与 70/90 阈值气泡提醒、日志轮转、`ai-history.jsonl` 用量历史、`ai-request-events.jsonl` 请求事件
 - 凭据安全：DPAPI 快照、哈希命名、ACL 收紧、原子替换、互斥锁
 - 后台 MTA worker 抓取，UI 线程不阻塞
-- 8 个离线测试套件，双 PowerShell 版本全绿
+- 16 个离线测试套件，双 PowerShell 版本全绿
 - 高 DPI 自适应布局（2026-09-17 修复）
 
 ### 开源缺口
@@ -78,7 +78,7 @@
 
 6. 主题与布局：浅色主题、透明度、迷你 / 单行模式、多列、锁定位置。
 7. 提醒增强：重置提醒、每日汇总、按供应商自定义阈值。
-8. 更新检查（GitHub Release API）与“关于”窗口。
+8. **更新检查与“关于”窗口**（已完成，0.9.0）：右键菜单 → **关于…**，显示版本 / 许可证 / 项目链接，手动检查 GitHub 最新 Release；`WidgetUpdates.ps1` 负责版本比较与载荷解析。
 9. 工程质量：布局与格式化逻辑抽成可测模块，补布局回归测试。
 
 ---

@@ -33,7 +33,7 @@
 .EXAMPLE
   .\install.ps1 -Uninstall
 .EXAMPLE
-  .\install.ps1 -Zip .\ai-usage-widget-0.8.0.zip
+  .\install.ps1 -Zip .\ai-usage-widget-0.9.0.zip
 #>
 [CmdletBinding()]
 param(
