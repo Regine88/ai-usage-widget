@@ -6,6 +6,33 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.15.0] - 2026-09-17
+
+历史分析增强：新增「多月对比」导出与独立「趋势图」窗口，补齐项目自己记录在 0.14.0 验收证据里的两处缺口。
+
+### Added
+
+- `UsageReport.ps1` + `test-UsageReport.ps1`：多月对比纯函数——月份集合与区间（`Get-UsageReportComparisonMonths` /
+  `Get-UsageReportComparisonRange`）、按供应商聚合的环比变化（`Get-UsageHistoryMonthComparison`，
+  比较本月月末与上月月末的百分点差）、Markdown / 自包含 HTML 渲染与文件名生成。
+  行集是「区间内出现过的供应商 × 选中月份」的完整组合：某个月没有采样的供应商也会占一行，
+  各数值列显示占位符 `-`。单元格口径与单月报表一致（采样数、天数、月初、月末、最低、最高），
+  竖线与换行会被转义以免破坏表格结构。
+- 右键「导出历史」子菜单新增「多月对比 Markdown」与「多月对比 HTML」，默认取最近 3 个有数据的月份，
+  输出 `ai-usage-comparison-<最早月>_<最新月>.<ext>`；历史为空时沿用 `report.empty` 提示，不生成空文件。
+- `WidgetTrend.ps1` + `test-WidgetTrend.ps1`：趋势图纯函数模块——窗口天数归一、每日序列按天裁剪、
+  数据点坐标换算、坐标轴刻度与日期标签、最新百分比；合成序列仅供 `-Demo` 使用。
+- `Show-WidgetTrend` 窗口与右键「趋势图…」入口：按供应商画每日用量折线，可切换 7 / 14 / 30 天，
+  颜色取各组件在卡片上的用量调色板颜色；采样天数不足窗口的供应商只画已有的点，不补零。
+- `-TrendWindow` 启动开关：启动即打开趋势图窗口，供冒烟检查与截图使用。
+- `WidgetInstaller.ps1` 运行文件清单加入 `WidgetTrend.ps1`；中英语言包新增 `menu.trend`、
+  `report.compare*`、`trend.*` 等键，并同步 `WidgetStrings.ps1` 的兜底表。
+
+### Changed
+
+- `Use-UsageReportLabel` 提升为 `WidgetStrings.ps1` 里的共享助手 `Use-WidgetTextFallback`，
+  多份渲染代码共用同一套「缺键就退回内置英文」逻辑，不再各写一份。
+
 ## [0.14.0] - 2026-09-17
 
 历史报表与导出增强、发布包内容校验、GitHub Pages 落地页，外加智谱 BigModel（含 ZCode 凭证）并入 GLM 行。

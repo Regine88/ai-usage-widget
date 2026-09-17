@@ -122,3 +122,12 @@ function T {
     param([string]$Key, $Arguments)
     return (Get-WidgetText -Key $Key -Arguments $Arguments)
 }
+
+# 语言包缺键时 Get-WidgetText 会原样返回键名，直接显示就会露出 report.colSlope
+# 这类内部名字。报表与趋势图都用这个函数回落到内置英文文案。
+function Use-WidgetTextFallback {
+    param($Value, [string]$Key, [string]$Fallback)
+    $text = [string]$Value
+    if (-not $text -or $text -eq $Key) { return $Fallback }
+    return $text
+}

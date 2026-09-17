@@ -122,6 +122,73 @@ Assert-Eq (Get-UsageReportFileName -Month '2026-09' -Extension 'html') 'ai-usage
 Assert-Eq (Get-UsageReportFileName -Month '2026-09') 'ai-usage-report-2026-09.csv' 'csv is the default extension'
 Assert-Eq (Get-UsageReportFileName -Month 'bad' -Extension 'md') ('ai-usage-report-' + [datetime]::Now.ToString('yyyy-MM') + '.md') 'bad month falls back to now'
 
+# ---------- 多月对比 ----------
+$compareMonths = @(Get-UsageReportComparisonMonths -Records $records -Months 2 -Now $fixed)
+Assert-Eq ($compareMonths -join ',') '2026-09,2026-10' 'comparison months are the newest ones, oldest first'
+Assert-Eq (@(Get-UsageReportComparisonMonths -Records $records -Months 9 -Now $fixed).Count) 3 'the month limit cannot invent months'
+Assert-Eq (@(Get-UsageReportComparisonMonths -Records @() -Months 3 -Now $fixed).Count) 0 'no records means no comparison months'
+Assert-Eq (@(Get-UsageReportComparisonMonths -Records $records -Months 0 -Now $fixed).Count) 1 'a zero limit still asks for one month'
+Assert-Eq (Get-UsageReportComparisonRange -Months $compareMonths -Now $fixed) '2026-09 → 2026-10' 'comparison range joins the first and last month'
+Assert-Eq (Get-UsageReportComparisonRange -Months @('2026-09') -Now $fixed) '2026-09' 'a single month range is just that month'
+Assert-Eq (Get-UsageReportComparisonRange -Months @() -Now $fixed) '2026-09' 'an empty range falls back to the current month'
+
+$comparison = @(Get-UsageHistoryMonthComparison -Records $records -Months $compareMonths -Now $fixed)
+Assert-Eq $comparison.Count 4 'comparison covers every provider and month combination'
+Assert-Eq $comparison[0].Id 'grok' 'comparison rows are grouped by provider'
+Assert-Eq $comparison[0].Month '2026-09' 'a provider row set starts with the oldest month'
+Assert-Eq $comparison[0].Samples 3 'comparison keeps the monthly sample count'
+Assert-Eq $comparison[1].Month '2026-10' 'the newer month follows the older one'
+Assert-Eq $comparison[1].Last 99 'comparison keeps the monthly last value'
+Assert-Eq (Get-UsageReportChangeText $comparison[0].Change) '+15' 'change compares with the previous calendar month'
+Assert-Eq (Get-UsageReportChangeText $comparison[1].Change) '+79' 'change works for the newest month too'
+Assert-Eq $comparison[2].Id 'kimi' 'other providers follow'
+Assert-Eq (Get-UsageReportChangeText $comparison[2].Change) '-' 'a provider without a predecessor month has no change'
+Assert-Eq $comparison[3].Id 'kimi' 'a provider without samples in a month still gets a row'
+Assert-Eq $comparison[3].Month '2026-10' 'the empty row keeps the month of the interval'
+Assert-Eq $comparison[3].Samples $null 'a month without samples has no sample count'
+Assert-Eq $comparison[3].Days $null 'a month without samples has no day count'
+Assert-Eq $comparison[3].Last $null 'a month without samples has no last value'
+Assert-Eq (@(Get-UsageHistoryMonthComparison -Records $records -Months @() -Now $fixed).Count) 0 'no months means no comparison rows'
+
+Assert-Eq (Get-UsageReportChangeText 8) '+8' 'a positive change is signed'
+Assert-Eq (Get-UsageReportChangeText -3.5) '-3.5' 'a negative change keeps its sign'
+Assert-Eq (Get-UsageReportChangeText $null) '-' 'a missing change is a dash'
+Assert-Eq (Get-UsageReportChangeText ([double]::NaN)) '-' 'a non finite change is a dash'
+
+Assert-Eq (Get-UsageReportComparisonCell 12) '12' 'a seeded cell renders as a number'
+Assert-Eq (Get-UsageReportComparisonCell 31.5) '31.5' 'a fractional cell keeps its decimals'
+Assert-Eq (Get-UsageReportComparisonCell 0) '0' 'a zero is a real value, not a dash'
+Assert-Eq (Get-UsageReportComparisonCell $null) '-' 'a missing cell is a dash'
+Assert-Eq (Get-UsageReportComparisonCell ([double]::NaN)) '-' 'a non finite cell is a dash'
+
+Assert-Eq (Get-UsageReportComparisonFileName -Months $compareMonths -Extension 'html') 'ai-usage-comparison-2026-09_2026-10.html' 'comparison file name spans the range'
+Assert-Eq (Get-UsageReportComparisonFileName -Months @('2026-09')) 'ai-usage-comparison-2026-09.md' 'a single month file name has no range'
+Assert-Eq (Get-UsageReportComparisonFileName -Months @() -Extension 'md') ('ai-usage-comparison-' + [datetime]::Now.ToString('yyyy-MM') + '.md') 'an empty range uses the current month'
+
+$compareMd = ConvertTo-UsageReportComparisonMarkdown -Comparison $comparison -Months $compareMonths -GeneratedAt $fixed
+Assert-Eq $compareMd.Contains('· 2026-09 → 2026-10') 'True' 'comparison markdown carries the range'
+Assert-Eq $compareMd.Contains('| Provider | Month | Samples | Days | First | Last | Min | Max | Change |') 'True' 'comparison markdown header matches the html columns'
+Assert-Eq $compareMd.Contains('| grok | 2026-10 | 1 | 1 | 99 | 99 | 99 | 99 | +79 |') 'True' 'comparison markdown renders a month row'
+Assert-Eq $compareMd.Contains('| kimi | 2026-09 | 1 | 1 | 3 | 3 | 3 | 3 | - |') 'True' 'comparison markdown renders the dash for a missing change'
+Assert-Eq $compareMd.Contains('| kimi | 2026-10 | - | - | - | - | - | - | - |') 'True' 'comparison markdown renders a fully dashed row for a missing month'
+Assert-Eq $compareMd.Contains('means no samples that month') 'True' 'comparison markdown explains the dash'
+Assert-Eq $compareMd.EndsWith("`n") 'True' 'comparison markdown ends with a newline'
+Assert-Eq (ConvertTo-UsageReportComparisonMarkdown -Comparison @() -Months $compareMonths -GeneratedAt $fixed).Contains('No history samples for this month') 'True' 'comparison markdown explains an empty result'
+$comparePipe = ConvertTo-UsageReportComparisonMarkdown -Comparison @(@{ Id = 'a|b'; Month = '2026|09'; Samples = 1; Days = 1; First = 1; Last = 2; Min = 1; Max = 2; Change = $null }) -Months $compareMonths -GeneratedAt $fixed
+Assert-Eq $comparePipe.Contains('a\|b') 'True' 'comparison markdown escapes pipes in the provider'
+Assert-Eq $comparePipe.Contains('2026\|09') 'True' 'comparison markdown escapes pipes in the month'
+
+$compareHtml = ConvertTo-UsageReportComparisonHtml -Comparison $comparison -Months $compareMonths -GeneratedAt $fixed
+Assert-Eq $compareHtml.StartsWith('<!DOCTYPE html>') 'True' 'comparison html starts with the doctype'
+Assert-Eq $compareHtml.Contains('<meta charset="utf-8">') 'True' 'comparison html declares utf-8'
+Assert-Eq ($compareHtml -match 'https?://') 'False' 'comparison html is self contained'
+Assert-Eq $compareHtml.Contains('<style>') 'True' 'comparison html inlines its stylesheet'
+Assert-Eq $compareHtml.Contains('+79') 'True' 'comparison html carries the change column'
+Assert-Eq $compareHtml.Contains('<td>2026-10</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>') 'True' 'comparison html renders a fully dashed row for a missing month'
+Assert-Eq $compareHtml.Contains('means no samples that month') 'True' 'comparison html explains the dash'
+$compareEscaped = ConvertTo-UsageReportComparisonHtml -Comparison @(@{ Id = '<script>x</script>'; Month = '2026-09'; Samples = 1; Days = 1; First = 1; Last = 1; Min = 1; Max = 1; Change = $null }) -Months $compareMonths -GeneratedAt $fixed
+Assert-Eq $compareEscaped.Contains('<script>') 'False' 'comparison html escapes markup from the data'
+Assert-Eq $compareEscaped.Contains('&lt;script&gt;') 'True' 'comparison html keeps the escaped text visible'
 # ---------- 与语言包联动 ----------
 $script:WidgetStrings = @{ 'report.title' = 'REPORT-X'; 'report.colProvider' = 'P' }
 $labels = Get-UsageReportLabels
@@ -129,6 +196,30 @@ Assert-Eq $labels.Title 'REPORT-X' 'labels come from the string table when one i
 Assert-Eq $labels.Provider 'P' 'labels use the loaded table for every key'
 $script:WidgetStrings = $null
 Assert-Eq (Get-UsageReportLabels).Title 'AI usage report' 'labels fall back to the built in English table'
+
+# ---------- 多月对比文案 ----------
+$script:WidgetStrings = @{
+    'report.title' = 'REPORT-X'; 'report.colProvider' = 'P'; 'report.compareTitle' = 'TITLE-X'
+    'report.compareHeading' = 'COMPARE-X'; 'report.colMonth' = 'M'; 'report.colChange' = 'C'
+    'report.compareNote' = 'NOTE-X'
+}
+$compareLabels = Get-UsageReportComparisonLabels
+Assert-Eq $compareLabels.Title 'TITLE-X' 'comparison title comes from the string table'
+Assert-Eq $compareLabels.Heading 'COMPARE-X' 'comparison heading comes from the string table'
+Assert-Eq $compareLabels.Month 'M' 'comparison month label comes from the string table'
+Assert-Eq $compareLabels.Change 'C' 'comparison change label comes from the string table'
+Assert-Eq $compareLabels.Note 'NOTE-X' 'comparison note comes from the string table'
+Assert-Eq $compareLabels.Provider 'P' 'comparison labels reuse the report labels'
+
+# 语言包缺键时必须回落成英文，而不是把 report.compareHeading 这类键名显示出来
+$script:WidgetStrings = @{ 'report.title' = 'REPORT-X' }
+$missingLabels = Get-UsageReportComparisonLabels
+Assert-Eq $missingLabels.Title 'AI usage report - month over month' 'a missing comparison title falls back to English'
+Assert-Eq $missingLabels.Heading 'Month over month' 'a missing comparison heading falls back to English'
+Assert-Eq $missingLabels.Change 'Change' 'a missing change label falls back to English'
+Assert-Eq ($missingLabels.Note -like '"-"*') 'True' 'a missing note falls back to English'
+Assert-Eq $missingLabels.Title.Contains('report.compareTitle') 'False' 'a missing label never shows its key name'
+$script:WidgetStrings = $null
 
 if ($failed -gt 0) {
     Write-Host ("FAILED {0}" -f $failed)

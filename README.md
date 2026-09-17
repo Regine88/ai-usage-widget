@@ -49,6 +49,8 @@
 - **1 - 3 列卡片**：同一张卡片可以横向排成 2 列或 3 列，供应商多时不再拉得很长；列数在设置窗口或 `ai-config.json` 里调。
 - **每日汇总**：可选在每天固定时刻弹一次汇总气泡，列出当时各行的用量；同一天只提醒一次。
 - **历史报表导出**：右键 → **导出历史**，可选原始采样 CSV、按天汇总 CSV、月度报表 Markdown 与自包含 HTML；默认导出最近一个有数据的月份，历史为空时明确提示而不是生成空文件。
+- **多月对比**：同一子菜单里的「多月对比 Markdown / HTML」把最近 3 个月并排成「供应商 × 月份」表格，每个单元格给出该月的采样数、天数与月初 / 月末 / 最低 / 最高，并单列一栏给出与上月的环比百分点变化；HTML 自包含，某个月没有采样的供应商也会占一行并显示 `-`。
+- **趋势图窗口**：右键 → **趋势图…**（或启动时加 `-TrendWindow`），按供应商画出每日用量折线，可切换到 7 / 14 / 30 天；折线颜色沿用各组件在卡片上的用量颜色，图例给出最新百分比。窗口只读，不写任何文件。
 - **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、列数、主题、不透明度、阈值、分供应商阈值、静音时段、每日汇总），保存后即时生效。
 - **失败可降级**：单个供应商超时或报错只影响自己那一行，并进入指数退避（30 秒起，最长 15 分钟）。
 - **本地优先**：账号快照用 Windows DPAPI 加密，日志与错误文本统一脱敏，账号只以短哈希出现。
@@ -66,13 +68,17 @@
 | 双击托盘图标 | 显示 / 隐藏卡片 |
 | 右键卡片 | 打开菜单（见下图） |
 | 悬停某一行 | 显示明细提示（含重置时间与耗尽预测） |
-| 右键卡片 → **导出历史** | 子菜单四项：原始采样 CSV（全部历史，`ai-usage-<时间戳>.csv`）、按天汇总 CSV、月度报表 Markdown、月度报表 HTML；默认导出最近一个有数据的月份 |
+| 右键卡片 → **导出历史** | 子菜单六项：原始采样 CSV（全部历史，`ai-usage-<时间戳>.csv`）、按天汇总 CSV、月度报表 Markdown、月度报表 HTML、多月对比 Markdown、多月对比 HTML；单月报表默认导出最近一个有数据的月份，多月对比默认最近 3 个月 |
+| 右键卡片 → **趋势图…** | 打开趋势图窗口，默认最近 7 天，可切换 14 / 30 天 |
 
 ![右键菜单](docs/images/demo-menu.png)
 
 右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记 Grok 账号、登记 ChatGPT 账号、
 打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot）、
-导出历史（原始采样 CSV / 按天汇总 CSV / 月度报表 Markdown / 月度报表 HTML）、设置…、关于…、浮在窗口上、开机启动、退出。
+导出历史（原始采样 CSV / 按天汇总 CSV / 月度报表 Markdown / 月度报表 HTML / 多月对比 Markdown / 多月对比 HTML）、
+趋势图…、设置…、关于…、浮在窗口上、开机启动、退出。
+
+![趋势图窗口](docs/images/demo-trend.png)
 
 ## 快速开始
 
@@ -123,7 +129,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.14.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.15.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -136,7 +142,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.14.0
+# AI Usage Widget 0.15.0
 ```
 
 ### 多账号
@@ -262,6 +268,7 @@ WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
 UsageReport.ps1          月度报表：按天 / 月度汇总与 CSV / Markdown / HTML 渲染
+WidgetTrend.ps1          趋势图纯函数：每日序列裁剪、坐标换算与坐标轴刻度
 WidgetConfig.ps1         ai-config.json 的读写与校验
 WidgetPalette.ps1        深色 / 浅色调色板（界面颜色的唯一来源）
 WidgetLayout.ps1         卡片行高与窗体尺寸（full / compact）
@@ -291,7 +298,7 @@ docs/                    架构、供应商、排错文档与截图
 
 ## 参与贡献
 
-欢迎提交 Issue 与 PR：新供应商、更多分发方式仍在路线图上。紧凑布局与锁定位置在 0.11.0 提供，多列布局与每日汇总在 0.13.0 提供，历史报表导出与发布包内容校验在 0.14.0 提供。
+欢迎提交 Issue 与 PR：新供应商、更多分发方式仍在路线图上。紧凑布局与锁定位置在 0.11.0 提供，多列布局与每日汇总在 0.13.0 提供，历史报表导出与发布包内容校验在 0.14.0 提供，多月对比与趋势图窗口在 0.15.0 提供。
 提之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了测试要求（双 PowerShell 版本）与安全红线
 （绝不提交凭据、日志与含个人信息的文件）。
 

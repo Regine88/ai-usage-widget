@@ -5,6 +5,7 @@
 # Switches:
 #   -Version         print the widget version and exit
 #   -Demo            render fixed demo rows without credentials or network access
+#   -TrendWindow     open the trend chart window on startup (smoke checks, screenshots)
 #   -Theme <name>    force the dark or light palette for this run
 #   -Install         register the widget in the current user's startup folder
 #   -Uninstall       remove the startup registration
@@ -21,6 +22,7 @@ param(
     [switch]$MigrateSecrets,
     [switch]$Version,
     [switch]$Demo,
+    [switch]$TrendWindow,
     [string]$Theme = '',
     [int]$IntervalSeconds = 300
 )
@@ -29,8 +31,14 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.14.0'
+$script:AppVersion = '0.15.0'
 $script:DemoMode = $false
+# 趋势图窗口按需创建：$script:TrendForm 保存当前窗口，关闭后置空再重建。
+# 变量名不能叫 TrendWindow：脚本顶层的 $script:X 与 -X 开关参数是同一个变量，
+# 那样写会把 -TrendWindow 开关本身覆盖成窗口对象。
+$script:TrendWindowRequested = $false
+$script:TrendDays = 7
+$script:TrendForm = $null
 
 if ($Version) {
     Write-Host ('AI Usage Widget {0}' -f $script:AppVersion)
@@ -60,6 +68,7 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     if ($AddGrokAccount) { $argList += '-AddGrokAccount' }
     if ($MigrateSecrets) { $argList += '-MigrateSecrets' }
     if ($Demo) { $argList += '-Demo' }
+    if ($TrendWindow) { $argList += '-TrendWindow' }
     if ($Theme) { $argList += @('-Theme', $Theme) }
     if ($PSBoundParameters.ContainsKey('IntervalSeconds')) { $argList += @('-IntervalSeconds', "$IntervalSeconds") }
     Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden
@@ -67,6 +76,7 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
 }
 
 $script:DemoMode = [bool]$Demo
+$script:TrendWindowRequested = [bool]$TrendWindow
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -175,6 +185,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
 . (Join-Path $script:WidgetDir 'UsageReport.ps1')
+. (Join-Path $script:WidgetDir 'WidgetTrend.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
 . (Join-Path $script:WidgetDir 'WidgetPalette.ps1')
 . (Join-Path $script:WidgetDir 'WidgetStrings.ps1')
@@ -2657,7 +2668,10 @@ function New-WidgetForm {
     $miExportDaily = $miExport.DropDownItems.Add((T 'menu.exportDailyCsv'))
     $miExportReportMd = $miExport.DropDownItems.Add((T 'menu.exportReportMd'))
     $miExportReportHtml = $miExport.DropDownItems.Add((T 'menu.exportReportHtml'))
+    $miExportCompareMd = $miExport.DropDownItems.Add((T 'menu.exportCompareMd'))
+    $miExportCompareHtml = $miExport.DropDownItems.Add((T 'menu.exportCompareHtml'))
     [void]$menu.Items.Add($miExport)
+    $miTrend = $menu.Items.Add((T 'menu.trend'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
     $miAbout = $menu.Items.Add((T 'menu.about'))
     $miTop = $menu.Items.Add((T 'menu.topMost'))
@@ -2713,6 +2727,9 @@ function New-WidgetForm {
     $miExportDaily.Add_Click({ Export-UsageReportInteractive -Kind 'daily' })
     $miExportReportMd.Add_Click({ Export-UsageReportInteractive -Kind 'markdown' })
     $miExportReportHtml.Add_Click({ Export-UsageReportInteractive -Kind 'html' })
+    $miExportCompareMd.Add_Click({ Export-UsageReportComparisonInteractive -Kind 'markdown' -Months 3 })
+    $miExportCompareHtml.Add_Click({ Export-UsageReportComparisonInteractive -Kind 'html' -Months 3 })
+    $miTrend.Add_Click({ Show-WidgetTrend -Days $script:TrendDays })
     $miSettings.Add_Click({ Show-WidgetSettings })
     $miAbout.Add_Click({ Show-WidgetAbout })
     foreach ($sec in $script:IntervalItems.Keys) {
@@ -2817,6 +2834,9 @@ function New-WidgetForm {
             $timer.Start()
             Write-WidgetLog 'timer started'
             Update-Widget
+            if ($script:TrendWindowRequested) {
+                try { Show-WidgetTrend -Days $script:TrendDays } catch { Write-WidgetLog ("trend window $($_.Exception.Message)") }
+            }
         } catch { Write-WidgetLog ("shown $($_.Exception.Message)`n$($_.ScriptStackTrace)") }
     })
     $form.Add_FormClosed({
@@ -3297,6 +3317,275 @@ function Export-UsageReportInteractive {
     }
 }
 
+# 多月对比导出：默认最近 3 个月，没有历史时同样只提示、不写文件。
+function Export-UsageReportComparisonInteractive {
+    param([string]$Kind, [int]$Months = 3)
+    try {
+        $now = [datetime]::Now
+        $records = @(Read-UsageHistory -Path $script:HistoryPath)
+        $keys = @(Get-UsageReportComparisonMonths -Records $records -Months $Months -Now $now)
+        if ($records.Count -eq 0 -or $keys.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.empty'), (T 'csv.title'), 'OK', 'Information') | Out-Null
+            return
+        }
+        $comparison = @(Get-UsageHistoryMonthComparison -Records $records -Months $keys -Now $now)
+        $extension = 'md'
+        $content = $null
+        switch ($Kind) {
+            'html' {
+                $extension = 'html'
+                $content = ConvertTo-UsageReportComparisonHtml -Comparison $comparison -Months $keys -GeneratedAt $now
+            }
+            default {
+                $content = ConvertTo-UsageReportComparisonMarkdown -Comparison $comparison -Months $keys -GeneratedAt $now
+            }
+        }
+        if (-not $content) {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.empty'), (T 'csv.title'), 'OK', 'Information') | Out-Null
+            return
+        }
+        $target = Join-Path $script:WidgetDir (Get-UsageReportComparisonFileName -Months $keys -Extension $extension)
+        # 对比报表是给人看与传阅的，Markdown / HTML 都不加 BOM。
+        [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
+        Write-WidgetLog ("report export comparison {0} {1}" -f $extension, $target)
+        [System.Windows.Forms.MessageBox]::Show(
+            (T 'report.exported' @([Environment]::NewLine, $target)),
+            (T 'csv.title'), 'OK', 'Information') | Out-Null
+    } catch {
+        Write-WidgetLog ("report export failed: $($_.Exception.Message)")
+        try {
+            [System.Windows.Forms.MessageBox]::Show((T 'report.failed'), (T 'csv.title'), 'OK', 'Warning') | Out-Null
+        } catch { }
+    }
+}
+# 趋势图文案：语言包缺键时回落到内置英文，避免窗口标题出现 trend.title 这类键名。
+function Get-UsageTrendLabels {
+    $labels = @{
+        Title = 'AI Usage Widget - Trend chart'
+        Days  = 'Last {0} days'
+        Empty = 'No history yet, nothing to chart'
+        Note  = 'Each line is the last sample of each day'
+        Close = 'Close'
+    }
+    if (Get-Command T -ErrorAction SilentlyContinue) {
+        $labels.Title = (Use-WidgetTextFallback (T 'trend.title') 'trend.title' $labels.Title)
+        $labels.Days = (Use-WidgetTextFallback (T 'trend.days') 'trend.days' $labels.Days)
+        $labels.Empty = (Use-WidgetTextFallback (T 'trend.empty') 'trend.empty' $labels.Empty)
+        $labels.Note = (Use-WidgetTextFallback (T 'trend.note') 'trend.note' $labels.Note)
+        $labels.Close = (Use-WidgetTextFallback (T 'about.close') 'about.close' $labels.Close)
+    }
+    return $labels
+}
+
+# 趋势图窗口：只读展示，不写任何文件。demo 模式用合成序列，
+# 所以 -Demo -TrendWindow 在没有凭证、没有历史时也能跑冒烟与截图。
+function Show-WidgetTrend {
+    param([int]$Days = 7)
+    $labels = Get-UsageTrendLabels
+    $muted = (Get-WidgetColor 'Muted')
+    $dayOptions = @(7, 14, 30)
+    $days = [int]$Days
+    if ($dayOptions -notcontains $days) { $days = 7 }
+
+    # 已经打开一个趋势图时只把它提到前面，不叠第二个窗口。
+    if ($script:TrendForm -and -not $script:TrendForm.IsDisposed) {
+        try { $script:TrendForm.Activate() } catch { }
+        return
+    }
+
+    $specs = @()
+    try { $specs = @(Get-ProviderRows) } catch { $specs = @() }
+    $records = @()
+    if (-not $script:DemoMode) {
+        try { $records = @(Read-UsageHistory -Path $script:HistoryPath -Limit 2000) } catch { $records = @() }
+    }
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $labels.Title
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.ShowInTaskbar = $false
+    $form.ClientSize = New-Object System.Drawing.Size ((Scale-Px 720), (Scale-Px 396))
+    $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    Set-UiThemeColor $form 'BackColor' 'Background'
+    Set-UiThemeColor $form 'ForeColor' 'Text'
+
+    $pad = Scale-Px 18
+    $dayIndex = [array]::IndexOf([object[]]$dayOptions, [object]$days)
+    if ($dayIndex -lt 0) { $dayIndex = 0 }
+    $combo = New-SettingCombo $form $pad (Scale-Px 14) (Scale-Px 138) @($dayOptions | ForEach-Object { $labels.Days -f $_ }) $dayIndex
+    [void](New-SettingLabel $form $labels.Note (Scale-Px 172) (Scale-Px 18) $muted)
+
+    $chart = New-Object System.Windows.Forms.Panel
+    $chart.Location = New-Object System.Drawing.Point $pad, (Scale-Px 48)
+    $chart.Size = New-Object System.Drawing.Size (($form.ClientSize.Width - 2 * $pad), ($form.ClientSize.Height - (Scale-Px 48) - (Scale-Px 76)))
+    $chart.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+    Set-UiColor $chart 'BackColor' ((Get-WidgetColor 'Field').ToArgb())
+    $chart.Parent = $form
+
+    $legend = New-SettingLabel $form '' $pad ($form.ClientSize.Height - (Scale-Px 62)) $muted
+    $legend.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+    $legend.MaximumSize = New-Object System.Drawing.Size (($form.ClientSize.Width - 2 * $pad - (Scale-Px 100)), 0)
+    $legend.AutoEllipsis = $true
+
+    $btnClose = New-SettingButton $form $labels.Close 0 0
+    $btnClose.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+    $btnClose.Location = New-Object System.Drawing.Point (($form.ClientSize.Width - $pad - $btnClose.Width), ($form.ClientSize.Height - (Scale-Px 42)))
+    $btnClose.Add_Click({ if ($script:TrendForm) { $script:TrendForm.Close() } })
+    $form.CancelButton = $btnClose
+
+    $script:TrendUi = @{
+        Form    = $form
+        Chart   = $chart
+        Legend  = $legend
+        Combo   = $combo
+        Labels  = $labels
+        Specs   = $specs
+        Records = $records
+        Days    = $days
+        # 窗口是非模态的，事件处理器在函数返回后才触发，看不到本地变量，
+        # 所以下拉框选项与重建回调都要挂到 $script:TrendUi 上。
+        DayOptions = $dayOptions
+        Model   = @()
+        Gutter  = @{ Left = (Scale-Px 36); Top = (Scale-Px 12); Right = (Scale-Px 12); Bottom = (Scale-Px 24) }
+    }
+
+    # 重建绘图模型：天数变化、窗口尺寸变化与数据变化都走这里。
+    $rebuild = {
+        $ui = $script:TrendUi
+        if (-not $ui) { return }
+        $days = [int]$ui.Days
+        $startDay = ([datetime]::Now.Date).AddDays(-($days - 1))
+        $entries = @()
+        foreach ($spec in @($ui.Specs)) {
+            $series = @()
+            try {
+                if ($script:DemoMode) { $series = @(New-UsageTrendDemoSeries -EndPct ([double]$spec.Percent) -Days $days) }
+                else { $series = @(Get-UsageHistoryDaySeries -Records $ui.Records -Id $spec.Id -Days $days -Kind $spec.Kind) }
+            } catch { $series = @() }
+            if (@($series).Count -lt 1) { continue }
+            $entries += @{ Id = $spec.Id; Name = $spec.Name; Series = $series }
+        }
+        $gutter = $ui.Gutter
+        $plotW = [Math]::Max(0, $ui.Chart.ClientSize.Width - $gutter.Left - $gutter.Right)
+        $plotH = [Math]::Max(0, $ui.Chart.ClientSize.Height - $gutter.Top - $gutter.Bottom)
+        $model = @(Get-UsageTrendChartModel -Entries $entries -StartDay $startDay -Days $days -Width $plotW -Height $plotH -Pad 0)
+        $ui.Model = $model
+        $ui.Chart.Tag = @{ Days = $days; StartDay = $startDay; Model = $model }
+        Write-WidgetLog ('trend rebuilt days={0} series={1} demo={2}' -f $days, @($model).Count, $script:DemoMode)
+        $parts = @()
+        foreach ($item in $model) {
+            $value = '-'
+            if (Test-FiniteNumber $item.Latest) { $value = (Get-UsageReportNumber $item.Latest) }
+            $parts += ('{0} {1}%' -f $item.Name, $value)
+        }
+        $ui.Legend.Text = ($parts -join '   ·   ')
+        $ui.Chart.Invalidate()
+    }
+
+    # 折线画在 Panel 上：坐标已经按 0 - 100 换算好，这里只补边距、坐标轴与颜色。
+    $paintChart = {
+        param($sender, $e)
+        $ui = $script:TrendUi
+        $tag = $sender.Tag
+        if (-not $ui -or -not $tag) { return }
+        $gridPen = $null
+        $mutedBrush = $null
+        try {
+            $g = $e.Graphics
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $gutter = $ui.Gutter
+            $font = $sender.Font
+            $gridPen = New-Object System.Drawing.Pen ((Get-WidgetColor 'Track')), 1
+            $mutedBrush = New-Object System.Drawing.SolidBrush ((Get-WidgetColor 'Muted'))
+            $left = [float]$gutter.Left
+            $top = [float]$gutter.Top
+            $plotW = [float][Math]::Max(0, $sender.ClientSize.Width - $gutter.Left - $gutter.Right)
+            $plotH = [float][Math]::Max(0, $sender.ClientSize.Height - $gutter.Top - $gutter.Bottom)
+            if ($plotW -le 1 -or $plotH -le 1) { return }
+
+            $range = Get-UsageTrendChartRange
+            foreach ($tick in @(Get-UsageTrendChartTicks -Min $range.Min -Max $range.Max)) {
+                $ratio = ($tick - $range.Min) / ($range.Max - $range.Min)
+                $y = $top + $plotH * (1.0 - $ratio)
+                $g.DrawLine($gridPen, $left, $y, ($left + $plotW), $y)
+                $text = [string][int]$tick
+                $size = $g.MeasureString($text, $font)
+                $g.DrawString($text, $font, $mutedBrush, ($left - 4 - $size.Width), ($y - $size.Height / 2))
+            }
+            foreach ($day in @(Get-UsageTrendChartDayLabels -StartDay $tag.StartDay -Days $tag.Days)) {
+                $x = $left + $plotW * $day.Offset / ($tag.Days - 1)
+                $text = ([datetime]$day.Day).ToString('MM-dd')
+                $size = $g.MeasureString($text, $font)
+                # 首尾日期居中会顶出面板，夹回面板内，避免最后一个日期被裁掉半截。
+                $textX = $x - $size.Width / 2
+                $textX = [Math]::Max([float]0, [Math]::Min($textX, [float]($sender.ClientSize.Width - $size.Width)))
+                $g.DrawString($text, $font, $mutedBrush, $textX, ($top + $plotH + 2))
+            }
+
+            $model = @($tag.Model)
+            if ($model.Count -eq 0) {
+                $text = [string]$ui.Labels.Empty
+                $size = $g.MeasureString($text, $font)
+                $g.DrawString($text, $font, $mutedBrush, ($left + ($plotW - $size.Width) / 2), ($top + ($plotH - $size.Height) / 2))
+                return
+            }
+            foreach ($item in $model) {
+                $points = @($item.Points)
+                if ($points.Count -lt 1) { continue }
+                $color = (Get-UsageColor ([double]$item.Latest))
+                if ($points.Count -eq 1) {
+                    $dot = New-Object System.Drawing.SolidBrush $color
+                    $g.FillEllipse($dot, ($left + [float]$points[0].X - 2), ($top + [float]$points[0].Y - 2), 4, 4)
+                    $dot.Dispose()
+                    continue
+                }
+                $pts = New-Object 'System.Drawing.PointF[]' $points.Count
+                for ($i = 0; $i -lt $points.Count; $i++) {
+                    $pts[$i] = [System.Drawing.PointF]::new(($left + [float]$points[$i].X), ($top + [float]$points[$i].Y))
+                }
+                $pen = New-Object System.Drawing.Pen $color, 1.8
+                $g.DrawLines($pen, $pts)
+                $pen.Dispose()
+            }
+        } catch { } finally {
+            if ($gridPen) { $gridPen.Dispose() }
+            if ($mutedBrush) { $mutedBrush.Dispose() }
+        }
+    }
+
+    $chart.Add_Paint($paintChart)
+    # 拉伸窗口时坐标要按新的面板尺寸重算，否则折线还留在旧几何上。
+    $chart.Add_Resize({
+        $ui = $script:TrendUi
+        if ($ui -and $ui.Rebuild) { & $ui.Rebuild }
+    })
+    $combo.Add_SelectedIndexChanged({
+        $ui = $script:TrendUi
+        if (-not $ui) { return }
+        $options = @($ui.DayOptions)
+        $index = [int]$ui.Combo.SelectedIndex
+        if ($index -lt 0 -or $index -ge $options.Count) { return }
+        $ui.Days = [int]$options[$index]
+        $script:TrendDays = [int]$options[$index]
+        & $ui.Rebuild
+    })
+    $form.Add_FormClosed({
+        $script:TrendForm = $null
+        $script:TrendUi = $null
+    })
+
+    $script:TrendUi.Rebuild = $rebuild
+    & $rebuild
+    $script:TrendForm = $form
+    $form.Show()
+    Write-WidgetLog ('trend window shown days={0} series={1} demo={2}' -f $days, @($script:TrendUi.Model).Count, $script:DemoMode)
+    if ($script:DemoMode) {
+        Write-WidgetLog ('trend demo series days={0} series={1} synthetic=true' -f $days, @($script:TrendUi.Model).Count)
+    }
+}
 function Write-UsageHistory {    param([string]$Id, [double]$Percent)
     try {
         if ($script:DemoMode) { return }
