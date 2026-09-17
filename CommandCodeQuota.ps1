@@ -2,19 +2,17 @@
 # Auth lives in ~/.commandcode/auth.json (or $env:COMMAND_CODE_HOME).
 # Daily/5-hour/weekly rolling usage windows returned by /alpha/billing/credits.
 
+if (-not (Get-Command Convert-UsageRatioPercent -ErrorAction SilentlyContinue)) {
+    $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'
+    if (Test-Path -LiteralPath $validationHelper) { . $validationHelper }
+}
+
 function Convert-CCWindow {
     param($Win)
-    $used = $null
-    $cap = $null
-    try { $used = [double]$Win.used } catch { $used = $null }
-    try { $cap = [double]$Win.cap } catch { $cap = $null }
-    if ($null -eq $used -or $used -lt 0) { $used = 0.0 }
-    $pct = 0.0
-    if ($cap -gt 0) {
-        $pct = [Math]::Min(100.0, 100.0 * $used / $cap)
-        $pct = [Math]::Round($pct, 1)
-        if ($pct -lt 0) { $pct = 0.0 }
-    }
+    if (-not $Win) { throw 'Command Code 限额窗口为空' }
+    $used = [double]$Win.used
+    $cap = [double]$Win.cap
+    $pct = [Math]::Round((Convert-UsageRatioPercent $Win.used $Win.cap 'Command Code window'), 1)
     $reset = Convert-CommandCodeTime $Win.resetAt
     return [pscustomobject]@{
         Percent = $pct
@@ -51,19 +49,18 @@ function Convert-CommandCodeCredits {
     $five = $null
     $week = $null
     if ($wl) {
-        if ($wl.fiveHour) { try { $five = Convert-CCWindow $wl.fiveHour } catch { } }
-        if ($wl.weekly)   { try { $week = Convert-CCWindow $wl.weekly }   catch { } }
+        if ($null -ne $wl.fiveHour) { $five = Convert-CCWindow $wl.fiveHour }
+        if ($null -ne $wl.weekly)   { $week = Convert-CCWindow $wl.weekly }
     }
     if (-not $five -and -not $week) { throw '用量接口没有返回限额窗口' }
 
-    $overall = 0.0
-    try {
-        if ($null -ne $credits.usagePercent) { $overall = [double]$credits.usagePercent }
-    } catch { }
-    if (-not $overall -and $week) { $overall = $week.Percent }
-    if (-not $overall -and $five) { $overall = $five.Percent }
-    if ($overall -lt 0) { $overall = 0.0 }
-    if ($overall -gt 100) { $overall = 100.0 }
+    $overall = $null
+    if ($credits -and $null -ne $credits.usagePercent) {
+        $overall = Assert-UsagePercent $credits.usagePercent 'Command Code usagePercent'
+    }
+    if ($null -eq $overall -and $week) { $overall = $week.Percent }
+    if ($null -eq $overall -and $five) { $overall = $five.Percent }
+    if ($null -eq $overall) { throw '用量接口没有返回有效总体百分比' }
     $overall = [Math]::Round($overall, 1)
 
     $periodEnd = $null
@@ -71,10 +68,13 @@ function Convert-CommandCodeCredits {
     elseif ($five -and $five.ResetAt) { $periodEnd = $five.ResetAt }
 
     $totalRemaining = $null
-    try {
-        if ($null -ne $credits.totalRemaining) { $totalRemaining = [double]$credits.totalRemaining }
-        elseif ($null -ne $credits.monthlyCredits) { $totalRemaining = [double]$credits.monthlyCredits }
-    } catch { }
+    if ($credits -and $null -ne $credits.totalRemaining) {
+        if (-not (Test-FiniteNumber $credits.totalRemaining)) { throw 'Command Code totalRemaining 无效' }
+        $totalRemaining = [double]$credits.totalRemaining
+    } elseif ($credits -and $null -ne $credits.monthlyCredits) {
+        if (-not (Test-FiniteNumber $credits.monthlyCredits)) { throw 'Command Code monthlyCredits 无效' }
+        $totalRemaining = [double]$credits.monthlyCredits
+    }
 
     return [pscustomobject]@{
         Percent        = $overall

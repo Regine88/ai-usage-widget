@@ -1,4 +1,4 @@
-# Encoding: UTF-8 with BOM. Run: powershell -NoProfile -ExecutionPolicy Bypass -File .\test-ModelRequestRecorder.ps1
+﻿# Encoding: UTF-8 with BOM. Run: powershell -NoProfile -File .\test-ModelRequestRecorder.ps1
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here 'ModelRequestRecorder.ps1')
@@ -48,6 +48,26 @@ try {
         $failed++
     } else {
         Write-Host 'OK   event excludes prompt'
+    }
+
+    $blankEvent = Write-ModelRequestEvent -Provider "  `t" -Model 'gpt-5' -Path $path
+    if ($null -ne $blankEvent) {
+        Write-Host 'FAIL blank provider should skip non-strict event'
+        $failed++
+    } else {
+        Write-Host 'OK   blank provider skips non-strict event'
+    }
+    try {
+        Write-ModelRequestEvent -Provider '  ' -Model 'gpt-5' -Path $path -Strict | Out-Null
+        Write-Host 'FAIL blank provider strict mode should throw'
+        $failed++
+    } catch {
+        if ($_.Exception.Message -notmatch 'provider') {
+            Write-Host 'FAIL blank provider strict error should mention provider'
+            $failed++
+        } else {
+            Write-Host 'OK   blank provider strict mode throws clearly'
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }

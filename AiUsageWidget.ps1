@@ -6,22 +6,35 @@ param(
     [switch]$Install,
     [switch]$Uninstall,
     [switch]$AddAccount,
+    [switch]$AddGrokAccount,
+    [switch]$MigrateSecrets,
     [int]$IntervalSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
 
+function Get-TrustedPowerShellPath {
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles} 'PowerShell\7\pwsh.exe'),
+        (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $candidate }
+    }
+    throw '未找到受信任的 PowerShell 路径'
+}
+
 if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
-    $exe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-    if (-not $exe) { $exe = (Get-Command powershell).Source }
+    $exe = Get-TrustedPowerShellPath
     $argList = @(
         '-NoProfile', '-STA', '-WindowStyle', 'Hidden',
-        '-ExecutionPolicy', 'Bypass',
         '-File', $PSCommandPath
     )
     if ($Install) { $argList += '-Install' }
     if ($Uninstall) { $argList += '-Uninstall' }
     if ($AddAccount) { $argList += '-AddAccount' }
+    if ($AddGrokAccount) { $argList += '-AddGrokAccount' }
+    if ($MigrateSecrets) { $argList += '-MigrateSecrets' }
     if ($PSBoundParameters.ContainsKey('IntervalSeconds')) { $argList += @('-IntervalSeconds', "$IntervalSeconds") }
     Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden
     exit 0
@@ -60,13 +73,17 @@ $script:CommandCodeDisplayName = 'Command Code'
 
 $script:SelfPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 $script:WidgetDir = Split-Path -Parent $script:SelfPath
+$script:SecureSnapshotRoot = Join-Path $env:LOCALAPPDATA 'AIUsageWidget\accounts'
 $script:StatePath = Join-Path $script:WidgetDir 'ai-state.json'
 $script:LogPath = Join-Path $script:WidgetDir 'ai-widget.log'
 $script:HistoryPath = Join-Path $script:WidgetDir 'ai-history.jsonl'
 $script:RequestEventsPath = Join-Path $script:WidgetDir 'ai-request-events.jsonl'
 $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
+. (Join-Path $script:WidgetDir 'UsageValidation.ps1')
+. (Join-Path $script:WidgetDir 'SecureSnapshot.ps1')
 . (Join-Path $script:WidgetDir 'GrokAccounts.ps1')
 . (Join-Path $script:WidgetDir 'GeminiAntigravity.ps1')
+. (Join-Path $script:WidgetDir 'KimiQuota.ps1')
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 
@@ -90,7 +107,7 @@ $script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
 function Write-WidgetLog {
     param([string]$Message)
     try {
-        $line = '{0:o} {1}' -f (Get-Date).ToUniversalTime(), $Message
+        $line = '{0:o} {1}' -f (Get-Date).ToUniversalTime(), (Convert-SafeLogText $Message)
         Add-Content -LiteralPath $script:LogPath -Value $line -Encoding utf8
         $f = Get-Item -LiteralPath $script:LogPath
         if ($f.Length -gt 512KB) {
@@ -171,13 +188,6 @@ function Get-UsageColor {
     if ($Percent -ge 90) { return [System.Drawing.Color]::FromArgb(255, 107, 107) }
     if ($Percent -ge 70) { return [System.Drawing.Color]::FromArgb(255, 196, 64) }
     return [System.Drawing.Color]::FromArgb(48, 227, 160)
-}
-
-function Convert-ApiTime {
-    param($Value)
-    if ($null -eq $Value -or $Value -eq '') { return $null }
-    if ($Value -is [datetime]) { return [datetime]$Value }
-    return [datetime]::Parse([string]$Value, $null, [Globalization.DateTimeStyles]::RoundtripKind)
 }
 
 function New-RoundRectPath {
@@ -271,13 +281,14 @@ function Get-HttpStatusCode {
 function Format-FetchError {
     param([string]$Message)
     if (-not $Message) { return '读取失败' }
-    if ($Message -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return '请求超时' }
-    if ($Message -match 'SSL|certificate|信任关系|could not be established') { return '网络连接失败' }
-    if ($Message -match 'HTTP 401|\b401\b|Unauthorized') { return '登录已过期，请重新登录' }
-    if ($Message -match 'HTTP 403|\b403\b|Forbidden') { return '无访问权限' }
-    if ($Message -match 'HTTP 429|\b429\b') { return '请求过于频繁' }
-    if ($Message.Length -gt 80) { return $Message.Substring(0, 80) }
-    return $Message
+    $safe = Convert-SafeLogText $Message 160
+    if ($safe -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return '请求超时' }
+    if ($safe -match 'SSL|certificate|信任关系|could not be established') { return '网络连接失败' }
+    if ($safe -match 'HTTP 401|\b401\b|Unauthorized') { return '登录已过期，请重新登录' }
+    if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return '无访问权限' }
+    if ($safe -match 'HTTP 429|\b429\b') { return '请求过于频繁' }
+    if ($safe.Length -gt 80) { return $safe.Substring(0, 80) }
+    return $safe
 }
 
 # HttpClient can ignore -TimeoutSec on STA/MTA edges. Run each request in a
@@ -372,19 +383,40 @@ function Save-GrokAuth {
     param($Auth, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
     $path = $Auth.Path
     if (-not $path) { $path = $script:GrokAuthPath }
-    $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
-    $entry = $null
-    if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) {
-        $entry = $raw.PSObject.Properties[$Auth.KeyName].Value
+    if ($path -like '*.snapshot') {
+        $raw = Update-SecureSnapshot -Provider grok -AccountId $Auth.AccountId -Update {
+            param($current)
+            $entry = if ($Auth.KeyName -and $current.PSObject.Properties[$Auth.KeyName]) {
+                $current.PSObject.Properties[$Auth.KeyName].Value
+            }
+            if (-not $entry) { throw 'Grok 受保护凭据缺少账号条目' }
+            [void]($entry.key = $AccessToken)
+            if ($RefreshToken) { [void]($entry.refresh_token = $RefreshToken) }
+            [void]($entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o'))
+            return $current
+        }
+        $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $null }
+        if (-not $entry) { throw 'Grok 受保护凭据缺少账号条目' }
+    } else {
+        Invoke-SecureSnapshotFileLock -Path $path -Action {
+            $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+            $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $Auth.Entry }
+            if (-not $entry) { throw 'Grok 登录文件缺少账号条目' }
+            $entry.key = $AccessToken
+            if ($RefreshToken) { $entry.refresh_token = $RefreshToken }
+            $entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o')
+            $json = $raw | ConvertTo-Json -Depth 8
+            $tmp = "{0}.{1}.tmp" -f $path, ([guid]::NewGuid().ToString('n'))
+            try {
+                [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+                Move-SecureSnapshotFile -Source $tmp -Destination $path
+            } finally {
+                if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+        $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $Auth.Entry }
     }
-    if (-not $entry) { $entry = $Auth.Entry }
-    $entry.key = $AccessToken
-    if ($RefreshToken) { $entry.refresh_token = $RefreshToken }
-    $entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o')
-    $json = $raw | ConvertTo-Json -Depth 8
-    $tmp = "$path.tmp-ai-widget"
-    Set-Content -LiteralPath $tmp -Value $json -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $path -Force
     $Auth.Raw = $raw
     $Auth.Entry = $entry
     $Auth.Path = $path
@@ -402,7 +434,8 @@ function Update-GrokToken {
     }
     $resp = Invoke-WidgetRest -Method Post -Uri 'https://auth.x.ai/oauth2/token' -Body $body -ContentType 'application/x-www-form-urlencoded'
     if (-not $resp.access_token) { throw '刷新令牌失败，请运行 grok login' }
-    $expires = [datetime]::UtcNow.AddSeconds([int]($resp.expires_in))
+    $expiresIn = Assert-PositiveFiniteNumber $resp.expires_in 'Grok expires_in'
+    $expires = [datetime]::UtcNow.AddSeconds($expiresIn)
     $newRefresh = if ($resp.refresh_token) { [string]$resp.refresh_token } else { $Auth.RefreshToken }
     Save-GrokAuth -Auth $Auth -AccessToken $resp.access_token -RefreshToken $newRefresh -ExpiresAt $expires
     $Auth.Token = [string]$resp.access_token
@@ -471,13 +504,18 @@ function Get-GrokUsageSnapshot {
     $cfg = $credits.config
     if (-not $cfg) { throw '用量接口没有返回 config' }
 
-    $pct = 0.0
+    $pct = $null
     if ($null -ne $cfg.creditUsagePercent) {
-        $pct = [double]$cfg.creditUsagePercent
-    } elseif ($cfg.onDemandCap -and $cfg.onDemandCap.val -and [double]$cfg.onDemandCap.val -gt 0) {
-        $used = 0.0
-        if ($cfg.onDemandUsed -and $null -ne $cfg.onDemandUsed.val) { $used = [double]$cfg.onDemandUsed.val }
-        $pct = [Math]::Round(100.0 * $used / [double]$cfg.onDemandCap.val, 1)
+        $pct = Assert-UsagePercent $cfg.creditUsagePercent 'Grok creditUsagePercent'
+    } elseif ($cfg.onDemandCap -and $null -ne $cfg.onDemandCap.val -and (Test-FiniteNumber $cfg.onDemandCap.val) -and [double]$cfg.onDemandCap.val -gt 0) {
+        if (-not $cfg.onDemandUsed -or $null -eq $cfg.onDemandUsed.val -or -not (Test-FiniteNumber $cfg.onDemandUsed.val)) {
+            throw 'Grok 用量接口缺少 onDemandUsed'
+        }
+        $used = [double]$cfg.onDemandUsed.val
+        if ($used -lt 0) { throw 'Grok onDemandUsed 无效' }
+        $pct = Assert-UsagePercent ([Math]::Round(100.0 * $used / [double]$cfg.onDemandCap.val, 1)) 'Grok calculated percent'
+    } else {
+        throw 'Grok 用量接口缺少 creditUsagePercent'
     }
 
     $end = $null
@@ -489,7 +527,7 @@ function Get-GrokUsageSnapshot {
         foreach ($p in @($cfg.productUsage)) {
             $products += [pscustomobject]@{
                 Name    = Get-ProductLabel ([string]$p.product)
-                Percent = [double]$p.usagePercent
+                Percent = Assert-UsagePercent $p.usagePercent 'Grok product usagePercent'
             }
         }
     }
@@ -521,6 +559,8 @@ function Get-KimiHosts {
     }
     if ($env:KIMI_CODE_OAUTH_HOST) { $oauth = $env:KIMI_CODE_OAUTH_HOST }
     if ($env:KIMI_CODE_BASE_URL) { $base = $env:KIMI_CODE_BASE_URL }
+    $oauth = Resolve-TrustedHttpsEndpoint $oauth @('auth.kimi.com', 'auth.kimi.ai')
+    $base = Resolve-TrustedHttpsEndpoint $base @('api.kimi.com', 'api.kimi.ai')
     [pscustomobject]@{
         OAuthHost = $oauth.TrimEnd('/')
         BaseUrl   = $base.TrimEnd('/')
@@ -548,14 +588,20 @@ function Read-KimiAuth {
 
 function Save-KimiAuth {
     param([string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
-    $raw = Get-Content -LiteralPath $script:KimiCredPath -Raw -Encoding utf8 | ConvertFrom-Json
-    $raw.access_token = $AccessToken
-    $raw.refresh_token = $RefreshToken
-    $raw.expires_at = [long][DateTimeOffset]::new($ExpiresAt.ToUniversalTime()).ToUnixTimeSeconds()
-    $json = $raw | ConvertTo-Json -Depth 8 -Compress
-    $tmp = "$script:KimiCredPath.tmp-ai-widget"
-    Set-Content -LiteralPath $tmp -Value $json -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $script:KimiCredPath -Force
+    Invoke-SecureSnapshotFileLock -Path $script:KimiCredPath -Action {
+        $raw = Get-Content -LiteralPath $script:KimiCredPath -Raw -Encoding utf8 | ConvertFrom-Json
+        $raw.access_token = $AccessToken
+        $raw.refresh_token = $RefreshToken
+        $raw.expires_at = [long][DateTimeOffset]::new($ExpiresAt.ToUniversalTime()).ToUnixTimeSeconds()
+        $json = $raw | ConvertTo-Json -Depth 8 -Compress
+        $tmp = "{0}.{1}.tmp" -f $script:KimiCredPath, ([guid]::NewGuid().ToString('n'))
+        try {
+            [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+            Move-SecureSnapshotFile -Source $tmp -Destination $script:KimiCredPath
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 function Update-KimiToken {
@@ -568,7 +614,8 @@ function Update-KimiToken {
     }
     $resp = Invoke-WidgetRest -Method Post -Uri "$($hosts.OAuthHost)/api/oauth/token" -Body $body -ContentType 'application/x-www-form-urlencoded'
     if (-not $resp.access_token) { throw '刷新令牌失败，请重新运行 kimi 登录' }
-    $expires = [datetime]::UtcNow.AddSeconds([int]($resp.expires_in))
+    $expiresIn = Assert-PositiveFiniteNumber $resp.expires_in 'Kimi expires_in'
+    $expires = [datetime]::UtcNow.AddSeconds($expiresIn)
     $newRefresh = if ($resp.refresh_token) { [string]$resp.refresh_token } else { $Auth.Refresh }
     Save-KimiAuth -AccessToken $resp.access_token -RefreshToken $newRefresh -ExpiresAt $expires
     $Auth.Token = [string]$resp.access_token
@@ -606,26 +653,6 @@ function Invoke-KimiGet {
     }
 }
 
-function Get-KimiWindowLabel {
-    param($Window)
-    if (-not $Window) { return $null }
-    $duration = 0
-    try { $duration = [int]$Window.duration } catch { return $null }
-    $unit = [string]$Window.timeUnit
-    $hours = 0.0
-    switch ($unit) {
-        'TIME_UNIT_MINUTE' { $hours = $duration / 60.0 }
-        'TIME_UNIT_HOUR'   { $hours = [double]$duration }
-        'TIME_UNIT_DAY'    { $hours = $duration * 24.0 }
-        'TIME_UNIT_WEEK'   { $hours = $duration * 168.0 }
-        default            { return $null }
-    }
-    if ($hours -le 0) { return $null }
-    if ($hours -ge 24) { return ('{0}天窗' -f [int][Math]::Round($hours / 24.0)) }
-    if ($hours -eq [int]$hours) { return ('{0}小时窗' -f [int]$hours) }
-    return ('{0:0.#}小时窗' -f $hours)
-}
-
 function Get-KimiUsageSnapshot {
     $auth = Read-KimiAuth
     if ($auth.ExpiresAt -and $auth.ExpiresAt -lt [datetime]::UtcNow.AddMinutes(2)) {
@@ -633,49 +660,9 @@ function Get-KimiUsageSnapshot {
     }
     $hosts = Get-KimiHosts
     $data = Invoke-KimiGet -Auth $auth -Url "$($hosts.BaseUrl)/usages"
-
-    if (-not $data.usage) { throw '用量接口没有返回 usage' }
-    $used = [double]$data.usage.used
-    $limit = [double]$data.usage.limit
-    $pct = 0.0
-    if ($limit -gt 0) { $pct = 100.0 * $used / $limit }
-    $weekEnd = Convert-ApiTime $data.usage.resetTime
-
-    $windows = @()
-    foreach ($row in @($data.limits)) {
-        $d = $row.detail
-        if (-not $d) { continue }
-        $wLimit = 0.0
-        $wUsed = 0.0
-        try { $wUsed = [double]$d.used } catch { }
-        try { $wLimit = [double]$d.limit } catch { }
-        $wPct = 0.0
-        if ($wLimit -gt 0) { $wPct = 100.0 * $wUsed / $wLimit }
-        $windows += [pscustomobject]@{
-            Label   = Get-KimiWindowLabel $row.window
-            Percent = $wPct
-        }
-    }
-
-    $extraCents = 0
-    $currency = 'CNY'
-    if ($data.boosterWallet) {
-        try {
-            if ($data.boosterWallet.monthlyUsed.priceInCents) {
-                $extraCents = [long]$data.boosterWallet.monthlyUsed.priceInCents
-            }
-            if ($data.boosterWallet.monthlyUsed.currency) { $currency = [string]$data.boosterWallet.monthlyUsed.currency }
-        } catch { }
-    }
-
-    [pscustomobject]@{
-        Percent    = [Math]::Round($pct, 1)
-        Windows    = $windows
-        PeriodEnd  = $weekEnd
-        ExtraCents = $extraCents
-        Currency   = $currency
-        FetchedAt  = [datetime]::Now
-    }
+    $usage = Convert-KimiUsagePayload -Data $data
+    Add-Member -InputObject $usage -NotePropertyName FetchedAt -NotePropertyValue ([datetime]::Now)
+    return $usage
 }
 
 # --- ChatGPT / Codex ---
@@ -694,12 +681,11 @@ function Get-TokenEmail {
     return $null
 }
 
-function Read-CodexAuth {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    try {
-        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
-    } catch { return $null }
+function Convert-CodexRawAuth {
+    param(
+        [Parameter(Mandatory)]$Raw,
+        [string]$Path
+    )
     if (-not $raw.tokens -or -not $raw.tokens.access_token -or -not $raw.tokens.refresh_token) { return $null }
     $accountId = [string]$raw.tokens.account_id
     if (-not $accountId) { return $null }
@@ -710,28 +696,65 @@ function Read-CodexAuth {
         Refresh   = [string]$raw.tokens.refresh_token
         AccountId = $accountId
         Email     = $email
+        Raw       = $raw
     }
+}
+
+function Read-CodexAuth {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        if ($Path -like '*.snapshot') {
+            $raw = Read-SecureSnapshot -Path $Path
+        } else {
+            $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        }
+        return (Convert-CodexRawAuth -Raw $raw -Path $Path)
+    } catch { return $null }
 }
 
 function Get-AccountLabel {
     param($Auth)
-    if ($Auth.Email) { return $Auth.Email }
+    if ($Auth.Email) { return (Get-AccountFingerprint -AccountId ([string]$Auth.Email) -Prefix 'ChatGPT') }
     if ($Auth.AccountId -and $Auth.AccountId.Length -ge 8) { return $Auth.AccountId.Substring(0, 8) }
     return 'ChatGPT'
 }
 
+function Get-CodexRowId {
+    param($Auth)
+    $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.AccountId) -Prefix 'acct'
+    if ($fingerprint) { return ('codex-{0}' -f $fingerprint) }
+    return 'codex-unknown'
+}
+
 function Get-SnapshotPath {
     param([string]$AccountId)
-    Join-Path $script:WidgetDir ("chatgpt-auth-{0}.json" -f $AccountId)
+    return (Get-SecureSnapshotPath -Provider codex -AccountId $AccountId)
+}
+
+function Get-LegacySnapshotPath {
+    param([string]$AccountId)
+    Join-Path $script:WidgetDir ("chatgpt-auth-{0}.json" -f ($AccountId -replace '[<>:"/\\|?*]', '_'))
 }
 
 function Get-CodexAccounts {
     $byId = [ordered]@{}
     $active = Read-CodexAuth $script:CodexAuthPath
     if ($active) { $byId[$active.AccountId] = $active }
+    foreach ($f in @(Get-SecureSnapshotFiles -Provider codex)) {
+        $snap = Read-CodexAuth $f.FullName
+        if ($snap -and $snap.AccountId -and -not $byId.Contains($snap.AccountId)) { $byId[$snap.AccountId] = $snap }
+    }
     foreach ($f in Get-ChildItem -LiteralPath $script:WidgetDir -Filter 'chatgpt-auth-*.json' -ErrorAction SilentlyContinue) {
         $snap = Read-CodexAuth $f.FullName
-        if ($snap -and -not $byId.Contains($snap.AccountId)) { $byId[$snap.AccountId] = $snap }
+        if ($snap -and $snap.AccountId) {
+            try {
+                $securePath = Write-SecureSnapshot -Provider codex -AccountId $snap.AccountId -Value $snap.Raw
+                $snap.Path = $securePath
+                if (-not $byId.Contains($snap.AccountId)) { $byId[$snap.AccountId] = $snap }
+                Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+            } catch { }
+        }
     }
     return @($byId.Values)
 }
@@ -742,8 +765,7 @@ function Add-CurrentAccount {
         Write-Host '未找到 ~/.codex/auth.json，请先运行 codex login'
         return
     }
-    $snapPath = Get-SnapshotPath $active.AccountId
-    Copy-Item -LiteralPath $script:CodexAuthPath -Destination $snapPath -Force
+    $snapPath = Write-SecureSnapshot -Provider codex -AccountId $active.AccountId -Value $active.Raw
     Write-Host ("已登记账号 {0} -> {1}" -f (Get-AccountLabel $active), $snapPath)
     Write-WidgetLog ("snapshot account {0}" -f (Get-AccountLabel $active))
 }
@@ -763,17 +785,50 @@ function Add-CurrentGrokAccount {
     }
 }
 
+function Migrate-ProjectSnapshots {
+    [void](Get-CodexAccounts)
+    [void](Get-GrokAccounts)
+    $remaining = @(
+        Get-ChildItem -LiteralPath $script:WidgetDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'chatgpt-auth-*.json' -or $_.Name -like 'grok-auth-*.json' }
+    )
+    if ($remaining.Count -gt 0) {
+        throw ('仍有未迁移的明文快照: {0}' -f (($remaining | ForEach-Object Name) -join ', '))
+    }
+    Write-Host '项目目录明文账号快照已迁移并清理'
+}
+
 function Save-CodexAuth {
     param([string]$Path, [string]$AccessToken, [string]$RefreshToken, [string]$IdToken)
-    $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
-    $raw.tokens.access_token = $AccessToken
-    $raw.tokens.refresh_token = $RefreshToken
-    if ($IdToken) { $raw.tokens.id_token = $IdToken }
-    $raw.last_refresh = (Get-Date).ToUniversalTime().ToString('o')
-    $json = $raw | ConvertTo-Json -Depth 8
-    $tmp = "$Path.tmp-ai-widget"
-    Set-Content -LiteralPath $tmp -Value $json -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $Path -Force
+    if ($Path -like '*.snapshot') {
+        $accountId = [string](Read-SecureSnapshot -Path $Path).tokens.account_id
+        if (-not $accountId) { throw 'Codex 受保护凭据缺少 account_id' }
+        $raw = Update-SecureSnapshot -Provider codex -AccountId $accountId -Update {
+            param($current)
+            if (-not $current.tokens) { throw 'Codex 受保护凭据缺少 tokens' }
+            [void]($current.tokens.access_token = $AccessToken)
+            [void]($current.tokens.refresh_token = $RefreshToken)
+            if ($IdToken) { [void]($current.tokens.id_token = $IdToken) }
+            [void]($current.last_refresh = (Get-Date).ToUniversalTime().ToString('o'))
+            return $current
+        }
+        return
+    }
+    Invoke-SecureSnapshotFileLock -Path $Path -Action {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        $raw.tokens.access_token = $AccessToken
+        $raw.tokens.refresh_token = $RefreshToken
+        if ($IdToken) { $raw.tokens.id_token = $IdToken }
+        $raw.last_refresh = (Get-Date).ToUniversalTime().ToString('o')
+        $json = $raw | ConvertTo-Json -Depth 8
+        $tmp = "{0}.{1}.tmp" -f $Path, ([guid]::NewGuid().ToString('n'))
+        try {
+            [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+            Move-SecureSnapshotFile -Source $tmp -Destination $Path
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 function Update-CodexToken {
@@ -816,74 +871,34 @@ function Get-CodexAuthHeaders {
     }
 }
 
-function Invoke-CurlJson {
-    param(
-        [Parameter(Mandatory)][string]$Uri,
-        [hashtable]$Headers,
-        [int]$TimeoutSec = 15
-    )
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if (-not $curl) { throw '未找到 curl.exe' }
-    $argList = [System.Collections.Generic.List[string]]::new()
-    [void]$argList.Add('-sS')
-    [void]$argList.Add('--http1.1')
-    [void]$argList.Add('--ssl-no-revoke')
-    [void]$argList.Add('-m')
-    [void]$argList.Add("$TimeoutSec")
-    [void]$argList.Add('-w')
-    [void]$argList.Add("`nHTTPSTATUS:%{http_code}")
-    [void]$argList.Add('-H')
-    [void]$argList.Add('Accept: application/json')
-    if ($Headers) {
-        foreach ($k in $Headers.Keys) {
-            if ($k -eq 'Accept') { continue }
-            [void]$argList.Add('-H')
-            [void]$argList.Add(('{0}: {1}' -f $k, $Headers[$k]))
-        }
-    }
-    [void]$argList.Add($Uri)
-    $raw = & $curl.Source @argList 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 22) {
-        throw ("curl 退出码 {0}: {1}" -f $LASTEXITCODE, $raw.Trim())
-    }
-    $status = 0
-    $body = $raw
-    if ($raw -match '(?s)^(.*)HTTPSTATUS:(\d+)\s*$') {
-        $body = $Matches[1].Trim()
-        $status = [int]$Matches[2]
-    }
-    if ($status -ge 400) { throw ("HTTP {0} {1}" -f $status, $body) }
-    if (-not $body) { throw '用量接口返回空' }
-    return $body | ConvertFrom-Json
-}
-
 function Invoke-CodexGet {
     param($Auth, [string]$Url)
     try {
-        return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
+        return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
     } catch {
         $code = Get-HttpStatusCode $_
         if ($code -notin 401, 403) { throw }
         if (Sync-CodexAuthFromDisk $Auth) {
             try {
-                return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
+                return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
             } catch {
                 $code = Get-HttpStatusCode $_
                 if ($code -notin 401, 403) { throw }
             }
         }
         $Auth = Update-CodexToken -Auth $Auth
-        return Invoke-CurlJson -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
+        return Invoke-WidgetRest -Method Get -Uri $Url -Headers (Get-CodexAuthHeaders $Auth)
     }
 }
 
 function Get-CodexWindowInfo {
     param($Window)
     if (-not $Window) { return $null }
-    $secs = 0
-    try { $secs = [long]$Window.limit_window_seconds } catch { }
-    $pct = 0.0
-    try { $pct = [double]$Window.used_percent } catch { }
+    if ($null -eq $Window.limit_window_seconds -or -not (Test-FiniteNumber $Window.limit_window_seconds)) { throw 'Codex 限额窗口缺少 limit_window_seconds' }
+    if ($null -eq $Window.used_percent) { throw 'Codex 限额窗口缺少 used_percent' }
+    $secs = [long]$Window.limit_window_seconds
+    if ($secs -le 0) { throw 'Codex 限额窗口 limit_window_seconds 无效' }
+    $pct = Assert-UsagePercent $Window.used_percent 'Codex used_percent'
     $resetAt = $null
     if ($Window.reset_at) {
         try { $resetAt = [DateTimeOffset]::FromUnixTimeSeconds([long]$Window.reset_at).UtcDateTime } catch { }
@@ -946,7 +961,7 @@ function Sync-ActiveCodexSnapshot {
         if ($acct.Path -eq $script:CodexAuthPath) {
             $snap = Get-SnapshotPath $acct.AccountId
             if (Test-Path -LiteralPath $snap) {
-                try { Copy-Item -LiteralPath $script:CodexAuthPath -Destination $snap -Force } catch { }
+                try { [void](Write-SecureSnapshot -Provider codex -AccountId $acct.AccountId -Value $acct.Raw) } catch { }
             }
         }
     }
@@ -1058,7 +1073,7 @@ function Get-ProviderRows {
     }
     foreach ($acct in @(Get-CodexAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = ('codex-{0}' -f $acct.AccountId)
+            Id      = Get-CodexRowId $acct
             Kind    = 'codex'
             Name    = Get-AccountLabel $acct
             OpenUrl = $script:CodexUsagePageUrl
@@ -1120,27 +1135,17 @@ If exePath = "" Then
     WScript.Quit 1
 End If
 
-sh.Run """" & exePath & """ -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & ps1Path & """", 0, False
+sh.Run """" & exePath & """ -NoProfile -STA -WindowStyle Hidden -File """ & ps1Path & """", 0, False
 
-' Prefer PowerShell 7 at its default install path, then anything named
-' pwsh.exe on PATH, and finally fall back to Windows PowerShell 5.1.
+' Prefer PowerShell 7 at its default install path, then Windows PowerShell 5.1.
 Function FindPowerShell()
-    Dim p, d
+    Dim p
     FindPowerShell = ""
     p = "C:\Program Files\PowerShell\7\pwsh.exe"
     If fso.FileExists(p) Then
         FindPowerShell = p
         Exit Function
     End If
-    For Each d In Split(sh.Environment("PROCESS")("PATH"), ";")
-        If Len(d) > 0 Then
-            p = fso.BuildPath(d, "pwsh.exe")
-            If fso.FileExists(p) Then
-                FindPowerShell = p
-                Exit Function
-            End If
-        End If
-    Next
     p = sh.ExpandEnvironmentStrings("%WINDIR%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
     If fso.FileExists(p) Then FindPowerShell = p
 End Function
@@ -1725,8 +1730,14 @@ function Get-WorkerScriptSource {
     $fnNames = @(
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
         'Format-PercentText', 'Format-ResetText', 'Format-ResetTime',
+        'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent',
+        'Resolve-TrustedHttpsEndpoint', 'Get-AccountFingerprint', 'Convert-SafeLogText',
+        'Get-SecureSnapshotRoot', 'Get-SecureSnapshotPath', 'ConvertTo-SnapshotCipherText',
+        'ConvertFrom-SnapshotCipherText', 'Set-SecureSnapshotAcl', 'Invoke-SecureSnapshotFileLock', 'Move-SecureSnapshotFile',
+        'Write-SecureSnapshotLocked', 'Write-SecureSnapshot', 'Update-SecureSnapshot', 'Read-SecureSnapshot',
+        'Get-SecureSnapshotFiles', 'Remove-SecureSnapshot',
         'Get-GrokAccountId', 'Get-GrokAccountLabel', 'Get-GrokRowName', 'Get-GrokRowId',
-        'Get-GrokSnapshotFileName', 'Get-GrokSnapshotPath', 'Read-GrokAuthFromFile',
+        'Get-GrokSnapshotFileName', 'Get-GrokSnapshotPath', 'Get-GrokLegacySnapshotPath', 'Convert-GrokRawAuth', 'Read-GrokAuthFromFile',
         'Get-GrokAccounts', 'Sync-ActiveGrokSnapshot', 'Sync-GrokAuthFromDisk',
         'Get-ProductLabel', 'Read-GrokAuth', 'Save-GrokAuth', 'Update-GrokToken',
         'Get-GrokAuthHeaders', 'Invoke-GrokGet', 'Get-GrokUsageSnapshot', 'Get-GrokRowData',
@@ -1734,10 +1745,11 @@ function Get-WorkerScriptSource {
         'Save-AntigravityCred', 'Update-AntigravityToken', 'Get-AntigravityAuth',
         'Convert-GeminiQuota', 'Invoke-AntigravityQuota', 'Get-GeminiUsageSnapshot', 'Get-GeminiRowData',
         'Get-KimiHosts', 'Read-KimiAuth', 'Save-KimiAuth', 'Update-KimiToken',
-        'Invoke-KimiGet', 'Get-KimiWindowLabel', 'Get-KimiUsageSnapshot', 'Get-KimiRowData',
-        'Get-TokenEmail', 'Read-CodexAuth', 'Get-AccountLabel', 'Save-CodexAuth',
+        'Invoke-KimiGet', 'Get-KimiWindowLabel', 'Resolve-KimiUsedLimit', 'Convert-KimiUsagePayload',
+        'Get-KimiUsageSnapshot', 'Get-KimiRowData',
+        'Get-TokenEmail', 'Convert-CodexRawAuth', 'Read-CodexAuth', 'Get-AccountLabel', 'Get-LegacySnapshotPath', 'Save-CodexAuth',
         'Update-CodexToken', 'Sync-CodexAuthFromDisk', 'Get-CodexAuthHeaders',
-        'Invoke-CurlJson', 'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
+        'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
         'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
         'Invoke-CommandCodeGet', 'Get-CommandCodeOrgId', 'Convert-CCWindow',
         'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData'
@@ -1749,7 +1761,7 @@ function Get-WorkerScriptSource {
                    'CodexOAuthClientId', 'CodexTokenUrl', 'CodexUsageUrl', 'LogPath',
                    'AntigravityCredTarget', 'AntigravityClientId', 'AntigravityClientSecret',
                    'AntigravityTokenUrl', 'AntigravityQuotaUrl',
-                   'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance') {
+                   'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName', 'SecureSnapshotRoot') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
     }
     foreach ($n in $fnNames) {
@@ -1772,7 +1784,7 @@ foreach ($row in @($Rows)) {
         }
         $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; Error = $null }
     } catch {
-        $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; Error = $_.Exception.Message }
+            $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; Error = (Convert-SafeLogText $_.Exception.Message 240) }
     }
 }
 $results
@@ -1800,6 +1812,8 @@ function Start-BackgroundFetch {
         CommandCodeAuthPath      = $script:CommandCodeAuthPath
         CommandCodeApiBaseUrl    = $script:CommandCodeApiBaseUrl
         CommandCodeShowBalance   = $script:CommandCodeShowBalance
+        CommandCodeDisplayName   = $script:CommandCodeDisplayName
+        SecureSnapshotRoot       = $script:SecureSnapshotRoot
     }
     $rows = @()
     foreach ($s in $Specs) {
@@ -1847,9 +1861,7 @@ function Convert-FetchRow {
         try { if ($Raw.Id) { $id = [string]$Raw.Id } } catch { }
         try { if ($Raw.Error) { $err = [string]$Raw.Error } } catch { }
         try {
-            if (-not $err -and $null -ne $Raw.Percent -and $Raw.Percent -ne '') {
-                $pct = [double]$Raw.Percent
-            }
+            if (-not $err) { $pct = Convert-OptionalNumber -Value $Raw.Percent -Field 'provider percent' }
         } catch { if (-not $err) { $err = $_.Exception.Message } }
         try { if ($Raw.Detail) { $detail = [string]$Raw.Detail } } catch { }
         try { if ($Raw.Tip) { $tip = [string]$Raw.Tip } } catch { }
@@ -1961,13 +1973,14 @@ function Write-UsageHistory {
 
 function Send-UsageAlert {
     param($Row, [string]$Id, [double]$Percent)
+    $usagePercent = Convert-DisplayPercentToUsagePercent $Percent $Row.Kind
     $level = 0
-    if ($Percent -ge 90) { $level = 90 } elseif ($Percent -ge 70) { $level = 70 }
+    if ($usagePercent -ge 90) { $level = 90 } elseif ($usagePercent -ge 70) { $level = 70 }
     $prev = 0
     if ($script:Alerted.ContainsKey($Id)) { $prev = $script:Alerted[$Id] }
     if ($level -gt $prev) {
         $script:Alerted[$Id] = $level
-        $msg = '{0} 用量已达 {1}' -f $Row.Name, (Format-PercentText $Percent)
+        $msg = '{0} 用量已达 {1}' -f $Row.Name, (Format-PercentText $usagePercent)
         Write-WidgetLog ("alert {0}: {1}" -f $Id, $msg)
         try {
             $script:Ui.Tray.ShowBalloonTip(6000, 'AI 周用量', $msg, [System.Windows.Forms.ToolTipIcon]::Warning)
@@ -1989,12 +2002,22 @@ function Apply-FetchResults {
         if (-not $row) { continue }
         if ($r.Error) {
             Register-ProviderFailure $r.Id
-            Write-WidgetLog ("error {0}: {1}" -f $r.Id, $r.Error)
-            Set-RowError $row (Format-FetchError ([string]$r.Error))
-            Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError ([string]$r.Error)), [string]$r.Error)
+            $safeError = Convert-SafeLogText ([string]$r.Error) 240
+            Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
+            Set-RowError $row (Format-FetchError $safeError)
+            Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError $safeError))
         } else {
+            try {
+                $pct = Assert-UsagePercent $r.Percent 'provider result percent'
+            } catch {
+                Register-ProviderFailure $r.Id
+                $safeError = Convert-SafeLogText $_.Exception.Message
+                Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
+                Set-RowError $row (Format-FetchError $safeError)
+                Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError $safeError))
+                continue
+            }
             Register-ProviderSuccess $r.Id
-            $pct = [double]$r.Percent
             $recentRequest = Get-RecentRequestLabel $row $requestEvents
             $rowDetail = [string]$r.Detail
             if ($recentRequest) { $rowDetail = @($rowDetail, $recentRequest) -join ' · ' }
@@ -2048,6 +2071,8 @@ function Apply-FetchResults {
 if ($Install) { Install-Widget; return }
 if ($Uninstall) { Uninstall-Widget; return }
 if ($AddAccount) { Add-CurrentAccount; return }
+if ($AddGrokAccount) { Add-CurrentGrokAccount; return }
+if ($MigrateSecrets) { Migrate-ProjectSnapshots; return }
 
 try {
     Write-WidgetLog 'starting widget'

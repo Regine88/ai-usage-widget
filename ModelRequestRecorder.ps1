@@ -1,4 +1,4 @@
-# Model request event recorder.
+﻿# Model request event recorder.
 #
 # Events intentionally contain metadata only. Prompts, completions, headers,
 # tokens and request bodies must never be written to this file.
@@ -10,6 +10,10 @@ function Convert-RequestEventValue {
     )
     if ($null -eq $Value) { return $null }
     $clean = $Value -replace '[\r\n\t]+', ' '
+    $clean = $clean -replace '(?i)bearer\s+[a-z0-9._~+/=-]+', 'Bearer [redacted]'
+    $clean = $clean -replace '(?i)(access_token|refresh_token|id_token|client_secret|api[_-]?key)=([^\s&]+)', '$1=[redacted]'
+    $clean = $clean -replace '(?i)([a-z0-9._%+\-]+)@([a-z0-9.\-]+\.[a-z]{2,})', '$1[at]$2'
+    $clean = $clean -replace '(?i)(https?://[^\s?]+)[^\s]*', '$1'
     $clean = $clean.Trim()
     if (-not $clean) { return $null }
     if ($clean.Length -gt $MaxLength) { return $clean.Substring(0, $MaxLength) }
@@ -18,7 +22,9 @@ function Convert-RequestEventValue {
 
 function Normalize-RequestProvider {
     param([Parameter(Mandatory)][string]$Provider)
-    $value = (Convert-RequestEventValue $Provider 40).ToLowerInvariant()
+    $normalized = Convert-RequestEventValue $Provider 40
+    if (-not $normalized) { return $null }
+    $value = $normalized.ToLowerInvariant()
     switch ($value) {
         { $_ -in @('xai', 'grok-cli') } { return 'grok' }
         { $_ -in @('openai', 'chatgpt', 'codex') } { return 'codex' }
@@ -26,6 +32,15 @@ function Normalize-RequestProvider {
         { $_ -in @('moonshot', 'kimi-code') } { return 'kimi' }
         default { return $value }
     }
+}
+
+function Convert-RequestAccountId {
+    param([string]$AccountId)
+    if (-not $AccountId) { return $null }
+    if (Get-Command Get-AccountFingerprint -ErrorAction SilentlyContinue) {
+        return (Get-AccountFingerprint -AccountId $AccountId -Prefix 'acct')
+    }
+    return (Convert-RequestEventValue $AccountId 160)
 }
 
 function Get-ModelRequestEventPath {
@@ -90,6 +105,10 @@ function Write-ModelRequestEvent {
 
     $eventPath = Get-ModelRequestEventPath $Path
     $providerValue = Normalize-RequestProvider $Provider
+    if (-not $providerValue) {
+        if ($Strict) { throw 'provider 不能为空' }
+        return $null
+    }
     $modelValue = Convert-RequestEventValue $Model 120
     if (-not $modelValue) {
         if ($Strict) { throw '模型名称不能为空' }
@@ -110,7 +129,7 @@ function Write-ModelRequestEvent {
         ts         = $completed.ToString('o')
         provider   = $providerValue
         model      = $modelValue
-        accountId  = Convert-RequestEventValue $AccountId 160
+        accountId  = Convert-RequestAccountId $AccountId
         requestId  = if ($RequestId) { Convert-RequestEventValue $RequestId 120 } else { [guid]::NewGuid().ToString('n') }
         operation  = Convert-RequestEventValue $Operation 40
         status     = $Status
@@ -205,7 +224,7 @@ function Get-LatestModelRequest {
     )
     if ($null -eq $Events) { $Events = @(Get-ModelRequestEvents -Path $Path) }
     $normalizedProvider = Normalize-RequestProvider $Provider
-    $normalizedAccount = Convert-RequestEventValue $AccountId 160
+    $normalizedAccount = Convert-RequestAccountId $AccountId
     $matches = @($Events | Where-Object {
         if (-not $_.provider -or (Normalize-RequestProvider ([string]$_.provider)) -ne $normalizedProvider) { return $false }
         if ($normalizedAccount) { return ([string]$_.accountId -eq $normalizedAccount) }

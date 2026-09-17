@@ -1,5 +1,14 @@
 ﻿# Grok multi-account helpers for the usage widget.
-# Mapping: user@example.com -> a, student@example.org -> b.
+# Known account labels use short fingerprints; no email addresses are stored in source labels.
+
+if (-not (Get-Command Get-AccountFingerprint -ErrorAction SilentlyContinue)) {
+    $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'
+    if (Test-Path -LiteralPath $validationHelper) { . $validationHelper }
+}
+if (-not (Get-Command Get-SecureSnapshotPath -ErrorAction SilentlyContinue)) {
+    $snapshotHelper = Join-Path $PSScriptRoot 'SecureSnapshot.ps1'
+    if (Test-Path -LiteralPath $snapshotHelper) { . $snapshotHelper }
+}
 
 function Get-GrokAccountId {
     param($Auth)
@@ -13,11 +22,14 @@ function Get-GrokAccountId {
 function Get-GrokAccountLabel {
     param($Auth)
     $id = Get-GrokAccountId $Auth
-    switch ($id) {
-        'user@example.com' { return 'a' }
-        'student@example.org' { return 'b' }
+    if ($Auth.Email) {
+        $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.Email) -Prefix 'Grok'
+        switch ($fingerprint) {
+            'Grok-1f4a2c7e' { return 'a' }
+            'Grok-9c3b7d21' { return 'b' }
+            default { return $fingerprint }
+        }
     }
-    if ($Auth.Email) { return [string]$Auth.Email }
     return 'Grok'
 }
 
@@ -32,7 +44,7 @@ function Get-GrokRowId {
     param($Auth)
     $label = Get-GrokAccountLabel $Auth
     if ($label -eq 'a' -or $label -eq 'b') { return ('grok-{0}' -f $label) }
-    return ('grok-{0}' -f (Get-GrokAccountId $Auth))
+    return ('grok-{0}' -f (Get-AccountFingerprint -AccountId (Get-GrokAccountId $Auth) -Prefix 'acct'))
 }
 
 function Get-GrokSnapshotFileName {
@@ -43,17 +55,22 @@ function Get-GrokSnapshotFileName {
 
 function Get-GrokSnapshotPath {
     param([string]$AccountId)
+    return (Get-SecureSnapshotPath -Provider grok -AccountId $AccountId)
+}
+
+function Get-GrokLegacySnapshotPath {
+    param([string]$AccountId)
+    if (-not $script:WidgetDir) { return $null }
     Join-Path $script:WidgetDir (Get-GrokSnapshotFileName $AccountId)
 }
 
-function Read-GrokAuthFromFile {
-    param([string]$Path)
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
-        throw ('未找到 Grok 登录凭证: {0}' -f $Path)
-    }
-    $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+function Convert-GrokRawAuth {
+    param(
+        [Parameter(Mandatory)]$Raw,
+        [string]$Path
+    )
     $best = $null
-    foreach ($p in $raw.PSObject.Properties) {
+    foreach ($p in $Raw.PSObject.Properties) {
         $v = $p.Value
         if (-not $v -or -not $v.key) { continue }
         $prefer = 0
@@ -68,16 +85,15 @@ function Read-GrokAuthFromFile {
         }
     }
     if (-not $best) { throw ('auth.json 中没有可用的登录凭证: {0}' -f $Path) }
-    $email = [string]$best.entry.email
     $auth = [pscustomobject]@{
         Path         = $Path
         KeyName      = $best.keyName
         Token        = [string]$best.entry.key
         RefreshToken = [string]$best.entry.refresh_token
         ClientId     = [string]$best.entry.oidc_client_id
-        Email        = $email
+        Email        = [string]$best.entry.email
         ExpiresAt    = $best.expires
-        Raw          = $raw
+        Raw          = $Raw
         Entry        = $best.entry
         AccountId    = $null
     }
@@ -85,14 +101,37 @@ function Read-GrokAuthFromFile {
     return $auth
 }
 
+function Read-GrokAuthFromFile {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+        throw ('未找到 Grok 登录凭证: {0}' -f $Path)
+    }
+    if ($Path -like '*.snapshot') {
+        return (Convert-GrokRawAuth -Raw (Read-SecureSnapshot -Path $Path) -Path $Path)
+    }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+    return (Convert-GrokRawAuth -Raw $raw -Path $Path)
+}
+
 function Get-GrokAccounts {
     $byId = [ordered]@{}
     if ($script:WidgetDir -and (Test-Path -LiteralPath $script:WidgetDir)) {
-        foreach ($f in Get-ChildItem -LiteralPath $script:WidgetDir -Filter 'grok-auth-*.json' -ErrorAction SilentlyContinue) {
+        foreach ($f in @(Get-SecureSnapshotFiles -Provider grok)) {
             try {
                 $snap = Read-GrokAuthFromFile -Path $f.FullName
                 if ($snap -and $snap.AccountId -and -not $byId.Contains($snap.AccountId)) {
                     $byId[$snap.AccountId] = $snap
+                }
+            } catch { }
+        }
+        foreach ($f in Get-ChildItem -LiteralPath $script:WidgetDir -Filter 'grok-auth-*.json' -ErrorAction SilentlyContinue) {
+            try {
+                $snap = Read-GrokAuthFromFile -Path $f.FullName
+                if ($snap -and $snap.AccountId) {
+                    $securePath = Write-SecureSnapshot -Provider grok -AccountId $snap.AccountId -Value $snap.Raw
+                    $snap.Path = $securePath
+                    if (-not $byId.Contains($snap.AccountId)) { $byId[$snap.AccountId] = $snap }
+                    Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
                 }
             } catch { }
         }
@@ -123,7 +162,13 @@ function Sync-ActiveGrokSnapshot {
     try {
         $active = Read-GrokAuthFromFile -Path $script:GrokAuthPath
         if (-not $active -or -not $active.AccountId) { return }
-        $snap = Get-GrokSnapshotPath $active.AccountId
-        Copy-Item -LiteralPath $script:GrokAuthPath -Destination $snap -Force
-    } catch { }
+        [void](Write-SecureSnapshot -Provider grok -AccountId $active.AccountId -Value $active.Raw)
+        $legacy = Get-GrokLegacySnapshotPath $active.AccountId
+        if ($legacy -and (Test-Path -LiteralPath $legacy)) { Remove-Item -LiteralPath $legacy -Force -ErrorAction Stop }
+    } catch {
+        if (Get-Command Write-WidgetLog -ErrorAction SilentlyContinue) {
+            Write-WidgetLog ("grok snapshot sync failed: {0}" -f (Convert-SafeLogText $_.Exception.Message))
+        }
+        throw
+    }
 }

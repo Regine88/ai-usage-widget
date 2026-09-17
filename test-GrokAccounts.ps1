@@ -1,4 +1,4 @@
-﻿# Encoding: UTF-8 with BOM. Run: powershell -NoProfile -ExecutionPolicy Bypass -File .\test-GrokAccounts.ps1
+﻿# Encoding: UTF-8 with BOM. Run: powershell -NoProfile -File .\test-GrokAccounts.ps1
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here 'GrokAccounts.ps1')
@@ -27,17 +27,17 @@ Assert-Eq (Get-GrokAccountId $empty) 'https://auth.x.ai::noid' 'id falls back to
 Assert-Eq (Get-GrokAccountLabel $gmail) 'a' 'label gmail -> a'
 Assert-Eq (Get-GrokAccountLabel $edu)   'b' 'label edu -> b'
 Assert-Eq (Get-GrokAccountLabel $mixed) 'a' 'label case-insensitive'
-Assert-Eq (Get-GrokAccountLabel $other) 'someone@example.com' 'label unknown email'
+Assert-Eq ((Get-GrokAccountLabel $other) -like 'Grok-????????') 'True' 'label unknown email is fingerprint'
 Assert-Eq (Get-GrokAccountLabel $empty) 'Grok' 'label missing email'
 
 Assert-Eq (Get-GrokRowName $gmail) 'Grok a' 'row name a'
 Assert-Eq (Get-GrokRowName $edu)   'Grok b' 'row name b'
-Assert-Eq (Get-GrokRowName $other) 'Grok someone@example.com' 'row name unknown'
+Assert-Eq ((Get-GrokRowName $other) -like 'Grok Grok-????????') 'True' 'row name unknown is fingerprint'
 Assert-Eq (Get-GrokRowName $empty) 'Grok' 'row name fallback'
 
 Assert-Eq (Get-GrokRowId $gmail) 'grok-a' 'row id a'
 Assert-Eq (Get-GrokRowId $edu)   'grok-b' 'row id b'
-Assert-Eq (Get-GrokRowId $other) 'grok-someone@example.com' 'row id unknown'
+Assert-Eq ((Get-GrokRowId $other) -like 'grok-acct-????????') 'True' 'row id unknown is fingerprint'
 
 Assert-Eq (Get-GrokSnapshotFileName 'user@example.com') 'grok-auth-user@example.com.json' 'snapshot gmail'
 Assert-Eq (Get-GrokSnapshotFileName 'a<b>|c') 'grok-auth-a_b__c.json' 'snapshot sanitizes filename'
@@ -46,6 +46,7 @@ $dir = Join-Path $env:TEMP ('grok-acct-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $dir | Out-Null
 try {
     $script:WidgetDir = $dir
+    $script:SecureSnapshotRoot = Join-Path $dir 'secure'
     $script:GrokAuthPath = Join-Path $dir 'live-auth.json'
     Set-Content -LiteralPath (Join-Path $dir 'grok-auth-student@example.org.json') -Value '{"https://auth.x.ai::b":{"key":"tok-b","refresh_token":"r-b","oidc_client_id":"cid","email":"student@example.org"}}' -Encoding utf8
     Set-Content -LiteralPath $script:GrokAuthPath -Value '{"https://auth.x.ai::a":{"key":"tok-a","refresh_token":"r-a","oidc_client_id":"cid","email":"user@example.com"}}' -Encoding utf8
@@ -55,12 +56,14 @@ try {
     Assert-Eq $accounts[0].Email 'user@example.com' 'sort a first'
     Assert-Eq $accounts[1].Email 'student@example.org' 'sort b second'
     Assert-Eq $accounts[0].Path $script:GrokAuthPath 'live account uses CLI auth path'
-    Assert-Eq $accounts[1].Path (Join-Path $dir 'grok-auth-student@example.org.json') 'b uses snapshot path'
+    Assert-Eq ($accounts[1].Path -like (Join-Path $dir 'secure\grok-*.snapshot')) 'True' 'b uses protected snapshot path'
 
     Sync-ActiveGrokSnapshot
     $snapA = Join-Path $dir 'grok-auth-user@example.com.json'
-    Assert-Eq (Test-Path -LiteralPath $snapA) 'True' 'auto-snapshot live gmail'
+    Assert-Eq (Test-Path -LiteralPath $snapA) 'False' 'legacy plaintext snapshot removed'
+    Assert-Eq (@(Get-SecureSnapshotFiles -Provider grok -Root $script:SecureSnapshotRoot).Count) '2' 'protected snapshots retained'
 } finally {
+    $script:SecureSnapshotRoot = $null
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 }
 

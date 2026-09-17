@@ -1,9 +1,14 @@
 ﻿# Antigravity Gemini quota helpers. Tokens live in Windows Credential
 # Manager target "gemini:antigravity" (same store Antigravity uses).
 
+if (-not (Get-Command Test-FiniteNumber -ErrorAction SilentlyContinue)) {
+    $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'
+    if (Test-Path -LiteralPath $validationHelper) { . $validationHelper }
+}
+
 $script:AntigravityCredTarget = 'gemini:antigravity'
 $script:AntigravityClientId = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com'
-$script:AntigravityClientSecret = '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'
+$script:AntigravityClientSecret = $env:ANTIGRAVITY_CLIENT_SECRET
 $script:AntigravityTokenUrl = 'https://oauth2.googleapis.com/token'
 $script:AntigravityQuotaUrl = 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary'
 $script:GeminiUsagePageUrl = 'https://one.google.com/ai'
@@ -119,6 +124,7 @@ function Save-AntigravityCred {
 
 function Update-AntigravityToken {
     param($Auth)
+    if (-not $script:AntigravityClientSecret) { throw '缺少 ANTIGRAVITY_CLIENT_SECRET，无法刷新 Gemini 登录' }
     $body = @{
         grant_type    = 'refresh_token'
         refresh_token = $Auth.RefreshToken
@@ -129,8 +135,15 @@ function Update-AntigravityToken {
     if (-not $resp.access_token) { throw '刷新 Gemini 登录失败，请打开 Antigravity 重新登录' }
     $Auth.AccessToken = [string]$resp.access_token
     if ($resp.refresh_token) { $Auth.RefreshToken = [string]$resp.refresh_token }
-    $Auth.ExpiresAt = [datetime]::UtcNow.AddSeconds([int]$resp.expires_in)
-    try { Save-AntigravityCred $Auth } catch { }
+    $expiresIn = Assert-PositiveFiniteNumber $resp.expires_in 'Gemini expires_in'
+    $Auth.ExpiresAt = [datetime]::UtcNow.AddSeconds($expiresIn)
+    try {
+        Save-AntigravityCred $Auth
+    } catch {
+        if (Get-Command Write-WidgetLog -ErrorAction SilentlyContinue) {
+            Write-WidgetLog ("gemini credential save failed: {0}" -f (Convert-SafeLogText $_.Exception.Message))
+        }
+    }
     if (Get-Command Write-WidgetLog -ErrorAction SilentlyContinue) {
         Write-WidgetLog 'gemini token refreshed'
     }
@@ -162,17 +175,20 @@ function Convert-GeminiQuota {
     $reset5h = $null
     $resetWeek = $null
     foreach ($b in @($group.buckets)) {
-        $frac = 0.0
-        try { $frac = [double]$b.remainingFraction } catch { continue }
+        $id = ([string]$b.bucketId + ' ' + [string]$b.window).ToLowerInvariant()
+        $isFiveHour = $id -match '5h|five'
+        $isWeekly = $id -match 'week'
+        if (-not $isFiveHour -and -not $isWeekly) { continue }
+        if ($null -eq $b.remainingFraction -or -not (Test-FiniteNumber $b.remainingFraction)) { throw 'Gemini 配额窗口缺少 remainingFraction' }
+        $frac = [double]$b.remainingFraction
         if ($frac -gt 1.0) { $frac = $frac / 100.0 }
-        $frac = [Math]::Max(0.0, [Math]::Min(1.0, $frac))
-        $pct = [Math]::Round($frac * 100.0, 1)
+        if ($frac -lt 0.0 -or $frac -gt 1.0) { throw 'Gemini remainingFraction 超出 0-1 范围' }
+        $pct = Assert-UsagePercent ([Math]::Round($frac * 100.0, 1)) 'Gemini remaining percent'
         $reset = $null
         if ($b.resetTime) {
             try { $reset = [datetime]::Parse([string]$b.resetTime, $null, [Globalization.DateTimeStyles]::RoundtripKind) } catch { }
         }
-        $id = ([string]$b.bucketId + ' ' + [string]$b.window).ToLowerInvariant()
-        if ($id -match '5h|five') {
+        if ($isFiveHour) {
             $remain5h = $pct
             $reset5h = $reset
         } elseif ($id -match 'week') {

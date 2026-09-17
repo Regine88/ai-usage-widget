@@ -18,27 +18,17 @@ If exePath = "" Then
     WScript.Quit 1
 End If
 
-sh.Run """" & exePath & """ -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & ps1Path & """", 0, False
+sh.Run """" & exePath & """ -NoProfile -STA -WindowStyle Hidden -File """ & ps1Path & """", 0, False
 
-' Prefer PowerShell 7 at its default install path, then anything named
-' pwsh.exe on PATH, and finally fall back to Windows PowerShell 5.1.
+' Prefer PowerShell 7 at its default install path, then Windows PowerShell 5.1.
 Function FindPowerShell()
-    Dim p, d
+    Dim p
     FindPowerShell = ""
     p = "C:\Program Files\PowerShell\7\pwsh.exe"
     If fso.FileExists(p) Then
         FindPowerShell = p
         Exit Function
     End If
-    For Each d In Split(sh.Environment("PROCESS")("PATH"), ";")
-        If Len(d) > 0 Then
-            p = fso.BuildPath(d, "pwsh.exe")
-            If fso.FileExists(p) Then
-                FindPowerShell = p
-                Exit Function
-            End If
-        End If
-    Next
     p = sh.ExpandEnvironmentStrings("%WINDIR%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
     If fso.FileExists(p) Then FindPowerShell = p
 End Function

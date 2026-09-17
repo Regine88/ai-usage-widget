@@ -62,6 +62,14 @@ $data2 = @{
 $q2 = Convert-CommandCodeCredits $data2
 Assert-Eq $q2.Percent '34' 'overall falls back to weekly pct'
 
+# --- explicit overall zero must not fall back to weekly ---
+$dataZero = @{
+    credits = @{ usagePercent = 0 }
+    windowLimits = @{ weekly = @{ used = 3400; cap = 10000 } }
+} | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$qZero = Convert-CommandCodeCredits $dataZero
+Assert-Eq $qZero.Percent '0' 'explicit overall zero stays zero'
+
 # --- 仅 fiveHour 窗口 ---
 $data3 = @{
     windowLimits = @{
@@ -99,23 +107,62 @@ try {
     Write-Host 'OK   empty windowLimits throws'
 }
 
-# --- cap 0 不除零 ---
+# --- 非法 cap 必须报错，而不是显示为 0 ---
 $data6 = @{
     windowLimits = @{
         weekly = @{ used = 100; cap = 0 }
     }
 } | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-$q6 = Convert-CommandCodeCredits $data6
-Assert-Eq $q6.Percent '0' 'cap 0 -> pct 0 no divide'
+try {
+    Convert-CommandCodeCredits $data6 | Out-Null
+    Write-Host 'FAIL cap 0 should throw'
+    $failed++
+} catch {
+    Write-Host 'OK   cap 0 throws'
+}
 
-# --- 负 used 夹到 0 ---
+# --- 非法 used 必须报错，而不是夹到 0 ---
 $data7 = @{
     windowLimits = @{
         weekly = @{ used = -50; cap = 100 }
     }
 } | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-$q7 = Convert-CommandCodeCredits $data7
-Assert-Eq $q7.Weekly.Percent '0' 'negative used clamped to 0'
+try {
+    Convert-CommandCodeCredits $data7 | Out-Null
+    Write-Host 'FAIL negative used should throw'
+    $failed++
+} catch {
+    Write-Host 'OK   negative used throws'
+}
+
+$invalidWindows = @(
+    (@{ windowLimits = @{ weekly = @{ used = 'garbage'; cap = 100 } } } | ConvertTo-Json -Depth 8 | ConvertFrom-Json),
+    (@{ windowLimits = @{ weekly = @{ used = 'NaN'; cap = 100 } } } | ConvertTo-Json -Depth 8 | ConvertFrom-Json),
+    (@{ windowLimits = @{ weekly = @{ used = 10; cap = 'garbage' } } } | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
+)
+foreach ($invalid in $invalidWindows) {
+    try {
+        Convert-CommandCodeCredits $invalid | Out-Null
+        Write-Host 'FAIL invalid window value should throw'
+        $failed++
+    } catch {
+        Write-Host 'OK   invalid window value throws'
+    }
+}
+
+$mixedInvalid = @{
+    windowLimits = @{
+        weekly = @{ used = 10; cap = 100 }
+        fiveHour = @{ used = 'garbage'; cap = 100 }
+    }
+} | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+try {
+    Convert-CommandCodeCredits $mixedInvalid | Out-Null
+    Write-Host 'FAIL invalid secondary window should throw'
+    $failed++
+} catch {
+    Write-Host 'OK   invalid secondary window throws'
+}
 
 # --- 无窗口抛异常 ---
 try {
