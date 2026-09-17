@@ -110,6 +110,8 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'KimiQuota.ps1')
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
+. (Join-Path $script:WidgetDir 'UsageHistory.ps1')
+. (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
 
 $script:Mutex = $null
 $script:LastOkAt = $null
@@ -129,6 +131,8 @@ $script:DragOffset = [System.Drawing.Point]::Empty
 $script:UiScale = $null
 $script:UiMetrics = $null
 $script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
+$script:Config = $null
+$script:TrendSeries = @{}
 
 function Write-WidgetLog {
     param([string]$Message)
@@ -287,6 +291,14 @@ function Format-ResetTime {
     param($End)
     if (-not $End) { return $null }
     return $End.ToLocalTime().ToString('M月d日 HH:mm')
+}
+
+# Round-trippable reset stamp for the forecast; the row tooltip keeps the
+# human readable Format-ResetTime text.
+function ConvertTo-ResetStamp {
+    param($End)
+    if (-not $End) { return $null }
+    try { return ([datetime]$End).ToString('o') } catch { return $null }
 }
 
 function Get-HttpStatusCode {
@@ -1063,6 +1075,7 @@ function Get-CommandCodeRowData {
         Detail  = ($details -join ' · ')
         Tip     = ('{0} {1}' -f $script:CommandCodeDisplayName, (Format-PercentText $u.Percent))
         Reset   = (Format-ResetTime $u.PeriodEnd)
+        ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
 }
 
@@ -1070,10 +1083,10 @@ function Get-CommandCodeRowData {
 
 function Get-DemoRowTable {
     return @(
-        [pscustomobject]@{ Id = 'demo-grok'; Kind = 'grok'; Name = 'Grok a'; OpenUrl = $script:GrokUsagePageUrl; Percent = 9.0; Detail = 'Build 9% · 重置还有 4 天 22 小时' }
-        [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = '5小时窗 12% · 重置还有 4 天 4 小时' }
-        [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = '5小时窗 31% · 重置还有 5 天 4 小时' }
-        [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = '5小时 41% · 周 93% · 重置还有 3 天 6 小时' }
+        [pscustomobject]@{ Id = 'demo-grok'; Kind = 'grok'; Name = 'Grok a'; OpenUrl = $script:GrokUsagePageUrl; Percent = 9.0; Detail = 'Build 9% · 重置还有 4 天 22 小时'; TrendPct = @(2, 3, 4, 5, 6, 7, 9) }
+        [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = '5小时窗 12% · 重置还有 4 天 4 小时'; TrendPct = @(18, 24, 30, 35, 39, 43, 46) }
+        [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = '5小时窗 31% · 重置还有 5 天 4 小时'; TrendPct = @(52, 58, 63, 67, 70, 72, 74) }
+        [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = '5小时 41% · 周 93% · 重置还有 3 天 6 小时'; TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
     )
 }
 
@@ -1087,6 +1100,7 @@ function Get-DemoFetchResults {
             Detail  = [string]$row.Detail
             Tip     = ('{0} {1}' -f $row.Name, (Format-PercentText $row.Percent))
             Reset   = $null
+            ResetAt = (Get-Date).AddDays(4).ToString('o')
             Error   = $null
         }
     }
@@ -1302,7 +1316,8 @@ function Bind-Drag {
     })
     $Control.Add_MouseDoubleClick({
         try {
-            $url = [string]$this.Tag
+            $tag = $this.Tag
+            $url = if ($tag -is [hashtable]) { [string]$tag.Url } else { [string]$tag }
             if ($url) { Start-Process $url }
         } catch { }
     })
@@ -1365,7 +1380,15 @@ function Get-UiMetrics {
         StampH     = (Scale-Px 18)
         Radius     = (Scale-Px 18)
         EdgeInset  = (Scale-Px 24)
+        TrendW     = (Scale-Px 56)
+        TrendH     = (Scale-Px 20)
+        TrendGap   = (Scale-Px 8)
+        TrendPad   = (Scale-Px 6)
     }
+    $showTrend = $true
+    try { if ($script:Config) { $showTrend = [bool]$script:Config.showTrend } } catch { }
+    $trendSpace = if ($showTrend) { $script:UiMetrics.TrendW + $script:UiMetrics.TrendGap } else { 0 }
+    $script:UiMetrics.BarTrackW = [Math]::Max((Scale-Px 80), ($script:UiMetrics.ContentW - $trendSpace))
     return $script:UiMetrics
 }
 
@@ -1413,7 +1436,7 @@ function Rebuild-ProviderRows {
 
         $barBack = New-Object System.Windows.Forms.Panel
         $barBack.Location = New-Object System.Drawing.Point $m.MarginX, ($y + $m.BarTop)
-        $barBack.Size = New-Object System.Drawing.Size $m.ContentW, $m.BarH
+        $barBack.Size = New-Object System.Drawing.Size $m.BarTrackW, $m.BarH
         Set-UiColor $barBack 'BackColor' ([System.Drawing.Color]::FromArgb(42, 42, 50).ToArgb())
         $barBack.Parent = $Form
         $barBack.Tag = $spec.OpenUrl
@@ -1429,11 +1452,43 @@ function Rebuild-ProviderRows {
         $lblDetail.Tag = $spec.OpenUrl
         $lblDetail.AutoEllipsis = $true
 
-        foreach ($c in @($lblName, $lblPct, $barBack, $barFill, $lblDetail)) {
+        # The sparkline shares the progress-bar row; when it is hidden the bar
+        # keeps the full width (BarTrackW == ContentW).
+        $trend = $null
+        if ($m.BarTrackW -lt $m.ContentW) {
+            $trend = New-Object System.Windows.Forms.Panel
+            $trend.Location = New-Object System.Drawing.Point ($m.MarginX + $m.BarTrackW + $m.TrendGap), ($y + $m.BarTop - $m.TrendPad)
+            $trend.Size = New-Object System.Drawing.Size $m.TrendW, $m.TrendH
+            Set-UiColor $trend 'BackColor' ([System.Drawing.Color]::Transparent.ToArgb())
+            $trend.Tag = @{ Url = $spec.OpenUrl; Points = @(); Argb = (Get-UsageColor 0).ToArgb() }
+            $trend.Parent = $Form
+            # The event args only bind through an explicit param block; $this is
+            # the panel and its Tag carries the points and the line color.
+            $trend.Add_Paint({
+                param($sender, $e)
+                try {
+                    $data = $sender.Tag
+                    if (-not $data -or -not $data.Points -or $data.Points.Count -lt 2) { return }
+                    $pts = New-Object 'System.Drawing.PointF[]' $data.Points.Count
+                    for ($i = 0; $i -lt $data.Points.Count; $i++) {
+                        $pts[$i] = [System.Drawing.PointF]::new([float]$data.Points[$i].X, [float]$data.Points[$i].Y)
+                    }
+                    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb([int]$data.Argb)), 1.4
+                    $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                    $e.Graphics.DrawLines($pen, $pts)
+                    $pen.Dispose()
+                } catch { }
+            })
+        }
+
+        $rowControls = @($lblName, $lblPct, $barBack, $barFill, $lblDetail)
+        if ($trend) { $rowControls += $trend }
+        foreach ($c in $rowControls) {
             $c.ContextMenuStrip = $script:Ui.Menu
             Bind-Drag $c
         }
         foreach ($c in @($lblName, $lblPct, $barBack, $lblDetail)) { [void]$script:Ui.RowControls.Add($c) }
+        if ($trend) { [void]$script:Ui.RowControls.Add($trend) }
         [void]$script:Ui.Rows.Add(@{
             Id       = $spec.Id
             Kind     = $spec.Kind
@@ -1442,7 +1497,8 @@ function Rebuild-ProviderRows {
             Pct      = $lblPct
             BarFill  = $barFill
             Detail   = $lblDetail
-            Controls = @($lblName, $lblPct, $barBack, $barFill, $lblDetail)
+            Trend    = $trend
+            Controls = $rowControls
         })
         if ($script:Ui.Tip) {
             $initTip = ("{0}`n数据加载中…`n双击打开用量页面" -f $spec.Name)
@@ -1451,6 +1507,22 @@ function Rebuild-ProviderRows {
             }
         }
         $y += $m.RowH
+    }
+
+    if ($script:DemoMode) {
+        foreach ($rowState in $script:Ui.Rows) {
+            if (-not $rowState.Trend) { continue }
+            $spec = @($Specs | Where-Object { $_.Id -eq $rowState.Id })[0]
+            if (-not $spec -or -not $spec.TrendPct) { continue }
+            $values = @($spec.TrendPct)
+            $today = (Get-Date).Date
+            $series = @()
+            for ($i = 0; $i -lt $values.Count; $i++) {
+                $series += @{ Day = $today.AddDays(-($values.Count - 1 - $i)); Pct = $values[$i] }
+            }
+            $lastValue = $values[$values.Count - 1]
+            Set-RowTrend $rowState $series $lastValue
+        }
     }
 
     $h = Get-FormHeight $Specs.Count
@@ -1477,7 +1549,7 @@ function Set-RowUsage {
     if ($Row.Pct.Text -ne $text) { $Row.Pct.Text = [string]$text }
     Set-UiColor $Row.Pct 'ForeColor' $argb
     Set-UiColor $Row.BarFill 'BackColor' $argb
-    $track = (Get-UiMetrics).ContentW
+    $track = (Get-UiMetrics).BarTrackW
     $w = [Math]::Max(0, [Math]::Min($track, [int][Math]::Round($track * $colorPct / 100.0)))
     if ($Row.BarFill.Width -ne $w) { $Row.BarFill.Width = $w }
     if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
@@ -1527,6 +1599,7 @@ function Get-GrokRowData {
         Detail  = ($details -join ' · ')
         Tip     = ('{0} {1}' -f $tipName, (Format-PercentText $u.Percent))
         Reset   = (Format-ResetTime $u.PeriodEnd)
+        ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
 }
 
@@ -1542,6 +1615,7 @@ function Get-GeminiRowData {
         Detail  = ($details -join ' · ')
         Tip     = ('Gemini 余量 {0}' -f (Format-PercentText $u.Remaining))
         Reset   = (Format-ResetTime $u.PeriodEnd)
+        ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
 }
 
@@ -1562,6 +1636,7 @@ function Get-KimiRowData {
         Detail  = ($details -join ' · ')
         Tip     = ('Kimi {0}' -f (Format-PercentText $u.Percent))
         Reset   = (Format-ResetTime $u.PeriodEnd)
+        ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
 }
 
@@ -1579,6 +1654,7 @@ function Get-CodexRowData {
         Detail  = ($details -join ' · ')
         Tip     = ('{0} {1}' -f $Name, (Format-PercentText $u.Percent))
         Reset   = (Format-ResetTime $u.PeriodEnd)
+        ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
 }
 
@@ -1638,6 +1714,7 @@ function New-WidgetForm {
     $miOpenCodex = $miOpen.DropDownItems.Add('ChatGPT')
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     [void]$menu.Items.Add($miOpen)
+    $miExportCsv = $menu.Items.Add('导出用量 CSV')
     $miTop = $menu.Items.Add('浮在窗口上')
     $miTop.Checked = [bool]$script:State.topMost
     [void]$menu.Items.Add('-')
@@ -1684,6 +1761,7 @@ function New-WidgetForm {
     })
 
     $miRefresh.Add_Click({ Update-Widget })
+    $miExportCsv.Add_Click({ Export-UsageHistoryInteractive })
     foreach ($sec in $script:IntervalItems.Keys) {
         $script:IntervalItems[$sec].Add_Click({
             $chosen = [int]$this.Tag
@@ -1857,7 +1935,7 @@ function Update-Widget {
 function Get-WorkerScriptSource {
     $fnNames = @(
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
-        'Format-PercentText', 'Format-ResetText', 'Format-ResetTime',
+        'Format-PercentText', 'Format-ResetText', 'Format-ResetTime', 'ConvertTo-ResetStamp',
         'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent',
         'Resolve-TrustedHttpsEndpoint', 'Get-AccountFingerprint', 'Convert-SafeLogText',
         'Get-SecureSnapshotRoot', 'Get-SecureSnapshotPath', 'ConvertTo-SnapshotCipherText',
@@ -1911,9 +1989,9 @@ foreach ($row in @($Rows)) {
             'commandcode' { $d = Get-CommandCodeRowData }
             default { throw '未找到登录凭证' }
         }
-        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; Error = $null }
+        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
     } catch {
-            $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; Error = (Convert-SafeLogText $_.Exception.Message 240) }
+            $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; ResetAt = $null; Error = (Convert-SafeLogText $_.Exception.Message 240) }
     }
 }
 $results
@@ -1986,6 +2064,7 @@ function Convert-FetchRow {
     $detail = $null
     $tip = $null
     $reset = $null
+    $resetAt = $null
     if ($null -ne $Raw) {
         try { if ($Raw.Id) { $id = [string]$Raw.Id } } catch { }
         try { if ($Raw.Error) { $err = [string]$Raw.Error } } catch { }
@@ -1995,6 +2074,7 @@ function Convert-FetchRow {
         try { if ($Raw.Detail) { $detail = [string]$Raw.Detail } } catch { }
         try { if ($Raw.Tip) { $tip = [string]$Raw.Tip } } catch { }
         try { if ($Raw.Reset) { $reset = [string]$Raw.Reset } } catch { }
+        try { if ($Raw.ResetAt) { $resetAt = [string]$Raw.ResetAt } } catch { }
     }
     if (-not $id) { $id = $FallbackId }
     [pscustomobject]@{
@@ -2003,6 +2083,7 @@ function Convert-FetchRow {
         Detail  = $detail
         Tip     = $tip
         Reset   = $reset
+        ResetAt = $resetAt
         Error   = $err
     }
 }
@@ -2087,6 +2168,47 @@ function Set-RowTip {
     }
 }
 
+function Set-RowTrend {
+    param($Row, $Series, [double]$UsagePercent)
+    if (-not $Row -or -not $Row.Trend) { return }
+    $items = @($Series)
+    if ($items.Count -lt 2) { return }
+    $points = @(New-SparklinePath $items $Row.Trend.Width $Row.Trend.Height 2 8)
+    $url = $null
+    try { $url = $Row.Trend.Tag.Url } catch { }
+    $Row.Trend.Tag = @{ Url = $url; Points = $points; Argb = (Get-UsageColor $UsagePercent).ToArgb() }
+    $Row.Trend.Invalidate()
+}
+
+function Format-ForecastText {
+    param($Forecast)
+    if (-not $Forecast) { return $null }
+    if ($null -eq $Forecast.EtaHours) {
+        if ($null -ne $Forecast.SlopePerDay) { return '按最近趋势不会耗尽' }
+        return $null
+    }
+    $eta = [double]$Forecast.EtaHours
+    $span = if ($eta -ge 48) { '{0:0.#} 天' -f ($eta / 24.0) }
+            elseif ($eta -ge 1) { '{0:0.#} 小时' -f $eta }
+            else { '{0:0} 分钟' -f [Math]::Max(1, [int]($eta * 60)) }
+    if ($Forecast.ExhaustsBeforeReset) { return ('按最近趋势约 {0} 后耗尽，早于本次重置' -f $span) }
+    return ('按最近趋势约 {0} 后耗尽' -f $span)
+}
+
+function Export-UsageHistoryInteractive {
+    try {
+        $stamp = [datetime]::Now.ToString('yyyyMMdd-HHmmss')
+        $target = Join-Path $script:WidgetDir ('ai-usage-{0}.csv' -f $stamp)
+        if (-not (Export-UsageHistoryCsv -Path $target -SourcePath $script:HistoryPath)) { return }
+        Write-WidgetLog ("csv export {0}" -f $target)
+        [System.Windows.Forms.MessageBox]::Show(
+            ('已导出到{0}{1}' -f [Environment]::NewLine, $target),
+            'AI 周用量', 'OK', 'Information') | Out-Null
+    } catch {
+        Write-WidgetLog ("csv export failed: $($_.Exception.Message)")
+    }
+}
+
 function Write-UsageHistory {
     param([string]$Id, [double]$Percent)
     try {
@@ -2127,6 +2249,20 @@ function Apply-FetchResults {
     if (-not $ui -or $ui.Form.IsDisposed) { return }
 
     $requestEvents = @(Get-ModelRequestEvents -Path $script:RequestEventsPath -Limit 5000)
+    $historyRecords = @()
+    $wantTrend = $true
+    $showForecast = $true
+    $trendDays = 7
+    try {
+        if ($script:Config) {
+            $wantTrend = [bool]$script:Config.showTrend
+            $showForecast = [bool]$script:Config.showForecast
+            $trendDays = [int]$script:Config.trendDays
+        }
+    } catch { }
+    if ($wantTrend -or $showForecast) {
+        $historyRecords = @(Read-UsageHistory -Path $script:HistoryPath -Limit 2000)
+    }
     foreach ($r in @($Results)) {
         if (-not $r -or -not $r.Id) { continue }
         $row = @($ui.Rows | Where-Object { $_.Id -eq $r.Id })[0]
@@ -2155,6 +2291,16 @@ function Apply-FetchResults {
             Set-RowUsage $row $pct $rowDetail
             $script:LastOkAt = Get-Date
 
+            $forecastLine = $null
+            if ($historyRecords.Count -gt 0) {
+                $usagePct = Convert-DisplayPercentToUsagePercent $pct $row.Kind
+                $series = @(Get-UsageHistoryDaySeries -Records $historyRecords -Id $r.Id -Days $trendDays -Kind $row.Kind)
+                if ($wantTrend) { Set-RowTrend $row $series $usagePct }
+                if ($showForecast) {
+                    $forecastLine = Format-ForecastText (Get-UsageForecast -Series $series -CurrentPercent $usagePct -ResetAt $r.ResetAt)
+                }
+            }
+
             $delta = $null
             if ($script:LastPct.ContainsKey($r.Id)) { $delta = $pct - [double]$script:LastPct[$r.Id] }
             $script:LastPct[$r.Id] = $pct
@@ -2168,6 +2314,7 @@ function Apply-FetchResults {
                 ('{0} — {1}' -f $row.Name, (Format-PercentText $pct)),
                 [string]$r.Detail,
                 $recentRequest,
+                $forecastLine,
                 $(if ($r.Reset) { '重置时刻: ' + [string]$r.Reset }),
                 $upd,
                 '双击打开用量页面'
@@ -2207,6 +2354,8 @@ if ($MigrateSecrets) { Migrate-ProjectSnapshots; return }
 
 try {
     Write-WidgetLog ('starting widget v{0}{1}' -f $script:AppVersion, $(if ($script:DemoMode) { ' (demo mode)' } else { '' }))
+    $script:Config = Read-WidgetConfig
+    Write-WidgetLog ('config interval={0}s language={1} trend={2} forecast={3}' -f $script:Config.intervalSeconds, $script:Config.language, $script:Config.showTrend, $script:Config.showForecast)
     Ensure-SingleInstance
     if (-not $script:DemoMode) {
         try { Remove-LegacyStartupShortcuts } catch { }
