@@ -1658,6 +1658,208 @@ function Get-CodexRowData {
     }
 }
 
+function New-SettingLabel {
+    param($Parent, [string]$Text, [int]$X, [int]$Y, $Color)
+    if (-not $Color) { $Color = [System.Drawing.Color]::FromArgb(244, 244, 247) }
+    $font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $lbl = New-Label $Parent ("lbl-" + [guid]::NewGuid().ToString('N').Substring(0, 8)) $X $Y 10 20 $font $Color 'MiddleLeft'
+    $lbl.Text = $Text
+    $lbl.AutoSize = $true
+    return $lbl
+}
+
+function New-SettingCheckBox {
+    param($Parent, [string]$Text, [int]$X, [int]$Y, [bool]$Checked)
+    $box = New-Object System.Windows.Forms.CheckBox
+    $box.Text = $Text
+    $box.Location = New-Object System.Drawing.Point $X, $Y
+    $box.AutoSize = $true
+    $box.Checked = $Checked
+    $box.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    Set-UiColor $box 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    $box.Parent = $Parent
+    return $box
+}
+
+function New-SettingNumber {
+    param($Parent, [int]$X, [int]$Y, [int]$W, [double]$Value, [double]$Min, [double]$Max, [double]$Step, [int]$Decimals = 0)
+    $num = New-Object System.Windows.Forms.NumericUpDown
+    $num.Location = New-Object System.Drawing.Point $X, $Y
+    $num.Size = New-Object System.Drawing.Size $W, (Scale-Px 24)
+    $num.Minimum = [decimal]$Min
+    $num.Maximum = [decimal]$Max
+    $num.Increment = [decimal]$Step
+    $num.DecimalPlaces = $Decimals
+    $num.Value = [decimal]([Math]::Max($Min, [Math]::Min($Max, $Value)))
+    $num.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    Set-UiColor $num 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
+    Set-UiColor $num 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    $num.Parent = $Parent
+    return $num
+}
+
+function New-SettingText {
+    param($Parent, [int]$X, [int]$Y, [int]$W, [string]$Value)
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.Location = New-Object System.Drawing.Point $X, $Y
+    $box.Size = New-Object System.Drawing.Size $W, (Scale-Px 24)
+    $box.Text = $Value
+    $box.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    Set-UiColor $box 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
+    Set-UiColor $box 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    $box.Parent = $Parent
+    return $box
+}
+
+function New-SettingCombo {
+    param($Parent, [int]$X, [int]$Y, [int]$W, [string[]]$Items, [int]$Index)
+    $combo = New-Object System.Windows.Forms.ComboBox
+    $combo.Location = New-Object System.Drawing.Point $X, $Y
+    $combo.Size = New-Object System.Drawing.Size $W, (Scale-Px 24)
+    $combo.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    [void]$combo.Items.AddRange([object[]]$Items)
+    if ($Index -ge 0 -and $Index -lt $Items.Count) { $combo.SelectedIndex = $Index }
+    $combo.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    Set-UiColor $combo 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
+    Set-UiColor $combo 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    $combo.Parent = $Parent
+    return $combo
+}
+
+function New-SettingButton {
+    param($Parent, [string]$Text, [int]$X, [int]$Y)
+    $button = New-Object System.Windows.Forms.Button
+    $button.Text = $Text
+    $button.Size = New-Object System.Drawing.Size (Scale-Px 84), (Scale-Px 28)
+    $button.Location = New-Object System.Drawing.Point $X, $Y
+    $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    Set-UiColor $button 'BackColor' ([System.Drawing.Color]::FromArgb(38, 38, 46).ToArgb())
+    Set-UiColor $button 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    $button.Parent = $Parent
+    return $button
+}
+
+# Settings dialog for ai-config.json. Everything is scaled with Scale-Px and
+# uses auto-sized labels, so the 150% DPI layout stays readable.
+# Saving applies the interval, opacity and row layout immediately; provider
+# switches rebuild the rows on the next update.
+function Show-WidgetSettings {
+    $current = Convert-WidgetConfig $script:Config
+    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
+    $languages = @('auto', 'zh-CN', 'en-US')
+    $languageIndex = [Math]::Max(0, [Array]::IndexOf($languages, [string]$current.language))
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = 'AI 周用量 · 设置'
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowInTaskbar = $false
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 404))
+    $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    Set-UiColor $dialog 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
+    Set-UiColor $dialog 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+
+    $colLabel = Scale-Px 18
+    $colValue = Scale-Px 124
+
+    $chkTrend = New-SettingCheckBox $dialog '趋势迷你折线' $colLabel (Scale-Px 16) ([bool]$current.showTrend)
+    $chkForecast = New-SettingCheckBox $dialog '耗尽预测' (Scale-Px 208) (Scale-Px 16) ([bool]$current.showForecast)
+
+    [void](New-SettingLabel $dialog '趋势天数' $colLabel (Scale-Px 48) $muted)
+    $numDays = New-SettingNumber $dialog $colValue (Scale-Px 48) (Scale-Px 70) $current.trendDays 1 14 1
+    [void](New-SettingLabel $dialog '天' (Scale-Px 204) (Scale-Px 48) $muted)
+
+    [void](New-SettingLabel $dialog '刷新间隔' $colLabel (Scale-Px 78) $muted)
+    $numInterval = New-SettingNumber $dialog $colValue (Scale-Px 78) (Scale-Px 70) $current.intervalSeconds 15 86400 15
+    [void](New-SettingLabel $dialog '秒' (Scale-Px 204) (Scale-Px 78) $muted)
+
+    [void](New-SettingLabel $dialog '窗口不透明度' $colLabel (Scale-Px 108) $muted)
+    $numOpacity = New-SettingNumber $dialog $colValue (Scale-Px 108) (Scale-Px 70) $current.opacity 0.5 1.0 0.02 2
+
+    [void](New-SettingLabel $dialog '提醒阈值' $colLabel (Scale-Px 138) $muted)
+    $txtThresholds = New-SettingText $dialog $colValue (Scale-Px 138) (Scale-Px 90) (($current.alertThresholds) -join ',')
+    [void](New-SettingLabel $dialog '百分比，逗号分隔' (Scale-Px 224) (Scale-Px 138) $muted)
+
+    $chkQuiet = New-SettingCheckBox $dialog '静音时段' $colLabel (Scale-Px 170) ([bool]$current.quietHours.enabled)
+    $txtQuietStart = New-SettingText $dialog (Scale-Px 124) (Scale-Px 170) (Scale-Px 62) ([string]$current.quietHours.start)
+    [void](New-SettingLabel $dialog '至' (Scale-Px 190) (Scale-Px 170) $muted)
+    $txtQuietEnd = New-SettingText $dialog (Scale-Px 208) (Scale-Px 170) (Scale-Px 62) ([string]$current.quietHours.end)
+
+    [void](New-SettingLabel $dialog '启用供应商' $colLabel (Scale-Px 202) $muted)
+    $chkGrok = New-SettingCheckBox $dialog 'Grok' $colValue (Scale-Px 200) ([bool]$current.providers.grok)
+    $chkGemini = New-SettingCheckBox $dialog 'Gemini' (Scale-Px 208) (Scale-Px 200) ([bool]$current.providers.gemini)
+    $chkKimi = New-SettingCheckBox $dialog 'Kimi' $colValue (Scale-Px 226) ([bool]$current.providers.kimi)
+    $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.codex)
+    $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
+
+    [void](New-SettingLabel $dialog '界面语言' $colLabel (Scale-Px 288) $muted)
+    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 288) (Scale-Px 150) @('跟随系统', '简体中文', 'English') $languageIndex
+
+    $btnSave = New-SettingButton $dialog '保存' (Scale-Px 176) (Scale-Px 344)
+    $btnCancel = New-SettingButton $dialog '取消' (Scale-Px 268) (Scale-Px 344)
+
+    $dialog.AcceptButton = $btnSave
+    $dialog.CancelButton = $btnCancel
+    $btnCancel.Add_Click({ $dialog.Close() })
+    $btnSave.Add_Click({
+        try {
+            $picked = @{
+                intervalSeconds = [int]$numInterval.Value
+                opacity         = [double]$numOpacity.Value
+                showTrend       = [bool]$chkTrend.Checked
+                showForecast    = [bool]$chkForecast.Checked
+                trendDays       = [int]$numDays.Value
+                language        = $languages[$cmbLanguage.SelectedIndex]
+                alertThresholds = ConvertTo-ConfigThresholds ($txtThresholds.Text -split '[,;\s]+') @(70, 90)
+                quietHours      = @{
+                    enabled = [bool]$chkQuiet.Checked
+                    start   = $txtQuietStart.Text
+                    end     = $txtQuietEnd.Text
+                }
+                providers       = @{
+                    grok        = [bool]$chkGrok.Checked
+                    gemini      = [bool]$chkGemini.Checked
+                    kimi        = [bool]$chkKimi.Checked
+                    codex       = [bool]$chkCodex.Checked
+                    commandcode = [bool]$chkCommandCode.Checked
+                }
+            }
+            $script:Config = Convert-WidgetConfig $picked
+            if (-not $script:DemoMode) { [void](Write-WidgetConfig -Config $script:Config) }
+            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language)
+            Apply-WidgetConfig
+        } catch {
+            Write-WidgetLog ("settings save failed: $($_.Exception.Message)")
+        }
+        $dialog.Close()
+    })
+
+    [void]$dialog.ShowDialog($script:Ui.Form)
+    $dialog.Dispose()
+}
+
+# Push the saved config into the live window without a restart.
+function Apply-WidgetConfig {
+    try {
+        if ($script:Ui -and $script:Ui.Form) { $script:Ui.Form.Opacity = [double]$script:Config.opacity }
+    } catch { }
+    try {
+        if ($script:Ui -and $script:Ui.Form -and $script:Ui.Form.Tag) {
+            $timer = $script:Ui.Form.Tag
+            $timer.Interval = [Math]::Max(15000, [int]$script:Config.intervalSeconds * 1000)
+        }
+    } catch { }
+    foreach ($sec in $script:IntervalItems.Keys) {
+        try { $script:IntervalItems[$sec].Checked = ([int]$sec -eq [int]$script:Config.intervalSeconds) } catch { }
+    }
+    # Trend switches change the bar track width, so the cached metrics and the
+    # row signature are cleared to force a rebuild on the next update.
+    $script:UiMetrics = $null
+    if ($script:Ui) { $script:Ui.Sig = $null }
+    Update-Widget
+}
 function New-WidgetForm {
     Read-State
     Hide-ConsoleWindow
@@ -1669,7 +1871,7 @@ function New-WidgetForm {
     $m = Get-UiMetrics $form
     $form.Size = New-Object System.Drawing.Size($m.FormWidth, (Get-FormHeight 3))
     Set-UiColor $form 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
-    $form.Opacity = 0.96
+    $form.Opacity = [double]$script:Config.opacity
     $form.TopMost = $false
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
@@ -1715,6 +1917,7 @@ function New-WidgetForm {
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add('导出用量 CSV')
+    $miSettings = $menu.Items.Add('设置…')
     $miTop = $menu.Items.Add('浮在窗口上')
     $miTop.Checked = [bool]$script:State.topMost
     [void]$menu.Items.Add('-')
@@ -1762,6 +1965,7 @@ function New-WidgetForm {
 
     $miRefresh.Add_Click({ Update-Widget })
     $miExportCsv.Add_Click({ Export-UsageHistoryInteractive })
+    $miSettings.Add_Click({ Show-WidgetSettings })
     foreach ($sec in $script:IntervalItems.Keys) {
         $script:IntervalItems[$sec].Add_Click({
             $chosen = [int]$this.Tag
@@ -1814,7 +2018,10 @@ function New-WidgetForm {
     })
 
     $intervalSec = $IntervalSeconds
-    if (-not $script:IntervalExplicit -and $script:State.interval) { $intervalSec = [int]$script:State.interval }
+    if (-not $script:IntervalExplicit) {
+        if ($script:State.interval) { $intervalSec = [int]$script:State.interval }
+        elseif ($script:Config) { $intervalSec = [int]$script:Config.intervalSeconds }
+    }
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = [Math]::Max(15000, $intervalSec * 1000)
     $timer.Add_Tick({
@@ -1860,6 +2067,7 @@ function New-WidgetForm {
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
     Register-UiExceptionHandlers
+
     Write-WidgetLog 'run loop'
     [System.Windows.Forms.Application]::Run([System.Windows.Forms.Form]$form)
     Write-WidgetLog 'run ended'
@@ -1897,7 +2105,7 @@ function Update-Widget {
     if (-not $ui -or $ui.Form.IsDisposed) { return }
     if ($script:FetchRunning) { return }
 
-    $specs = @(Get-ProviderRows)
+    $specs = @(Get-ProviderRows | Where-Object { Test-ProviderEnabled $script:Config $_.Kind })
     $accounts = @($specs | Where-Object { $_.Kind -eq 'codex' } | ForEach-Object { $_.Auth })
     if ($accounts.Count -gt 0) { Sync-ActiveCodexSnapshot $accounts }
 
@@ -2226,9 +2434,12 @@ function Write-UsageHistory {
 function Send-UsageAlert {
     param($Row, [string]$Id, [double]$Percent)
     if ($script:DemoMode) { return }
+    if (Test-QuietHours $script:Config) { return }
     $usagePercent = Convert-DisplayPercentToUsagePercent $Percent $Row.Kind
     $level = 0
-    if ($usagePercent -ge 90) { $level = 90 } elseif ($usagePercent -ge 70) { $level = 70 }
+    foreach ($threshold in @($script:Config.alertThresholds | Sort-Object)) {
+        if ($usagePercent -ge $threshold) { $level = $threshold }
+    }
     $prev = 0
     if ($script:Alerted.ContainsKey($Id)) { $prev = $script:Alerted[$Id] }
     if ($level -gt $prev) {

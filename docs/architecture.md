@@ -45,6 +45,8 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `KimiQuota.ps1` | Kimi 载荷解析纯函数：窗口时长换算、已用/限额解析 |
 | `CommandCodeQuota.ps1` | Command Code 配额解析纯函数：日 / 5 小时 / 周窗口、余额与时间换算 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
+| `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
+| `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
 | `Record-ModelRequest.ps1` | 供外部工具调用的独立入口：追加一条请求事件 |
 | `Start-*.vbs` | 无窗口启动器；`Start-AiUsageWidget.vbs` 对应聚合卡片 |
 | `test-*.ps1` | 每个模块对应的离线测试套件，成功时打印 `ALL PASSED` |
@@ -54,14 +56,14 @@ wscript.exe  Start-AiUsageWidget.vbs
 ## 一次刷新的完整数据流
 
 1. `System.Windows.Forms.Timer` 触发 `Update-Widget`（或用户按 F5 / 点"立即刷新"）。
-2. `Get-ProviderRows` 检查每个供应商的凭证是否存在，生成行定义 `@{ Id; Kind; Name; Auth; ... }`；没有任何凭证时直接显示"未找到登录凭证"并结束。
+2. `Get-ProviderRows` 检查每个供应商的凭证是否存在，生成行定义 `@{ Id; Kind; Name; Auth; ... }`；没有任何凭证时直接显示"未找到登录凭证"并结束。 `ai-config.json` 里 `providers` 关闭的供应商会被 `Test-ProviderEnabled` 过滤掉。
 3. Codex 相关的活跃快照先做一次 `Sync-ActiveCodexSnapshot`，保证多账号条目与磁盘上的 `auth.json` 一致。
 4. 行集合的 `Id` 拼接成签名，与上一轮不同则 `Rebuild-ProviderRows` 重建控件。
 5. `Start-BackgroundFetch` 把行定义与配置对象传给常驻 MTA runspace；worker 只拿到**纯数据**（没有函数闭包、没有凭据缓存）。
 6. worker 逐行调用对应的 `Get-*RowData`，每行独立 try/catch，返回
    `@{ Id; Percent; Detail; Tip; Reset; Error }` 对象的数组。
-7. `Receive-BackgroundFetch` → `Apply-FetchResults` 把结果写进 UI：成功行调用 `Set-RowUsage`，失败行调用 `Set-RowError`；
-   同时 `Write-UsageHistory` 追加历史、`Send-UsageAlert` 判断 70 / 90 阈值气泡。
+7. `Receive-BackgroundFetch` → `Apply-FetchResults` 把结果写进 UI：成功行调用 `Set-RowUsage` 并用最近 7 天序列刷新迷你折线、计算耗尽预测，失败行调用 `Set-RowError`；
+   同时 `Write-UsageHistory` 追加历史、`Send-UsageAlert` 按 `ai-config.json` 的阈值弹气泡（静音时段内跳过）。
 8. 失败行通过 `Register-ProviderFailure` 进入指数退避：`min(900, 30 * 2^(n-1))` 秒，成功一次即清零。
 9. 状态栏显示 `更新于 HH:mm`；刷新超时会显示"刷新超时，等待下次尝试"。
 
@@ -77,6 +79,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `Detail` | 明细文本，例如 `5h 32% · 周 68%` | 由各供应商自行组合 |
 | `Tip` | 悬停提示 | 可含重置时间、套餐名等 |
 | `Reset` | 重置时间 | 由 `Format-ResetText` / `Format-ResetTime` 统一格式化 |
+| `ResetAt` | 重置时刻的 ISO 8601 文本 | 供耗尽预测判断“重置前是否耗尽”，缺失时预测退化为纯趋势 |
 
 百分比方向由 `Convert-DisplayPercentToUsagePercent` 统一换算，避免各供应商对"剩余/已用"的理解不一致。
 
@@ -119,6 +122,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 | --- | --- | --- |
 | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | DPAPI 保护的账号快照，文件名为账号指纹 | 否 |
 | `<程序目录>\ai-state.json` | 窗口位置、置顶、刷新间隔 | 否（`.gitignore`） |
+| `<程序目录>\ai-config.json` | 供应商开关、刷新间隔、不透明度、趋势与提醒设置 | 否（`.gitignore`） |
 | `<程序目录>\ai-history.jsonl` | 用量百分比时间序列（超过 1MB 自动保留最后 2000 行） | 否 |
 | `<程序目录>\ai-request-events.jsonl` | 请求事件元数据 | 否 |
 | `<程序目录>\ai-widget.log` | 日志，自动轮转 | 否 |
@@ -142,4 +146,4 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 
 - 主程序仍是单文件（约 2200 行），便于分发但 UI 与调度耦合；P2 计划把布局计算与文本格式化抽成可测模块。
 - WinForms 没有原生暗色主题支持，当前的暗色卡片是自绘圆角面板 + 手工配色。
-- 提醒目前是固定的 70 / 90 两档，按供应商自定义阈值在路线图的 P2 阶段。
+- 提醒阈值与静音时段已可全局配置（`ai-config.json`），按供应商自定义阈值仍在路线图的 P2 阶段。

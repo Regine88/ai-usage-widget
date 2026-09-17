@@ -32,8 +32,11 @@ when a token needs refreshing.
 - **Everything in one card** - a dark, rounded, always-on card; Grok and ChatGPT expand to one row per account.
 - **Out of the way** - draggable, snap-to-edge, optional always-on-top, position and settings remembered.
 - **Tray icon** - double-click to show or hide; closing the window exits and releases the single-instance mutex.
-- **Threshold alerts** - one balloon at 70% and one at 90%, automatically re-armed after the quota resets.
+- **Threshold alerts** - configurable used-percent thresholds (70% and 90% by default), automatically re-armed after the quota resets; quiet hours supported.
 - **Double-click to open** - double-click any row to jump to that provider's official usage page.
+- **Trend sparkline** - a 7-day mini chart next to each progress bar, colored by current usage.
+- **Exhaustion forecast** - the tooltip estimates when the quota runs out and whether that happens before the next reset.
+- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, opacity, thresholds, quiet hours), and the full history exports to CSV.
 - **Graceful degradation** - one slow provider only affects its own row and backs off exponentially (30s up to 15min).
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
 - **Two engines** - works on Windows PowerShell 5.1 and PowerShell 7.x; CI runs the same offline suites on both.
@@ -48,13 +51,14 @@ when a token needs refreshing.
 | Press `F5` | Refresh every provider now |
 | Double-click the tray icon | Show or hide the card |
 | Right-click the card | Opens the menu (see below) |
-| Hover a row | Shows a tooltip with details and reset time |
+| Hover a row | Shows a tooltip with details, reset time and the exhaustion forecast |
+| Right-click, **Export usage CSV** | Writes the whole history to `ai-usage-<timestamp>.csv` in the app directory (UTF-8, opens in Excel) |
 
 ![Context menu](docs/images/demo-menu.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
 register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code),
-always on top, run at startup, quit.
+export usage CSV, settings, always on top, run at startup, quit.
 
 ## Quick start
 
@@ -127,6 +131,27 @@ Right-click the card and choose the startup item (click again to disable). It on
 | `-AddGrokAccount` | Register the current `~/.grok/auth.json` as an account |
 | `-MigrateSecrets` | Move legacy in-project snapshots into the DPAPI store |
 | `-IntervalSeconds <n>` | Refresh interval in seconds (minimum 15, default 300, overridden by the menu choice) |
+
+## Configuration (`ai-config.json`)
+
+Right-click the card and pick **Settings…**; saving writes `ai-config.json` next to the script.
+You can also edit the file directly and restart the widget. It is covered by `.gitignore`
+and never published with the repository.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `intervalSeconds` | `300` | Refresh interval in seconds (15 - 86400) |
+| `opacity` | `0.96` | Window opacity (0.5 - 1.0) |
+| `showTrend` | `true` | Draw the 7-day sparkline next to each progress bar |
+| `showForecast` | `true` | Include the exhaustion forecast in the tooltip |
+| `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
+| `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
+| `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` |
+| `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
+
+Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
+so a broken file can never break the widget.
 
 ## Data and privacy
 

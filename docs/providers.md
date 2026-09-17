@@ -93,6 +93,8 @@ function Convert-ClaudeWindow {
 
 在 `AiUsageWidget.ps1` 的 `Get-ProviderRows` 中先判断凭证是否存在（`Test-Path` 或凭据管理器查询），
 存在才追加行；不存在就完全不出现，避免出现空行。
+同时把新供应商的默认开关加进 `WidgetConfig.ps1` 的 `Get-WidgetConfigDefaults` → `providers`，
+否则设置窗口里不会出现它（`Test-ProviderEnabled` 对未知 `Kind` 默认放行，所以功能本身不受影响）。
 
 ### 5. 注入 worker
 
@@ -125,4 +127,5 @@ function Convert-ClaudeWindow {
 | 显示成 0% 却不刷新 | 把 `0` 当成了"没有数据"；`0` 是合法百分比，需要照常显示 |
 | 中文乱码 | 新增 `.ps1` 文件没带 UTF-8 BOM，Windows PowerShell 5.1 会按 ANSI 读取 |
 | 一个供应商慢导致整轮卡住 | 请求没有走 `Invoke-WidgetRest`，丢失了硬超时保护 |
+| 设置窗口里没有新供应商的开关 | 忘了在 `Get-WidgetConfigDefaults` 的 `providers` 里加键（只是无法在界面关闭，功能正常） |
 | 日志里出现 token 片段 | 直接写了原始异常或响应体，应改用 `Convert-SafeLogText` |
