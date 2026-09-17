@@ -6,6 +6,34 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.11.0] - 2026-09-17
+
+工程收口：把布局和文案抽成可测模块，修刷新间隔被状态文件盖掉的回归，并补上锁定位置与紧凑布局。
+
+### Added
+
+- `WidgetLayout.ps1` + `test-WidgetLayout.ps1`：full / compact 两套 96-DPI 设计像素，主程序只负责把窗口 DPI 换成 Scale。
+- `WidgetFormat.ps1` + `test-WidgetFormat.ps1`：百分比、余额主数值、重置时间、抓取错误与耗尽预测文案。
+- 锁定位置：设置窗口与右键菜单均可开关，锁定后仍可双击打开用量页。
+- 紧凑布局：行高约减半并隐藏明细行，适合供应商较多时少占屏幕。
+- 额度重置提醒：已用百分比从高位掉到低位时弹一次气泡（仍尊重静音时段）；`providerAlertThresholds` 可在 `ai-config.json` 里按供应商覆盖全局阈值。
+- `Assert-TrustedHttpsHost`：所有 `Invoke-WidgetRest` 请求先校验 https 与主机白名单，允许 path/query（Grok billing 的 `?format=credits`）。
+- `install.ps1 -Zip` 在旁边存在 `.sha256` 时校验哈希。
+
+### Fixed
+
+- 右键菜单改过刷新间隔后，设置面板里保存的间隔会在重启时被 `ai-state.json` 盖掉：现在配置文件是权威源，两处写入保持同步。
+- 切换浅色主题后页脚时间戳仍用深色 `Dim`。
+- OpenRouter 空密钥会让 `Substring` 抛错，整张卡片停止刷新。
+- 上一实例崩溃留下的遗弃互斥体会让新实例无法启动。
+- 状态栏启动失败文案不再贴原始异常。
+
+### Changed
+
+- GitHub 仓库描述 / topics 补上 OpenRouter 与 DeepSeek；Release 正文优先使用 CHANGELOG 对应章节。
+- PSScriptAnalyzer 的 Error 级发现会让 CI 失败；Warning 仍只报告。
+- 日志脱敏额外折叠 `sk-` / `sk-or-v1-` 形态的密钥。
+
 ## [0.10.0] - 2026-09-17
 
 第 7 个供应商 DeepSeek（余额型）与深色 / 浅色双主题；同时修复「`ai-config.json` 从未真正生效」的回归。
@@ -87,10 +115,6 @@
 - `tools/package-release.ps1` 与 Release 工作流：推送 `v*` 标签后自动在双引擎跑全部测试，打包 zip、生成 SHA256 与 Scoop manifest 并发布 Release；本地可用同一脚本预演打包。
 - `WidgetStrings.ps1` + `strings/zh-CN.json` + `strings/en-US.json` + `test-WidgetStrings.ps1`：界面文案集中到语言包，`language` 支持 `auto` / `zh-CN` / `en-US`。语言代码走白名单解析（配置值不会被当成文件名），语言包缺失或 JSON 损坏时回退内置兜底表；测试还会扫描源码里的全部 `T 'key'` 调用，漏登记键名直接失败。
 
-### Fixed
-
-- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
-
 ### Changed
 
 - 刷新间隔优先级明确为 `-IntervalSeconds` > `ai-state.json` > `ai-config.json` > 默认 300 秒。
@@ -120,10 +144,6 @@
 - `test-Syntax.ps1`：把原先只存在于 CI 的语法解析收进离线套件，本地双版本跑测试即可覆盖。
 - 可选账号别名：程序目录下的 `grok-aliases.json`（或运行期的 `$script:GrokAccountAliases`）可把账号指纹映射成 `a` / `b` 这类短名字。
 
-### Fixed
-
-- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
-
 ### Changed
 
 - 启动日志带上版本号：`starting widget v0.6.0`。
@@ -150,10 +170,6 @@
 ### Added
 
 - 离线校验模块 `UsageValidation.ps1`、DPAPI 快照模块 `SecureSnapshot.ps1`、Kimi 配额解析模块 `KimiQuota.ps1` 及各自测试（[`21b448a`](https://github.com/Regine88/ai-usage-widget/commit/21b448a)）。
-
-### Fixed
-
-- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
 
 ### Changed
 

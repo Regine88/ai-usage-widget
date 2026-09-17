@@ -90,11 +90,17 @@ jobs:
             (Join-Path 'dist' ('ai-usage-widget-' + $version + '.zip.sha256'))
             (Join-Path 'dist' 'ai-usage-widget.json')
           )
+          $notesPath = Join-Path 'dist' 'RELEASE_NOTES.md'
           gh release view $tag 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
+            if (Test-Path -LiteralPath $notesPath) { gh release edit $tag --notes-file $notesPath }
             Write-Host ("updated release " + $tag)
           } else {
-            gh release create $tag --title ('AI Usage Widget ' + $version) --generate-notes @assets
+            if (Test-Path -LiteralPath $notesPath) {
+              gh release create $tag --title ('AI Usage Widget ' + $version) --notes-file $notesPath @assets
+            } else {
+              gh release create $tag --title ('AI Usage Widget ' + $version) --generate-notes @assets
+            }
             Write-Host ("created release " + $tag)
           }

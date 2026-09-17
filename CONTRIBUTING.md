@@ -69,10 +69,10 @@ CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上做同样的事（�
 ## 发布流程
 
 1. 更新 `CHANGELOG.md` 与 `AiUsageWidget.ps1` 里的 `$script:AppVersion`，提交并推送 `main`。
-2. 打标签并推送：`git tag v0.10.0`、`git push origin v0.10.0`。
+2. 打标签并推送：`git tag v0.11.0`、`git push origin v0.11.0`。
 3. `Release` 工作流会在 `windows-latest` 上重跑双引擎测试，然后打包 zip、生成 SHA256 与 Scoop manifest，
    并发布到 GitHub Release；重复运行会覆盖同名资产。
-4. 本地预演打包：`pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.10.0`，产物在 `dist/`（已被 `.gitignore` 排除）。
+4. 本地预演打包：`pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.11.0`，产物在 `dist/`（已被 `.gitignore` 排除）。
 
 ## 安全红线
 

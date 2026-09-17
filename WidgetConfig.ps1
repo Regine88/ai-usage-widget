@@ -20,6 +20,9 @@ function Get-WidgetConfigDefaults {
         trendDays       = 7
         alertThresholds = @(70, 90)
         quietHours      = @{ enabled = $false; start = '22:00'; end = '07:00' }
+        lockPosition    = $false
+        layout          = 'full'
+        providerAlertThresholds = @{}
         providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true }
     }
 }
@@ -100,6 +103,70 @@ function ConvertTo-ConfigTheme {
     return (ConvertTo-WidgetTheme $Value $Default)
 }
 
+function ConvertTo-ConfigLayout {
+    param($Value, [string]$Default = 'full')
+    $text = ([string]$Value).Trim().ToLowerInvariant()
+    if ($text -in @('full', 'compact')) { return $text }
+    return $Default
+}
+
+function ConvertTo-ProviderAlertThresholds {
+    param($Value)
+    $result = @{}
+    if ($null -eq $Value) { return $result }
+    foreach ($name in @(Get-ConfigPropertyNames $Value)) {
+        $kind = ([string]$name).Trim().ToLowerInvariant()
+        if (-not $kind) { continue }
+        $parsed = @(ConvertTo-ConfigThresholds (Get-ConfigPropertyValue $Value $name) @())
+        if ($parsed.Count -gt 0) { $result[$kind] = $parsed }
+    }
+    return $result
+}
+
+function Resolve-RefreshInterval {
+    param(
+        [bool]$Explicit = $false,
+        [int]$ExplicitValue = 300,
+        $Config,
+        $State,
+        [bool]$ConfigFileExists = $false,
+        [int]$Default = 300
+    )
+    if ($Explicit) {
+        return (ConvertTo-ConfigInt $ExplicitValue $Default 15 86400)
+    }
+    if ($ConfigFileExists -and $Config) {
+        return (ConvertTo-ConfigInt $Config.intervalSeconds $Default 15 86400)
+    }
+    if ($State -and $State.interval) {
+        return (ConvertTo-ConfigInt $State.interval $Default 15 86400)
+    }
+    if ($Config) {
+        return (ConvertTo-ConfigInt $Config.intervalSeconds $Default 15 86400)
+    }
+    return $Default
+}
+
+function Resolve-AlertThresholds {
+    param($Config, [string]$Kind)
+    $defaults = @(70, 90)
+    if ($Config -and $Config.alertThresholds) { $defaults = @($Config.alertThresholds) }
+    if ($Kind -and $Config -and $Config.providerAlertThresholds) {
+        $override = Get-ConfigPropertyValue $Config.providerAlertThresholds $Kind
+        if ($null -ne $override) {
+            $parsed = @(ConvertTo-ConfigThresholds $override @())
+            if ($parsed.Count -gt 0) { return $parsed }
+        }
+    }
+    return @($defaults)
+}
+
+function Test-UsageResetTransition {
+    param($Previous, $Current, [double]$High = 50, [double]$Low = 15)
+    if (-not (Test-FiniteNumber $Previous) -or -not (Test-FiniteNumber $Current)) { return $false }
+    return (([double]$Previous -ge $High) -and ([double]$Current -le $Low))
+}
+
 function ConvertTo-ConfigThresholds {
     param($Value, [int[]]$Default)
     $numbers = New-Object System.Collections.Generic.List[int]
@@ -128,6 +195,9 @@ function Convert-WidgetConfig {
     $config.showForecast = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'showForecast') $defaults.showForecast
     $config.trendDays = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'trendDays') $defaults.trendDays 1 14
     $config.alertThresholds = ConvertTo-ConfigThresholds (Get-ConfigPropertyValue $Raw 'alertThresholds') $defaults.alertThresholds
+    $config.lockPosition = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'lockPosition') $defaults.lockPosition
+    $config.layout = ConvertTo-ConfigLayout (Get-ConfigPropertyValue $Raw 'layout') $defaults.layout
+    $config.providerAlertThresholds = ConvertTo-ProviderAlertThresholds (Get-ConfigPropertyValue $Raw 'providerAlertThresholds')
 
     $rawQuiet = Get-ConfigPropertyValue $Raw 'quietHours'
     $config.quietHours.enabled = ConvertTo-ConfigBool (Get-ConfigPropertyValue $rawQuiet 'enabled') $defaults.quietHours.enabled

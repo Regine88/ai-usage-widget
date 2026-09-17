@@ -10,7 +10,7 @@
 | Gemini / Antigravity | `gemini` | Windows 凭据管理器 `gemini:antigravity` | `https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` | 1 |
 | Kimi | `kimi` | `~/.kimi-code/credentials/kimi-code.json`（或 `$env:KIMI_CODE_HOME`） | `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1` | 1 |
 | ChatGPT / Codex | `codex` | `~/.codex/auth.json`（或 `$env:CODEX_HOME`） | `https://chatgpt.com/backend-api/wham/usage` | 每个账号一行 |
-| Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits` | 1 |
+| Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits`（5 小时 / 周） | 1 |
 | OpenRouter | `openrouter` | `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）、`$env:OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/key` | 每个密钥一行 |
 | DeepSeek | `deepseek` | `~/.deepseek/auth.json`（或 `$env:DEEPSEEK_HOME`）、`$env:DEEPSEEK_API_KEY` | `https://api.deepseek.com/user/balance` | 1 |
 
@@ -57,7 +57,7 @@
 ### Command Code
 
 - **凭证**：`~/.commandcode/auth.json`；`Get-CommandCodeOrgId` 取组织标识。
-- **窗口**：接口返回日、5 小时、周三个滚动窗口，`Convert-CCWindow` 统一换算；
+- **窗口**：接口返回 5 小时与周两个滚动窗口，`Convert-CCWindow` 统一换算；
   余额默认不显示，需要时把 `$script:CommandCodeShowBalance` 设为 `$true`。
 - **时间**：`Convert-CommandCodeTime` 负责把服务端时间转成本地重置时间。
 - **降级**：组织标识缺失或返回空窗口时显示"暂无用量数据"，不影响其他行。

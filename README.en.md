@@ -25,7 +25,7 @@ The light theme uses the same layout (switch in the settings dialog, or run with
 | **Kimi** | 5-hour and weekly window usage | Single account | `~/.kimi-code/credentials/kimi-code.json` |
 | **ChatGPT / Codex** | 5-hour and weekly window usage | Multi-account, one row each | `~/.codex/auth.json` |
 | **Gemini / Antigravity** | Quota percentage and reset time | Single account | Windows Credential Manager `gemini:antigravity` |
-| **Command Code** | Daily / 5-hour / weekly rolling windows, optional balance | Single account | `~/.commandcode/auth.json` |
+| **Command Code** | 5-hour and weekly window usage, optional balance | Single account | `~/.commandcode/auth.json` |
 | **OpenRouter** | Spent credits and the key's spend limit (says so when unlimited) | One row per key | `~/.openrouter/auth.json` or `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | Account balance with the topped-up / granted breakdown (no percentage) | Single account | `~/.deepseek/auth.json` or `$env:DEEPSEEK_API_KEY` |
 
@@ -120,7 +120,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.10.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.11.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -133,7 +133,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.10.0
+# AI Usage Widget 0.11.0
 ```
 
 ### Multiple accounts
@@ -180,9 +180,12 @@ and never published with the repository.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `intervalSeconds` | `300` | Refresh interval in seconds (15 - 86400) |
+| `intervalSeconds` | `300` | Refresh interval in seconds (15 - 86400); the context menu and the settings dialog write the same field |
 | `opacity` | `0.96` | Window opacity (0.5 - 1.0) |
 | `theme` | `"dark"` | UI theme: `dark` / `light`, applied live when saved from the settings dialog |
+| `layout` | `"full"` | Row layout: `full` (name + bar + detail) / `compact` (shorter single row) |
+| `lockPosition` | `false` | When true, dragging the card does not move it |
+| `providerAlertThresholds` | `{}` | Optional per-provider overlay of `alertThresholds`, e.g. `{ "grok": [80, 95] }` |
 | `showTrend` | `true` | Draw the 7-day sparkline next to each progress bar |
 | `showForecast` | `true` | Include the exhaustion forecast in the tooltip |
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
@@ -256,6 +259,8 @@ ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
 WidgetConfig.ps1         ai-config.json read/write and validation
 WidgetPalette.ps1        Dark / light palette (single source of UI colours)
+WidgetLayout.ps1         Card row metrics (full / compact)
+WidgetFormat.ps1         Percent, reset and error text
 WidgetStrings.ps1        Language pack loading and string lookup
 strings/                 Language packs (zh-CN.json / en-US.json)
 WidgetInstaller.ps1      Install / upgrade / uninstall implementation
@@ -266,6 +271,8 @@ test-*.ps1               Offline test suite per module
 Start-AiUsageWidget.vbs  Windowless launcher
 docs/                    Architecture, provider, troubleshooting docs and screenshots
 ```
+
+`GrokUsageWidget.ps1` / `KimiUsageWidget.ps1` / `ChatGptUsageWidget.ps1` are compatibility shims that forward to the combined card. `-Demo`, `-Theme` and the About window are not exposed on those wrappers.
 
 ## Documentation
 

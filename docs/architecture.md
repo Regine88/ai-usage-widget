@@ -29,7 +29,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 
 要点：
 
-- 入口脚本在非 STA 线程被调用时会用受信任路径的 PowerShell 以 `-STA -WindowStyle Hidden` **重启自己**（见 `Get-TrustedPowerShellPath`、脚本第 48 行起的分支），保证 UI 线程是 STA。
+- 入口脚本在非 STA 线程被调用时会用受信任路径的 PowerShell 以 `-STA -WindowStyle Hidden` **重启自己**（见 `Get-TrustedPowerShellPath`、脚本第 51 行起的分支），保证 UI 线程是 STA。
 - `Invoke-WidgetRest` 之所以要嵌套 runspace，是因为 `Invoke-RestMethod -TimeoutSec` 在线程边界上可能被忽略；用 `WaitOne` 做硬超时，保证任何一个慢供应商都不会拖死整个刷新。
 - 抓取 runspace 是常驻的（`$script:WorkerRs`），每次刷新复用，避免频繁创建 runspace 的开销。
 
@@ -50,8 +50,10 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
-| `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
+| `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、主题、布局、锁定位置、不透明度、阈值、静音时段、语言），非法值回退默认 |
 | `WidgetPalette.ps1` | 深色 / 浅色调色板：`ConvertTo-WidgetTheme` 白名单解析、`Get-WidgetPalette` 返回 13 键颜色表，界面颜色的唯一来源 |
+| `WidgetLayout.ps1` | 卡片尺寸纯函数：`Get-WidgetLayoutMetrics`（full / compact）与 `Get-WidgetFormHeight`，不引用 WinForms |
+| `WidgetFormat.ps1` | 百分比、余额主数值、重置时间、抓取错误与耗尽预测文案（调用 `T`） |
 | `WidgetStrings.ps1` | 界面文案：语言代码白名单解析、语言包读取与兜底表、`T` / `Get-WidgetText` 取值（主进程与 worker 共用同一张表） |
 | `strings/*.json` | 语言包：纯键值 JSON，多种语言的键集必须一致，`_` 前缀的键在加载时忽略 |
 | `WidgetInstaller.ps1` | 安装 / 升级 / 卸载实现：运行文件清单、用户数据判定与开始菜单快捷方式；安装器与发布打包共用这份清单 |
@@ -170,7 +172,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 
 - 快照使用当前用户范围 DPAPI 加解密，写入走"临时文件 → 原子替换"，并用 `Set-SecureSnapshotAcl` 收紧目录权限；
   并发写入由 `Invoke-SecureSnapshotFileLock` 串行化。
-- 所有外部主机在请求前要过 `Resolve-TrustedHttpsEndpoint` 白名单校验，只有 `https` 且主机在允许列表内才继续。
+- `Invoke-WidgetRest` 入口走 `Assert-TrustedHttpsHost`：必须是 `https`，主机必须在内置允许列表里，允许 path 与 query（Grok billing 带 `?format=credits`）。Kimi 用户可覆盖的主机另外走更严的 `Resolve-TrustedHttpsEndpoint`（禁止 query / fragment / userinfo）。
 - 不申请管理员权限、不写注册表启动项；开机启动只是往当前用户启动文件夹放一个指向 VBS 的快捷方式。
 - 日志与错误文本统一脱敏；请求事件只记录供应商、模型、状态与耗时。
 
@@ -182,6 +184,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 
 ## 已知取舍与后续方向
 
-- 主程序仍是单文件（约 2200 行），便于分发但 UI 与调度耦合；P2 计划把布局计算与文本格式化抽成可测模块。
-- WinForms 没有原生暗色主题支持，当前的暗色卡片是自绘圆角面板 + 手工配色。
-- 提醒阈值与静音时段已可全局配置（`ai-config.json`），按供应商自定义阈值仍在路线图的 P2 阶段。
+- 主程序仍是单文件（UI 与调度耦合），但布局计算在 `WidgetLayout.ps1`、文案格式化在 `WidgetFormat.ps1`，均可离线测试。
+- WinForms 没有原生暗色主题支持，当前的暗色 / 浅色卡片是自绘圆角面板 + `WidgetPalette.ps1` 调色板。
+- 提醒阈值可全局配置，也可在 `ai-config.json` 的 `providerAlertThresholds` 里按供应商覆盖；设置窗口仍只编辑全局阈值。
+- 紧凑布局已提供；多列仍未做。跨显示器 DPI 不会在拖动时重算（`UiScale` 在进程内缓存）。

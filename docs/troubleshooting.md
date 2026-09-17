@@ -15,7 +15,7 @@ pwsh -NoProfile -File .\AiUsageWidget.ps1 -Demo
 Get-Content -LiteralPath .\ai-widget.log -Tail 40
 ```
 
-如果第 2 步能正常显示四行固定数据，说明界面与运行环境没问题，问题在凭证或网络。
+如果第 2 步能正常显示六行固定演示数据（Grok / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek），说明界面与运行环境没问题，问题在凭证或网络。演示模式不含 Gemini 行。
 
 ## 卡片完全没有出现
 
@@ -105,18 +105,18 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
 
 ## 文字被裁剪 / 高分屏显示异常
 
-- 布局按显示器 DPI 缩放（100% / 125% / 150% / 200% 均已覆盖）。
-- 若在缩放比例切换后仍异常，先退出再启动一次，让缓存的自定义字体重新计算。
-- 多显示器不同 DPI 时，把卡片拖到目标屏幕后会按该屏幕重新缩放。
+- 布局按启动时那块屏幕的 DPI 缩放（100% / 125% / 150% / 200% 均已覆盖）。
+- 若在系统缩放比例切换后仍异常，先退出再启动一次，让缓存的字体与 `UiScale` 重新计算。
+- 多显示器不同 DPI 时，卡片不会在拖到另一屏后自动按新 DPI 重算；请在目标屏幕上重新启动一次。
 
 ## 想彻底卸载
 
 1. 托盘图标右键 → 退出。
-2. 用安装器卸载：`.install.ps1 -Uninstall`（保留用户数据）或 `.install.ps1 -Uninstall -Purge`（连用户数据与账户快照一起删除）。
+2. 用安装器卸载：`.\install.ps1 -Uninstall`（保留用户数据）或 `.\install.ps1 -Uninstall -Purge`（连用户数据与账户快照一起删除）。
 3. 手动卸载时：删除程序目录（含 `ai-state.json`、`ai-history.jsonl`、`ai-request-events.jsonl`、`ai-widget.log`）。
 4. 删除受保护的账号快照：`Remove-Item "$env:LOCALAPPDATA\AIUsageWidget" -Recurse`。
 5. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
-6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode` 是各供应商 CLI 的数据，本程序不会写入，按需自行保留。
+6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek` 是各供应商 CLI 的数据，本程序不会写入，按需自行保留。
 
 ## 报告问题前请准备
 

@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $output = & '${{ matrix.host }}' -NoProfile -File .\AiUsageWidget.ps1 -Version
+          $output = & '${{ matrix.host }}' -NoProfile -ExecutionPolicy Bypass -File .\AiUsageWidget.ps1 -Version
           Write-Host $output
           if ($output -notmatch 'AI Usage Widget \d') { throw 'Unexpected -Version output' }
 
@@ -62,26 +62,28 @@ jobs:
           Write-Host ('{0} suite(s) passed on {1}' -f $tests.Count, '${{ matrix.label }}')
 
   analyze:
-    name: PSScriptAnalyzer (report only)
+    name: PSScriptAnalyzer
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Analyze
         shell: pwsh
-        continue-on-error: true
         run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
-          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning
+          $results = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning |
+            Where-Object { $_.ScriptPath -notmatch '[\\/]dist[\\/]' })
           if (-not $results) {
             Write-Host 'PSScriptAnalyzer reported no findings'
             return
           }
           $results |
-            Sort-Object ScriptName, Line |
+            Sort-Object Severity, ScriptName, Line |
             Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message |
             Out-String -Width 220 |
             Write-Host
-          Write-Host ('{0} finding(s); this job only reports and never fails the build' -f $results.Count)
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
+          Write-Host ('{0} finding(s); {1} error(s)' -f $results.Count, $errors.Count)
+          if ($errors.Count -gt 0) { throw ('PSScriptAnalyzer errors: ' + $errors.Count) }

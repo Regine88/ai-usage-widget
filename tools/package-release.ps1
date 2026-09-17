@@ -8,7 +8,7 @@
   再额外附带 install.ps1 与文档。输出目录默认是仓库根目录下的 dist。
 
 .EXAMPLE
-  pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.10.0
+  pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.11.0
 #>
 [CmdletBinding()]
 param(
@@ -57,7 +57,7 @@ $shaLine = $hash + '  ' + $zipName + [Environment]::NewLine
 $baseUrl = 'https://github.com/' + $Repo + '/releases/download/v' + $Version + '/'
 $manifest = [ordered]@{
     version = $Version
-    description = 'Desktop widget that shows AI subscription quota usage'
+    description = 'Windows desktop widget for Grok / ChatGPT / Kimi / Gemini / OpenRouter / DeepSeek quota'
     homepage = 'https://github.com/' + $Repo
     license = 'MIT'
     url = $baseUrl + $zipName
@@ -73,13 +73,35 @@ $manifest = [ordered]@{
         'grok-aliases.json'
     )
     checkver = @{ github = 'https://github.com/' + $Repo }
-    autoupdate = @{ url = 'https://github.com/' + $Repo + '/releases/download/v$version/ai-usage-widget-$version.zip' }
+    autoupdate = @{
+        url = 'https://github.com/' + $Repo + '/releases/download/v$version/ai-usage-widget-$version.zip'
+        hash = @{ url = '$url.sha256' }
+    }
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 6
 $manifestPath = Join-Path $OutDir 'ai-usage-widget.json'
 [IO.File]::WriteAllText($manifestPath, ($manifestJson.TrimEnd([char]13, [char]10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 
 Remove-Item -LiteralPath $stageRoot -Recurse -Force
+
+function Get-ChangelogReleaseNotes {
+    param([string]$Path, [string]$Ver)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $text = [IO.File]::ReadAllText($Path)
+    $escaped = [regex]::Escape($Ver)
+    $match = [regex]::Match($text, ('(?ms)^## \[' + $escaped + '\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)'))
+    if (-not $match.Success) { return $null }
+    $notes = $match.Groups[1].Value.Trim()
+    if (-not $notes) { return $null }
+    return $notes
+}
+
+$notes = Get-ChangelogReleaseNotes (Join-Path $root 'CHANGELOG.md') $Version
+if ($notes) {
+    $notesPath = Join-Path $OutDir 'RELEASE_NOTES.md'
+    [IO.File]::WriteAllText($notesPath, ($notes.TrimEnd([char]13, [char]10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    Write-Host ('说明    : ' + $notesPath)
+}
 
 Write-Host ('打包完成: ' + $zipPath)
 Write-Host ('SHA256  : ' + $hash)

@@ -2,7 +2,7 @@
 
 ## 支持的版本
 
-只有最新发布的小版本会收到安全修复。当前维护版本：`0.6.x`。
+只有最新发布的小版本会收到安全修复。当前维护版本：`0.11.x`。
 
 ## 报告漏洞
 
@@ -20,7 +20,7 @@ AI Usage Widget 是一个纯本地工具：它读取各 AI 服务已经存在本
 
 | 数据 | 位置 | 说明 |
 | --- | --- | --- |
-| 供应商凭证 | `~/.grok/auth.json`、`~/.kimi-code/credentials/kimi-code.json`、`~/.codex/auth.json`、`~/.commandcode/auth.json`、Windows 凭据管理器 `gemini:antigravity` | 由各自的 CLI 或工具写入，本程序只读取 |
+| 供应商凭证 | `~/.grok/auth.json`、`~/.kimi-code/credentials/kimi-code.json`、`~/.codex/auth.json`、`~/.commandcode/auth.json`、`~/.openrouter/auth.json`、`~/.deepseek/auth.json`、Windows 凭据管理器 `gemini:antigravity`，以及对应的环境变量 | 由各自的 CLI 或工具写入，本程序只读取 |
 | 受保护账号快照 | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | 使用当前用户 DPAPI 加密，文件名是账号哈希，不含明文 token |
 | 运行状态 | 程序目录 `ai-state.json` | 窗口位置、刷新间隔、置顶状态等界面设置 |
 | 用量历史 | 程序目录 `ai-history.jsonl` | 百分比与时间戳，不含任何凭证 |
@@ -30,7 +30,7 @@ AI Usage Widget 是一个纯本地工具：它读取各 AI 服务已经存在本
 ## 设计上的安全约束
 
 - 凭据快照使用当前用户范围的 DPAPI 保护，并以哈希命名，使用原子替换写入，同时收紧目录 ACL。
-- 所有外部请求固定使用 HTTPS，统一走 `Invoke-WidgetRest`，带超时与状态码分类，不跟随可疑重定向。
+- 所有外部请求固定使用 HTTPS，统一走 `Invoke-WidgetRest`，入口先做主机白名单校验（允许 path/query），带超时与状态码分类，不跟随可疑重定向。Kimi 用户可覆盖的主机另外走更严的 `Resolve-TrustedHttpsEndpoint`（禁止 query/fragment）。
 - 日志与错误提示走统一的脱敏函数，不打印 token、cookie、邮箱或完整响应体。
 - 后台抓取在独立 MTA runspace 中执行，只接收配置对象、只回传纯数据，避免 UI 线程持有凭据。
 - 程序不申请管理员权限，不写注册表启动项（开机启动通过当前用户启动文件夹的快捷方式实现）。

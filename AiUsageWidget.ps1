@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.10.0'
+$script:AppVersion = '0.11.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -140,6 +140,8 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
 . (Join-Path $script:WidgetDir 'WidgetPalette.ps1')
 . (Join-Path $script:WidgetDir 'WidgetStrings.ps1')
+. (Join-Path $script:WidgetDir 'WidgetLayout.ps1')
+. (Join-Path $script:WidgetDir 'WidgetFormat.ps1')
 
 # 配置与语言包要在任何输出之前就绪：CLI 开关（-Install 等）也会用到同一套文案。
 try {
@@ -166,6 +168,7 @@ $script:WorkerRs = $null
 $script:Fonts = $null
 $script:Alerted = @{}
 $script:LastPct = @{}
+$script:LastUsagePct = @{}
 $script:FailCount = @{}
 $script:BackoffUntil = @{}
 $script:IntervalItems = @{}
@@ -326,52 +329,6 @@ function Save-State {
     } catch { }
 }
 
-function Format-PercentText {
-    param([double]$Percent)
-    if (($Percent * 10) % 10 -ne 0) { return ('{0:0.0}%' -f $Percent) }
-    return ('{0:0}%' -f $Percent)
-}
-
-# Balance-only providers carry no percentage at all: their row prints the amount it
-# was given, and the tooltip follows the same text so both stay in step.
-function Format-RowValueText {
-    param([string]$Display, [double]$Percent)
-    if ($Display) { return $Display }
-    return (Format-PercentText $Percent)
-}
-
-function Format-ResetText {
-    param($End)
-    if (-not $End) { return (T 'reset.unknown') }
-    $local = $End.ToLocalTime()
-    $span = $local - [datetime]::Now
-    if ($span.TotalSeconds -le 0) { return (T 'reset.soon') }
-    if ($span.TotalDays -ge 1) {
-        return (T 'reset.daysHours' @([int][Math]::Floor($span.TotalDays), $span.Hours))
-    }
-    if ($span.TotalHours -ge 1) {
-        return (T 'reset.hoursMinutes' @([int][Math]::Floor($span.TotalHours), $span.Minutes))
-    }
-    return (T 'reset.minutes' @([Math]::Max(1, [int]$span.TotalMinutes)))
-}
-
-function Format-ResetTime {
-    param($End)
-    if (-not $End) { return $null }
-    # 日期格式跟随界面语言，而不是操作系统的区域设置：英文界面不该出现「9月 17 日」。
-    $culture = [Globalization.CultureInfo]::CurrentCulture
-    try { $culture = [Globalization.CultureInfo]::GetCultureInfo($script:Language) } catch { }
-    return $End.ToLocalTime().ToString((T 'reset.clockFormat'), $culture)
-}
-
-# Round-trippable reset stamp for the forecast; the row tooltip keeps the
-# human readable Format-ResetTime text.
-function ConvertTo-ResetStamp {
-    param($End)
-    if (-not $End) { return $null }
-    try { return ([datetime]$End).ToString('o') } catch { return $null }
-}
-
 function Get-HttpStatusCode {
     param($ErrorRecord)
     try {
@@ -388,23 +345,6 @@ function Get-HttpStatusCode {
     return $null
 }
 
-function Format-FetchError {
-    param([string]$Message, [switch]$Detail)
-    if (-not $Message) { return (T 'error.readFailed') }
-    $safe = Convert-SafeLogText $Message 160
-    if ($safe -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return (T 'error.timeout') }
-    # 公开接口常用 403 表达匿名速率限制，先于通用的 403 分支匹配。
-    if ($safe -match 'rate limit|速率限制') { return (T 'error.tooMany') }
-    if ($safe -match 'SSL|certificate|信任关系|could not be established') { return (T 'error.network') }
-    if ($safe -match 'HTTP 401|\b401\b|Unauthorized|auth-expired|token-refresh') { return (T 'error.unauthorized') }
-    if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return (T 'error.forbidden') }
-    if ($safe -match 'HTTP 429|\b429\b') { return (T 'error.tooMany') }
-    if ($safe -match 'missing-credential|no-credential') { return (T 'error.noCredentials') }
-    # 未知错误用本地化兜底，但在气泡提示里附上脱敏原文，便于对着日志排查。
-    if ($Detail) { return ((T 'error.generic') + ' ' + $safe) }
-    return (T 'error.generic')
-}
-
 # HttpClient can ignore -TimeoutSec on STA/MTA edges. Run each request in a
 # nested runspace with a hard WaitOne so one slow provider cannot stall the worker.
 function Invoke-WidgetRest {
@@ -416,6 +356,7 @@ function Invoke-WidgetRest {
         [string]$ContentType,
         [int]$TimeoutSec = 15
     )
+    $Uri = Assert-TrustedHttpsHost $Uri
     $rs = [runspacefactory]::CreateRunspace()
     $rs.ApartmentState = 'MTA'
     $rs.ThreadOptions = 'ReuseThread'
@@ -1305,8 +1246,10 @@ function Get-ProviderRows {
     if (Test-ApiKeyCredExists -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY) {
         # 每个本机密钥一行，行名用密钥指纹，密钥本身不进入界面与日志。
         foreach ($key in @(Get-ApiKeySources -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY)) {
+            $rowId = Get-OpenRouterRowId $key
+            if (-not $rowId) { continue }
             $rows += [pscustomobject]@{
-                Id      = 'openrouter-' + (Get-OpenRouterKeyFingerprint $key).Substring('OpenRouter-'.Length)
+                Id      = $rowId
                 Kind    = 'openrouter'
                 Name    = (Get-OpenRouterKeyFingerprint $key)
                 OpenUrl = $script:OpenRouterUsagePageUrl
@@ -1418,7 +1361,15 @@ function Uninstall-Widget {
 function Ensure-SingleInstance {
     $name = if ($script:DemoMode) { 'Local\AiUsageDesktopWidgetDemo' } else { 'Local\AiUsageDesktopWidget' }
     $script:Mutex = New-Object System.Threading.Mutex($false, $name)
-    if (-not $script:Mutex.WaitOne(0, $false)) {
+    $owned = $false
+    try {
+        $owned = $script:Mutex.WaitOne(0, $false)
+    } catch [System.Threading.AbandonedMutexException] {
+        # 上一实例崩溃后锁被遗弃，当前进程接管即可，不要让启动失败。
+        $owned = $true
+        Write-WidgetLog 'took over an abandoned single-instance mutex'
+    }
+    if (-not $owned) {
         Write-WidgetLog 'another instance is already running'
         exit 0
     }
@@ -1452,10 +1403,15 @@ function New-Label {
     return $lbl
 }
 
+function Test-WidgetPositionLocked {
+    try { return [bool]$script:Config.lockPosition } catch { return $false }
+}
+
 function Bind-Drag {
     param($Control)
     $Control.Add_MouseDown({
         try {
+            if ((Test-WidgetPositionLocked)) { return }
             if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
                 $script:Drag = $true
                 $script:DragOffset = $_.Location
@@ -1464,6 +1420,7 @@ function Bind-Drag {
     })
     $Control.Add_MouseMove({
         try {
+            if ((Test-WidgetPositionLocked)) { return }
             if ($script:Drag -and $_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $script:Ui -and $script:Ui.Form) {
                 $script:Ui.Form.Left += [int]$_.X - [int]$script:DragOffset.X
                 $script:Ui.Form.Top += [int]$_.Y - [int]$script:DragOffset.Y
@@ -1472,6 +1429,7 @@ function Bind-Drag {
     })
     $Control.Add_MouseUp({
         try {
+            if ((Test-WidgetPositionLocked)) { $script:Drag = $false; return }
             if ($script:Drag -and $script:Ui -and $script:Ui.Form) {
                 $script:Drag = $false
                 $f = $script:Ui.Form
@@ -1526,45 +1484,21 @@ function Get-UiMetrics {
     param($Form)
     if ($null -ne $script:UiMetrics) { return $script:UiMetrics }
     $null = Get-UiScale $Form
-    $script:UiMetrics = @{
-        FormWidth  = (Scale-Px 280)
-        MarginX    = (Scale-Px 16)
-        ContentW   = (Scale-Px 248)
-        TopPad     = (Scale-Px 14)
-        RowH       = (Scale-Px 74)
-        BarInset   = (Scale-Px 10)
-        BottomPad  = (Scale-Px 26)
-        NameTop    = (Scale-Px 4)
-        NameW      = (Scale-Px 172)
-        NameH      = (Scale-Px 18)
-        PctW       = (Scale-Px 76)
-        PctH       = (Scale-Px 26)
-        BarTop     = (Scale-Px 30)
-        BarH       = (Scale-Px 8)
-        BarSeedW   = (Scale-Px 6)
-        DetailTop  = (Scale-Px 44)
-        DetailH    = (Scale-Px 16)
-        StampInset = (Scale-Px 24)
-        StampH     = (Scale-Px 18)
-        Radius     = (Scale-Px 18)
-        EdgeInset  = (Scale-Px 24)
-        TrendW     = (Scale-Px 56)
-        TrendH     = (Scale-Px 20)
-        TrendGap   = (Scale-Px 8)
-        TrendPad   = (Scale-Px 6)
-    }
+    $layout = 'full'
     $showTrend = $true
-    try { if ($script:Config) { $showTrend = [bool]$script:Config.showTrend } } catch { }
-    $trendSpace = if ($showTrend) { $script:UiMetrics.TrendW + $script:UiMetrics.TrendGap } else { 0 }
-    $script:UiMetrics.BarTrackW = [Math]::Max((Scale-Px 80), ($script:UiMetrics.ContentW - $trendSpace))
+    try {
+        if ($script:Config) {
+            $layout = [string]$script:Config.layout
+            $showTrend = [bool]$script:Config.showTrend
+        }
+    } catch { }
+    $script:UiMetrics = Get-WidgetLayoutMetrics -Scale (Get-UiScale) -Layout $layout -ShowTrend $showTrend
     return $script:UiMetrics
 }
 
 function Get-FormHeight {
     param([int]$RowCount)
-    $m = Get-UiMetrics
-    $n = [Math]::Max(1, $RowCount)
-    return $m.TopPad + $n * $m.RowH - $m.BarInset + $m.BottomPad
+    return (Get-WidgetFormHeight -Metrics (Get-UiMetrics) -RowCount $RowCount)
 }
 
 function Rebuild-ProviderRows {
@@ -1579,18 +1513,17 @@ function Rebuild-ProviderRows {
 
     $fg = (Get-WidgetColor 'Text')
     $muted = (Get-WidgetColor 'Muted')
+    $m = Get-UiMetrics $Form
     if (-not $script:Fonts) {
         $script:Fonts = @{
-            Name   = New-Object System.Drawing.Font('Segoe UI', 9)
-            Pct    = New-Object System.Drawing.Font('Segoe UI Semibold', 16)
-            Detail = New-Object System.Drawing.Font('Segoe UI', 8.5)
+            Name   = New-Object System.Drawing.Font('Segoe UI', [float]$m.FontName)
+            Pct    = New-Object System.Drawing.Font('Segoe UI Semibold', [float]$m.FontPct)
+            Detail = New-Object System.Drawing.Font('Segoe UI', [float]$m.FontDetail)
         }
     }
     $nameFont = $script:Fonts.Name
     $pctFont = $script:Fonts.Pct
     $detailFont = $script:Fonts.Detail
-
-    $m = Get-UiMetrics $Form
     $y = $m.TopPad
     foreach ($spec in $Specs) {
         $lblName = New-Label $Form "name-$y" $m.MarginX ($y + $m.NameTop) $m.NameW $m.NameH $nameFont $fg 'MiddleLeft'
@@ -1615,10 +1548,13 @@ function Rebuild-ProviderRows {
         $barFill.Parent = $barBack
         $barFill.Tag = $spec.OpenUrl
 
-        $lblDetail = New-Label $Form "detail-$y" $m.MarginX ($y + $m.DetailTop) $m.ContentW $m.DetailH $detailFont $muted 'MiddleLeft'
-        $lblDetail.Text = ''
-        $lblDetail.Tag = $spec.OpenUrl
-        $lblDetail.AutoEllipsis = $true
+        $lblDetail = $null
+        if ($m.DetailH -gt 0) {
+            $lblDetail = New-Label $Form "detail-$y" $m.MarginX ($y + $m.DetailTop) $m.ContentW $m.DetailH $detailFont $muted 'MiddleLeft'
+            $lblDetail.Text = ''
+            $lblDetail.Tag = $spec.OpenUrl
+            $lblDetail.AutoEllipsis = $true
+        }
 
         # The sparkline shares the progress-bar row; when it is hidden the bar
         # keeps the full width (BarTrackW == ContentW).
@@ -1649,13 +1585,15 @@ function Rebuild-ProviderRows {
             })
         }
 
-        $rowControls = @($lblName, $lblPct, $barBack, $barFill, $lblDetail)
+        $rowControls = @($lblName, $lblPct, $barBack, $barFill)
+        if ($lblDetail) { $rowControls += $lblDetail }
         if ($trend) { $rowControls += $trend }
         foreach ($c in $rowControls) {
             $c.ContextMenuStrip = $script:Ui.Menu
             Bind-Drag $c
         }
-        foreach ($c in @($lblName, $lblPct, $barBack, $lblDetail)) { [void]$script:Ui.RowControls.Add($c) }
+        foreach ($c in @($lblName, $lblPct, $barBack)) { [void]$script:Ui.RowControls.Add($c) }
+        if ($lblDetail) { [void]$script:Ui.RowControls.Add($lblDetail) }
         if ($trend) { [void]$script:Ui.RowControls.Add($trend) }
         [void]$script:Ui.Rows.Add(@{
             Id       = $spec.Id
@@ -1670,8 +1608,11 @@ function Rebuild-ProviderRows {
         })
         if ($script:Ui.Tip) {
             $initTip = (T 'tip.loading' @($spec.Name))
-            foreach ($c in @($lblName, $lblPct, $barBack, $barFill, $lblDetail)) {
+            foreach ($c in @($lblName, $lblPct, $barBack, $barFill)) {
                 try { $script:Ui.Tip.SetToolTip($c, $initTip) } catch { }
+            }
+            if ($lblDetail) {
+                try { $script:Ui.Tip.SetToolTip($lblDetail, $initTip) } catch { }
             }
         }
         $y += $m.RowH
@@ -1720,15 +1661,22 @@ function Set-RowUsage {
     $track = (Get-UiMetrics).BarTrackW
     $w = [Math]::Max(0, [Math]::Min($track, [int][Math]::Round($track * $colorPct / 100.0)))
     if ($Row.BarFill.Width -ne $w) { $Row.BarFill.Width = $w }
-    if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
-    Set-UiThemeColor $Row.Detail 'ForeColor' 'Muted'
+    if ($Row.Detail) {
+        if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
+        Set-UiThemeColor $Row.Detail 'ForeColor' 'Muted'
+    }
     return $text
 }
 
 function Set-RowError {
     param($Row, [string]$Message)
-    $Row.Detail.Text = [string]$Message
-    Set-UiThemeColor $Row.Detail 'ForeColor' 'Danger'
+    if ($Row.Detail) {
+        $Row.Detail.Text = [string]$Message
+        Set-UiThemeColor $Row.Detail 'ForeColor' 'Danger'
+    } elseif ($Row.Pct) {
+        $Row.Pct.Text = [string]$Message
+        Set-UiThemeColor $Row.Pct 'ForeColor' 'Danger'
+    }
 }
 
 function Get-RecentRequestLabel {
@@ -1924,7 +1872,7 @@ function Show-WidgetSettings {
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
-    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 476))
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 508))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     Set-UiThemeColor $dialog 'BackColor' 'Background'
     Set-UiThemeColor $dialog 'ForeColor' 'Text'
@@ -1975,10 +1923,13 @@ function Show-WidgetSettings {
     $themeItems = @((T 'settings.themeDark'), (T 'settings.themeLight'))
     $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 340) (Scale-Px 150) $themeItems $themeIndex
 
-    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 368) $muted
+    $chkCompact = New-SettingCheckBox $dialog (T 'settings.compact') $colLabel (Scale-Px 370) ([string]$current.layout -eq 'compact')
+    $chkLock = New-SettingCheckBox $dialog (T 'settings.lockPosition') (Scale-Px 208) (Scale-Px 370) ([bool]$current.lockPosition)
 
-    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 396)
-    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 396)
+    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 398) $muted
+
+    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 428)
+    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 428)
 
     $dialog.AcceptButton = $btnSave
     $dialog.CancelButton = $btnCancel
@@ -2008,10 +1959,17 @@ function Show-WidgetSettings {
                     deepseek    = [bool]$chkDeepSeek.Checked
                 }
                 theme           = $themes[$cmbTheme.SelectedIndex]
+                layout          = $(if ($chkCompact.Checked) { 'compact' } else { 'full' })
+                lockPosition    = [bool]$chkLock.Checked
+                providerAlertThresholds = $current.providerAlertThresholds
             }
             $script:Config = Convert-WidgetConfig $picked
-            if (-not $script:DemoMode) { [void](Write-WidgetConfig -Config $script:Config) }
-            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6} deepseek={7} theme={8}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter, $script:Config.providers.deepseek, $script:Config.theme)
+            $script:State.interval = [int]$script:Config.intervalSeconds
+            if (-not $script:DemoMode) {
+                [void](Write-WidgetConfig -Config $script:Config)
+                Save-State $script:Ui.Form
+            }
+            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6} deepseek={7} theme={8} layout={9} lock={10}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter, $script:Config.providers.deepseek, $script:Config.theme, $script:Config.layout, $script:Config.lockPosition)
             Apply-WidgetConfig
             $dialog.Close()
         } catch {
@@ -2147,6 +2105,9 @@ function Apply-WidgetConfig {
             Set-UiThemeColor $script:Ui.Form 'BackColor' 'Background'
             $script:Ui.Form.Opacity = [double]$script:Config.opacity
         }
+        if ($script:Ui -and $script:Ui.Stamp) {
+            Set-UiThemeColor $script:Ui.Stamp 'ForeColor' 'Dim'
+        }
     } catch { }
     try {
         if ($script:Ui -and $script:Ui.Form -and $script:Ui.Form.Tag) {
@@ -2157,9 +2118,15 @@ function Apply-WidgetConfig {
     foreach ($sec in $script:IntervalItems.Keys) {
         try { $script:IntervalItems[$sec].Checked = ([int]$sec -eq [int]$script:Config.intervalSeconds) } catch { }
     }
-    # Trend switches change the bar track width, so the cached metrics and the
-    # row signature are cleared to force a rebuild on the next update.
+    try {
+        if ($script:Ui -and $script:Ui.LockItem) {
+            $script:Ui.LockItem.Checked = [bool]$script:Config.lockPosition
+        }
+    } catch { }
+    # Trend / layout switches change the bar track width and row height, so the
+    # cached metrics, fonts and row signature are cleared to force a rebuild.
     $script:UiMetrics = $null
+    $script:Fonts = $null
     if ($script:Ui) { $script:Ui.Sig = $null }
     Update-Widget
 }
@@ -2226,6 +2193,8 @@ function New-WidgetForm {
     $miAbout = $menu.Items.Add((T 'menu.about'))
     $miTop = $menu.Items.Add((T 'menu.topMost'))
     $miTop.Checked = [bool]$script:State.topMost
+    $miLock = $menu.Items.Add((T 'menu.lockPosition'))
+    $miLock.Checked = [bool]$script:Config.lockPosition
     [void]$menu.Items.Add('-')
     $startupOn = Test-Path -LiteralPath (Get-StartupShortcutPath)
     $miStart = $menu.Items.Add($(if ($startupOn) { T 'menu.startupOff' } else { T 'menu.startupOn' }))
@@ -2255,6 +2224,7 @@ function New-WidgetForm {
         Menu        = $menu
         Tray        = $tray
         Tip         = $tip
+        LockItem    = $miLock
         Rows        = @()
         RowControls = @()
         Sig         = ''
@@ -2266,10 +2236,10 @@ function New-WidgetForm {
     Bind-Drag $lblStamp
 
     $form.Add_KeyDown({
-        if ($_.KeyCode -eq 'F5') { Update-Widget }
+        if ($_.KeyCode -eq 'F5') { try { Update-Widget } catch { Write-WidgetLog ("f5 $($_.Exception.Message)") } }
     })
 
-    $miRefresh.Add_Click({ Update-Widget })
+    $miRefresh.Add_Click({ try { Update-Widget } catch { Write-WidgetLog ("refresh $($_.Exception.Message)") } })
     $miExportCsv.Add_Click({ Export-UsageHistoryInteractive })
     $miSettings.Add_Click({ Show-WidgetSettings })
     $miAbout.Add_Click({ Show-WidgetAbout })
@@ -2277,10 +2247,14 @@ function New-WidgetForm {
         $script:IntervalItems[$sec].Add_Click({
             $chosen = [int]$this.Tag
             $timer.Interval = [Math]::Max(15000, $chosen * 1000)
+            if ($script:Config) { $script:Config.intervalSeconds = $chosen }
             $script:State.interval = $chosen
-            Save-State $form
+            if (-not $script:DemoMode) {
+                try { [void](Write-WidgetConfig -Config $script:Config) } catch { }
+                Save-State $form
+            }
             foreach ($k in $script:IntervalItems.Keys) { $script:IntervalItems[$k].Checked = ([int]$k -eq $chosen) }
-            Update-Widget
+            try { Update-Widget } catch { Write-WidgetLog ("interval $($_.Exception.Message)") }
         })
     }
     $miAddGrok.Add_Click({
@@ -2298,6 +2272,13 @@ function New-WidgetForm {
     $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
     $miOpenOpenRouter.Add_Click({ Start-Process $script:OpenRouterUsagePageUrl })
     $miOpenDeepSeek.Add_Click({ Start-Process $script:DeepSeekUsagePageUrl })
+    $miLock.Add_Click({
+        $script:Config.lockPosition = -not [bool]$script:Config.lockPosition
+        $miLock.Checked = [bool]$script:Config.lockPosition
+        if (-not $script:DemoMode) {
+            try { [void](Write-WidgetConfig -Config $script:Config) } catch { }
+        }
+    })
     $miTop.Add_Click({
         if ($form.TopMost) {
             $form.TopMost = $false
@@ -2326,10 +2307,13 @@ function New-WidgetForm {
         if ($form.Visible) { $form.Activate() }
     })
 
-    $intervalSec = $IntervalSeconds
-    if (-not $script:IntervalExplicit) {
-        if ($script:State.interval) { $intervalSec = [int]$script:State.interval }
-        elseif ($script:Config) { $intervalSec = [int]$script:Config.intervalSeconds }
+    $configPath = Get-WidgetConfigPath
+    $intervalSec = Resolve-RefreshInterval -Explicit $script:IntervalExplicit -ExplicitValue $IntervalSeconds -Config $script:Config -State $script:State -ConfigFileExists (Test-Path -LiteralPath $configPath)
+    if (-not $script:IntervalExplicit -and -not (Test-Path -LiteralPath $configPath) -and $script:State.interval -and $script:Config) {
+        $script:Config.intervalSeconds = $intervalSec
+        if (-not $script:DemoMode) {
+            try { [void](Write-WidgetConfig -Config $script:Config) } catch { }
+        }
     }
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = [Math]::Max(15000, $intervalSec * 1000)
@@ -2414,7 +2398,12 @@ function Update-Widget {
     if (-not $ui -or $ui.Form.IsDisposed) { return }
     if ($script:FetchRunning) { return }
 
-    $specs = @(Get-ProviderRows | Where-Object { Test-ProviderEnabled $script:Config $_.Kind })
+    try {
+        $specs = @(Get-ProviderRows | Where-Object { Test-ProviderEnabled $script:Config $_.Kind })
+    } catch {
+        Write-WidgetLog ("rows $($_.Exception.Message)")
+        return
+    }
     $accounts = @($specs | Where-Object { $_.Kind -eq 'codex' } | ForEach-Object { $_.Auth })
     if ($accounts.Count -gt 0) { Sync-ActiveCodexSnapshot $accounts }
 
@@ -2440,8 +2429,9 @@ function Update-Widget {
         Start-BackgroundFetch $specs
     } catch {
         $script:FetchRunning = $false
-        $ui.Stamp.Text = (T 'status.startFailed' @($_.Exception.Message))
-        Write-WidgetLog ("start fetch failed: {0}" -f $_.Exception.Message)
+        $safeError = Convert-SafeLogText $_.Exception.Message 80
+        $ui.Stamp.Text = (T 'status.startFailed' @($safeError))
+        Write-WidgetLog ("start fetch failed: {0}" -f $safeError)
     }
 }
 
@@ -2453,9 +2443,9 @@ function Get-WorkerScriptSource {
     $fnNames = @(
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
         'Get-WidgetText', 'T',
-        'Format-PercentText', 'Format-ResetText', 'Format-ResetTime', 'ConvertTo-ResetStamp',
+        'Format-PercentText', 'Format-RowValueText', 'Format-ResetText', 'Format-ResetTime', 'ConvertTo-ResetStamp', 'Format-FetchError',
         'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent',
-        'Resolve-TrustedHttpsEndpoint', 'Get-AccountFingerprint', 'Convert-SafeLogText',
+        'Resolve-TrustedHttpsEndpoint', 'Get-WidgetTrustedHosts', 'Assert-TrustedHttpsHost', 'Get-AccountFingerprint', 'Convert-SafeLogText',
         'Get-SecureSnapshotRoot', 'Get-SecureSnapshotPath', 'ConvertTo-SnapshotCipherText',
         'ConvertFrom-SnapshotCipherText', 'Set-SecureSnapshotAcl', 'Invoke-SecureSnapshotFileLock', 'Move-SecureSnapshotFile',
         'Write-SecureSnapshotLocked', 'Write-SecureSnapshot', 'Update-SecureSnapshot', 'Read-SecureSnapshot',
@@ -2472,7 +2462,7 @@ function Get-WorkerScriptSource {
         'Get-KimiHosts', 'Read-KimiAuth', 'Save-KimiAuth', 'Update-KimiToken',
         'Invoke-KimiGet', 'Get-KimiWindowLabel', 'Resolve-KimiUsedLimit', 'Convert-KimiUsagePayload',
         'Get-KimiUsageSnapshot', 'Get-KimiRowData',
-        'Get-TokenEmail', 'Convert-CodexRawAuth', 'Read-CodexAuth', 'Get-AccountLabel', 'Get-LegacySnapshotPath', 'Save-CodexAuth',
+        'Get-TokenEmail', 'Convert-CodexRawAuth', 'Read-CodexAuth', 'Get-AccountLabel', 'Save-CodexAuth',
         'Update-CodexToken', 'Sync-CodexAuthFromDisk', 'Get-CodexAuthHeaders',
         'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
         'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
@@ -2480,6 +2470,7 @@ function Get-WorkerScriptSource {
         'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData',
         'Get-ConfigPropertyValue',
         'Get-ApiKeyFileSources', 'Get-ApiKeySources', 'Test-ApiKeyCredExists', 'Read-ApiKeyAuth', 'Get-ApiKeyAuthHeaders', 'Invoke-ApiKeyGet',
+        'Get-OpenRouterKeyFingerprint', 'Get-OpenRouterRowId',
         'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData',
         'Get-DeepSeekCurrencySymbol', 'Format-DeepSeekAmount', 'ConvertTo-DeepSeekPurse', 'Convert-DeepSeekBalance',
         'Get-DeepSeekUsageSnapshot', 'Get-DeepSeekRowData'
@@ -2719,21 +2710,6 @@ function Set-RowTrend {
     $Row.Trend.Invalidate()
 }
 
-function Format-ForecastText {
-    param($Forecast)
-    if (-not $Forecast) { return $null }
-    if ($null -eq $Forecast.EtaHours) {
-        if ($null -ne $Forecast.SlopePerDay) { return (T 'forecast.never') }
-        return $null
-    }
-    $eta = [double]$Forecast.EtaHours
-    $span = if ($eta -ge 48) { T 'forecast.days' @($eta / 24.0) }
-            elseif ($eta -ge 1) { T 'forecast.hours' @($eta) }
-            else { T 'forecast.minutes' @([Math]::Max(1, [int]($eta * 60))) }
-    if ($Forecast.ExhaustsBeforeReset) { return (T 'forecast.beforeReset' @($span)) }
-    return (T 'forecast.plain' @($span))
-}
-
 function Export-UsageHistoryInteractive {
     try {
         $stamp = [datetime]::Now.ToString('yyyyMMdd-HHmmss')
@@ -2765,13 +2741,25 @@ function Write-UsageHistory {
     } catch { }
 }
 
+function Send-UsageResetAlert {
+    param($Row)
+    if ($script:DemoMode) { return }
+    if (Test-QuietHours $script:Config) { return }
+    if (-not $Row -or $Row.Kind -eq 'deepseek') { return }
+    $msg = T 'alert.reset' @($Row.Name)
+    Write-WidgetLog ("reset-alert {0}" -f $Row.Id)
+    try {
+        $script:Ui.Tray.ShowBalloonTip(6000, (T 'alert.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+    } catch { }
+}
+
 function Send-UsageAlert {
     param($Row, [string]$Id, [double]$Percent)
     if ($script:DemoMode) { return }
     if (Test-QuietHours $script:Config) { return }
     $usagePercent = Convert-DisplayPercentToUsagePercent $Percent $Row.Kind
     $level = 0
-    foreach ($threshold in @($script:Config.alertThresholds | Sort-Object)) {
+    foreach ($threshold in @(Resolve-AlertThresholds $script:Config $Row.Kind | Sort-Object)) {
         if ($usagePercent -ge $threshold) { $level = $threshold }
     }
     $prev = 0
@@ -2849,6 +2837,13 @@ function Apply-FetchResults {
             $delta = $null
             if ($script:LastPct.ContainsKey($r.Id)) { $delta = $pct - [double]$script:LastPct[$r.Id] }
             $script:LastPct[$r.Id] = $pct
+            $usageNow = Convert-DisplayPercentToUsagePercent $pct $row.Kind
+            if ($script:LastUsagePct.ContainsKey($r.Id) -and -not $r.Display) {
+                if (Test-UsageResetTransition $script:LastUsagePct[$r.Id] $usageNow) {
+                    Send-UsageResetAlert $row
+                }
+            }
+            $script:LastUsagePct[$r.Id] = $usageNow
 
             $upd = T 'status.updated' @([datetime]::Now.ToString('HH:mm'))
             if ($null -ne $delta -and [Math]::Abs($delta) -ge 0.05) {

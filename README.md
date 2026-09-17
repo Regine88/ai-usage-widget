@@ -25,7 +25,7 @@
 | **Kimi** | 5 小时窗与周窗口的用量 | 单账号 | `~/.kimi-code/credentials/kimi-code.json` |
 | **ChatGPT / Codex** | 5 小时窗与周窗口的用量 | 多账号，每个账号一行 | `~/.codex/auth.json` |
 | **Gemini / Antigravity** | 配额百分比与重置时间 | 单账号 | Windows 凭据管理器 `gemini:antigravity` |
-| **Command Code** | 日 / 5 小时 / 周滚动窗口，可选余额 | 单账号 | `~/.commandcode/auth.json` |
+| **Command Code** | 5 小时窗与周窗口的用量，可选余额 | 单账号 | `~/.commandcode/auth.json` |
 | **OpenRouter** | 密钥的已用额度与上限（未设上限时明确说明） | 每个密钥一行 | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | 账户总余额与充值 / 赠额明细（余额型，没有百分比） | 单账号 | `~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY` |
 
@@ -115,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.10.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.11.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -128,7 +128,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.10.0
+# AI Usage Widget 0.11.0
 ```
 
 ### 多账号
@@ -172,9 +172,12 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `intervalSeconds` | `300` | 刷新间隔秒数（15 – 86400） |
+| `intervalSeconds` | `300` | 刷新间隔秒数（15 – 86400）；右键菜单与设置面板写入同一字段 |
 | `opacity` | `0.96` | 窗口不透明度（0.5 – 1.0） |
 | `theme` | `"dark"` | 界面主题：`dark` / `light`，设置窗口保存后即时切换 |
+| `layout` | `"full"` | 行布局：`full`（名称 + 进度条 + 明细）/ `compact`（单行更矮） |
+| `lockPosition` | `false` | 为 true 时禁止拖拽移动卡片 |
+| `providerAlertThresholds` | `{}` | 可选，按供应商覆盖全局阈值，例如 `{ "grok": [80, 95] }` |
 | `showTrend` | `true` | 在每行进度条右侧显示 7 天迷你折线 |
 | `showForecast` | `true` | 悬停提示里显示额度耗尽预测 |
 | `trendDays` | `7` | 折线与预测使用的天数（1 – 14） |
@@ -246,6 +249,8 @@ ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
 WidgetConfig.ps1         ai-config.json 的读写与校验
 WidgetPalette.ps1        深色 / 浅色调色板（界面颜色的唯一来源）
+WidgetLayout.ps1         卡片行高与窗体尺寸（full / compact）
+WidgetFormat.ps1         百分比、重置时间与错误文案
 WidgetStrings.ps1        界面文案的语言包加载与查询
 strings/                 语言包（zh-CN.json / en-US.json）
 WidgetInstaller.ps1      安装 / 升级 / 卸载实现
@@ -257,6 +262,8 @@ Start-AiUsageWidget.vbs  无窗口启动器
 docs/                    架构、供应商、排错文档与截图
 ```
 
+`GrokUsageWidget.ps1` / `KimiUsageWidget.ps1` / `ChatGptUsageWidget.ps1` 是历史兼容入口，全部转发到聚合卡片；`-Demo`、`-Theme`、关于窗口不会出现在这些包装器的参数里。
+
 ## 文档
 
 - [架构说明](docs/architecture.md)：进程与线程模型、数据流、行模型约定、存储布局
@@ -266,7 +273,7 @@ docs/                    架构、供应商、排错文档与截图
 
 ## 参与贡献
 
-欢迎提交 Issue 与 PR：新供应商、更多主题与布局模式（迷你 / 多列）、分发方式都在路线图上。
+欢迎提交 Issue 与 PR：新供应商、多列布局、分发方式都在路线图上。紧凑布局与锁定位置已在 0.11.0 提供。
 提之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了测试要求（双 PowerShell 版本）与安全红线
 （绝不提交凭据、日志与含个人信息的文件）。
 

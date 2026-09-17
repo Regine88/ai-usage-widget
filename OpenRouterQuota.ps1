@@ -38,6 +38,20 @@ function Get-OpenRouterKeyFingerprint {
     return ('OpenRouter-' + $hash)
 }
 
+# Row ids must stay stable even when the fingerprint helper degrades to the
+# bare 'OpenRouter' label (empty key). Callers skip a $null id rather than
+# Substring()'ing a string that is shorter than the prefix.
+function Get-OpenRouterRowId {
+    param([string]$Key)
+    $fingerprint = Get-OpenRouterKeyFingerprint $Key
+    $prefix = 'OpenRouter-'
+    if (-not $fingerprint -or $fingerprint -eq 'OpenRouter') { return $null }
+    if ($fingerprint.StartsWith($prefix) -and $fingerprint.Length -gt $prefix.Length) {
+        return ('openrouter-' + $fingerprint.Substring($prefix.Length))
+    }
+    return ('openrouter-' + $fingerprint)
+}
+
 # Convert-OpenRouterCredits -> Percent/SpentText/IsUnlimited/Label.
 function Convert-OpenRouterCredits {
     param($KeyData)

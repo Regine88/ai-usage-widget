@@ -14,6 +14,13 @@ function Assert-Eq {
     }
 }
 
+Assert-Eq (Get-OpenRouterKeyFingerprint '') 'OpenRouter' 'empty key fingerprint stays generic'
+Assert-Eq ("$(Get-OpenRouterRowId '')") '' 'empty key has no row id'
+$id = Get-OpenRouterRowId 'sk-or-v1-abcdefgh'
+Assert-Eq ([string]::IsNullOrEmpty($id)) 'False' 'a real key gets a row id'
+Assert-Eq ($id.StartsWith('openrouter-')) 'True' 'row id uses the openrouter prefix'
+Assert-Eq ($id.Contains('OpenRouter')) 'False' 'row id does not keep the display prefix'
+
 # ---------- 有上限的 key ----------
 $limited = @{ data = @{ label = 'sk-or-v1-abcd1234'; usage = 12.5; limit = 100; limit_remaining = 87.5; limit_reset = 'monthly' } } |
     ConvertTo-Json -Depth 8 | ConvertFrom-Json

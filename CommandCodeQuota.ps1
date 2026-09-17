@@ -1,6 +1,6 @@
 ﻿# Command Code quota helpers. Pure parsing, no network/UI dependency.
 # Auth lives in ~/.commandcode/auth.json (or $env:COMMAND_CODE_HOME).
-# Daily/5-hour/weekly rolling usage windows returned by /alpha/billing/credits.
+# 5-hour/weekly rolling usage windows returned by /alpha/billing/credits.
 
 if (-not (Get-Command Convert-UsageRatioPercent -ErrorAction SilentlyContinue)) {
     $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'

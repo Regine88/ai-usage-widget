@@ -35,6 +35,9 @@ Assert-Eq $defaults.providers.codex 'True' 'default codex enabled'
 Assert-Eq $defaults.providers.commandcode 'True' 'default commandcode enabled'
 Assert-Eq $defaults.providers.openrouter 'True' 'default openrouter enabled'
 Assert-Eq $defaults.providers.deepseek 'True' 'default deepseek enabled'
+Assert-Eq $defaults.lockPosition 'False' 'default position unlocked'
+Assert-Eq $defaults.layout 'full' 'default layout is full'
+Assert-Eq ($defaults.providerAlertThresholds.Count) 0 'default has no per-provider thresholds'
 
 # ---------- 数值校验 ----------
 Assert-Eq (ConvertTo-ConfigInt -Value 600 -Default 300 -Min 15 -Max 86400) 600 'int passthrough'
@@ -141,6 +144,28 @@ Assert-Eq $clamped.quietHours.end '06:15' 'quiet end normalized'
 
 Assert-Eq (Convert-WidgetConfig 'totally not a config').intervalSeconds 300 'string config falls back to defaults'
 Assert-Eq (Convert-WidgetConfig 12345).intervalSeconds 300 'number config falls back to defaults'
+
+Assert-Eq (ConvertTo-ConfigLayout 'COMPACT') 'compact' 'layout compact is case insensitive'
+Assert-Eq (ConvertTo-ConfigLayout 'grid') 'full' 'unknown layout falls back'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ layout = 'compact'; lockPosition = $true })).layout 'compact' 'layout is read from the config'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ layout = 'compact'; lockPosition = $true })).lockPosition 'True' 'lock flag is read from the config'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ layout = 'wide' })).layout 'full' 'broken layout falls back'
+
+$over = Convert-WidgetConfig ([pscustomobject]@{
+    alertThresholds = @(70, 90)
+    providerAlertThresholds = @{ grok = @(80, 95); kimi = @(0, 101, 60) }
+})
+Assert-Eq ((Resolve-AlertThresholds $over 'grok') -join ',') '80,95' 'provider overlay wins'
+Assert-Eq ((Resolve-AlertThresholds $over 'kimi') -join ',') '60' 'provider overlay drops out of range'
+Assert-Eq ((Resolve-AlertThresholds $over 'codex') -join ',') '70,90' 'missing overlay keeps global'
+Assert-Eq (Test-UsageResetTransition 90 8) 'True' 'drop from high to low is a reset'
+Assert-Eq (Test-UsageResetTransition 12 8) 'False' 'already-low is not a reset'
+Assert-Eq (Test-UsageResetTransition 90 40) 'False' 'modest drop is not a reset'
+Assert-Eq (Test-UsageResetTransition $null 8) 'False' 'missing previous is not a reset'
+
+Assert-Eq (Resolve-RefreshInterval -Explicit $true -ExplicitValue 15 -Config @{ intervalSeconds = 300 } -State @{ interval = 900 } -ConfigFileExists $true) 15 'explicit interval wins'
+Assert-Eq (Resolve-RefreshInterval -Explicit $false -ExplicitValue 15 -Config @{ intervalSeconds = 120 } -State @{ interval = 900 } -ConfigFileExists $true) 120 'config file wins over state'
+Assert-Eq (Resolve-RefreshInterval -Explicit $false -ExplicitValue 15 -Config @{ intervalSeconds = 300 } -State @{ interval = 900 } -ConfigFileExists $false) 900 'state migrates when config file is missing'
 
 # ---------- 供应商开关 ----------
 $config = Convert-WidgetConfig ([pscustomobject]@{ providers = @{ grok = $false; codex = $false } })

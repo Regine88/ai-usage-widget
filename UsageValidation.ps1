@@ -131,9 +131,52 @@ function Convert-SafeLogText {
     $safe = $Text -replace '[\r\n\t]+', ' '
     $safe = $safe -replace '(?i)(Bearer\s+)[^\s,;}{"'']+', '$1[redacted]'
     $safe = $safe -replace '(?i)(["'']?)(access_token|refresh_token|id_token|client_secret|api[_-]?key)(["'']?\s*[:=]\s*["'']?)([^"''\s,&}]+)(["'']?)', '$1$2$3[redacted]$5'
+    $safe = $safe -replace '(?i)\bsk-[a-z0-9_-]{8,}\b', 'sk-[redacted]'
     $safe = $safe -replace '(?i)([a-z0-9._%+\-]+)@([a-z0-9.\-]+\.[a-z]{2,})', '$1[at]$2'
     $safe = $safe -replace '(?i)(https?://[^\s?]+)[^\s]*', '$1'
     $safe = $safe.Trim()
     if ($safe.Length -gt $MaxLength) { return $safe.Substring(0, $MaxLength) }
     return $safe
+}
+
+function Get-WidgetTrustedHosts {
+    return @(
+        'auth.x.ai'
+        'cli-chat-proxy.grok.com'
+        'auth.openai.com'
+        'chatgpt.com'
+        'api.commandcode.ai'
+        'openrouter.ai'
+        'api.deepseek.com'
+        'oauth2.googleapis.com'
+        'cloudcode-pa.googleapis.com'
+        'api.github.com'
+        'auth.kimi.com'
+        'auth.kimi.ai'
+        'api.kimi.com'
+        'api.kimi.ai'
+    )
+}
+
+# Host-only check used by Invoke-WidgetRest. Unlike Resolve-TrustedHttpsEndpoint
+# this allows path and query (Grok billing uses ?format=credits) and rejects
+# only non-https schemes and hosts outside the allow list.
+function Assert-TrustedHttpsHost {
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Value,
+        [string[]]$AllowedHosts
+    )
+    if (-not $AllowedHosts -or $AllowedHosts.Count -eq 0) {
+        $AllowedHosts = Get-WidgetTrustedHosts
+    }
+    try { $uri = [Uri]::new($Value.Trim()) } catch { throw 'API 地址不是有效的绝对 URL' }
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https') {
+        throw 'API 地址必须使用 HTTPS 绝对 URL'
+    }
+    $endpointHost = $uri.DnsSafeHost.ToLowerInvariant()
+    $allowedHostSet = @($AllowedHosts | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    if ($allowedHostSet -notcontains $endpointHost) {
+        throw ("API 地址主机不在允许列表: {0}" -f $endpointHost)
+    }
+    return $uri.AbsoluteUri
 }

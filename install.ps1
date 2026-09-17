@@ -33,7 +33,7 @@
 .EXAMPLE
   .\install.ps1 -Uninstall
 .EXAMPLE
-  .\install.ps1 -Zip .\ai-usage-widget-0.10.0.zip
+  .\install.ps1 -Zip .\ai-usage-widget-0.11.0.zip
 #>
 [CmdletBinding()]
 param(
@@ -112,6 +112,14 @@ try {
     if ($Zip) {
         if (-not (Test-Path -LiteralPath $Zip -PathType Leaf)) { throw ('压缩包不存在：' + $Zip) }
         $zipFull = (Resolve-Path -LiteralPath $Zip).Path
+        $sumPath = $zipFull + '.sha256'
+        if (Test-Path -LiteralPath $sumPath -PathType Leaf) {
+            $expected = ((Get-Content -LiteralPath $sumPath -Raw -ErrorAction Stop).Trim() -split '\s+')[0]
+            $actual = (Get-FileHash -LiteralPath $zipFull -Algorithm SHA256).Hash
+            if (-not $expected -or $expected.ToLowerInvariant() -ne $actual.ToLowerInvariant()) {
+                throw '压缩包校验失败：SHA256 不匹配'
+            }
+        }
         $tmp = Join-Path $env:TEMP ('ai-usage-widget-install-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp | Out-Null
         $cleanup = $tmp

@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here 'UsageValidation.ps1')
 . (Join-Path $here 'WidgetConfig.ps1')
+. (Join-Path $here 'WidgetStrings.ps1')
+. (Join-Path $here 'WidgetFormat.ps1')
 . (Join-Path $here 'ApiKeyAuth.ps1')
 . (Join-Path $here 'OpenRouterQuota.ps1')
 
@@ -31,7 +33,6 @@ function Get-ScriptFunctionDefinition {
 }
 
 $entry = Join-Path $here 'AiUsageWidget.ps1'
-. (Join-Path $here 'WidgetStrings.ps1')
 $script:WidgetStrings = Read-WidgetStrings -Language 'en-US' -Dir $here
 
 $entryText = Get-Content -LiteralPath $entry -Raw -Encoding utf8
@@ -50,7 +51,7 @@ function Invoke-WidgetRest {
 }
 
 $definitions = @()
-foreach ($name in @('Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData', 'Format-PercentText')) {
+foreach ($name in @('Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData')) {
     $definitions += (Get-ScriptFunctionDefinition $entry $name)
 }
 $definitions += '$script:OpenRouterApiBaseUrl = ''https://openrouter.ai/api/v1'''
@@ -105,7 +106,7 @@ $match = [regex]::Match($entryText, '(?s)function Get-WorkerScriptSource \{.*?\$
 if ($match.Success) { $fnNames = @([regex]::Matches($match.Groups[1].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) }
 $match2 = [regex]::Match($entryText, '(?s)foreach \(\$v in (.*?)\) \{')
 if ($match2.Success) { $vNames = @([regex]::Matches($match2.Groups[1].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) }
-foreach ($name in @('Read-ApiKeyAuth', 'Invoke-ApiKeyGet', 'Get-OpenRouterRowData', 'Convert-OpenRouterCredits', 'Get-ConfigPropertyValue', 'Get-ApiKeyFileSources')) {
+foreach ($name in @('Read-ApiKeyAuth', 'Invoke-ApiKeyGet', 'Get-OpenRouterRowData', 'Convert-OpenRouterCredits', 'Get-ApiKeyFileSources')) {
     Assert-Eq ($fnNames -contains $name) 'True' ('worker forwards ' + $name)
 }
 foreach ($name in @('OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName')) {

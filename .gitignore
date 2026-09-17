@@ -15,7 +15,6 @@ chatgpt-auth-*.json
 *.token
 .env
 .env.*
-~/.commandcode/auth.json
 
 # Command Code project-local runtime config
 .commandcode/

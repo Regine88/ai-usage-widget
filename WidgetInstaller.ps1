@@ -19,6 +19,8 @@ $script:WidgetRuntimeFiles = @(
     'DeepSeekQuota.ps1'
     'ApiKeyAuth.ps1'
     'WidgetPalette.ps1'
+    'WidgetLayout.ps1'
+    'WidgetFormat.ps1'
     'WidgetUpdates.ps1'
     'ModelRequestRecorder.ps1'
     'UsageHistory.ps1'
