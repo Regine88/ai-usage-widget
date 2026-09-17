@@ -2,6 +2,8 @@
 
 > **状态（2026-09-17）：** 已确认并执行。P0 九项任务全部完成，验收记录见 `docs/superpowers/reports/2026-09-17-ai-usage-widget-open-source-acceptance.md`。
 
+> **P1 进度（2026-09-17）：** 第 1 项「更多供应商」进行中，首个供应商 OpenRouter 已随 0.8.0 发布（OpenRouterQuota.ps1 + 	est-OpenRouterProvider.ps1），其余候选待评估。
+
 **目标：** 把当前内部工具补齐为可公开、可贡献、可发布的开源项目，并按用户价值排序扩展功能。
 
 **架构约束：** 保持“单文件主程序 + 纯函数模块”的现状；新增能力优先落在模块（可离线测试）而非 UI 内联代码；Windows PowerShell 5.1 与 PowerShell 7 双版本必须同时通过全部测试。
@@ -66,7 +68,7 @@
 
 ### P1（建议优先）
 
-1. **更多供应商**（未开始）：Claude Code、Cursor、GitHub Copilot、OpenRouter、DeepSeek、GLM(z.ai)、通义 / 豆包。每个 ≈ 解析模块 + 测试 + 行数据 + 菜单项，先做实际在用的 1-3 个。本机探测：Claude Code 无 OAuth 凭证、Cursor 凭据存于 SQLite、GitHub Copilot `hosts.json` 缺失，因此优先考虑纯 API-key 的供应商。
+1. **更多供应商**（进行中）：Claude Code、Cursor、GitHub Copilot、OpenRouter、DeepSeek、GLM(z.ai)、通义 / 豆包。**已完成：OpenRouter**（0.8.0，纯 API-key，每个密钥一行，见 `docs/providers.md`）。每个 ≈ 解析模块 + 测试 + 行数据 + 菜单项，先做实际在用的 1-3 个。本机探测：Claude Code 无 OAuth 凭证、Cursor 凭据存于 SQLite、GitHub Copilot `hosts.json` 缺失，因此优先考虑纯 API-key 的供应商。
 2. **历史与趋势**（已完成，0.7.0）：卡片内 7 天迷你折线（`ai-history.jsonl` 已在记录）、额度耗尽时间预测、CSV 导出。
 3. **设置面板**（已完成，0.7.0）：`ai-config.json` 集中配置 + WinForms 设置窗口（供应商开关、刷新间隔、透明度、阈值、静音时段、界面语言）。
 4. **国际化**（已完成，0.7.0）：`strings/zh-CN.json`、`strings/en-US.json`，UI、托盘、菜单、提示与 CLI 文案统一切换；`test-WidgetStrings.ps1` 扫描源码防止漏登记键名。

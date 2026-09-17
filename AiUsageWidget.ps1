@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.7.0'
+$script:AppVersion = '0.8.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -95,6 +95,12 @@ $script:CommandCodeUsagePageUrl = 'https://commandcode.ai/usage'
 $script:CommandCodeShowBalance = $false
 $script:CommandCodeDisplayName = 'Command Code'
 
+$script:OpenRouterHomeDir = if ($env:OPENROUTER_HOME) { $env:OPENROUTER_HOME } else { Join-Path $env:USERPROFILE '.openrouter' }
+$script:OpenRouterAuthPath = Join-Path $script:OpenRouterHomeDir 'auth.json'
+$script:OpenRouterApiBaseUrl = 'https://openrouter.ai/api/v1'
+$script:OpenRouterUsagePageUrl = 'https://openrouter.ai/settings/keys'
+$script:OpenRouterDisplayName = 'OpenRouter'
+
 $script:SelfPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 $script:WidgetDir = Split-Path -Parent $script:SelfPath
 $script:SecureSnapshotRoot = Join-Path $env:LOCALAPPDATA 'AIUsageWidget\accounts'
@@ -109,6 +115,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'GeminiAntigravity.ps1')
 . (Join-Path $script:WidgetDir 'KimiQuota.ps1')
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
+. (Join-Path $script:WidgetDir 'OpenRouterQuota.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
@@ -1096,6 +1103,82 @@ function Get-CommandCodeRowData {
     }
 }
 
+# --- OpenRouter ---
+
+function Test-OpenRouterCredExists {
+    if (Test-Path -LiteralPath $script:OpenRouterAuthPath) { return $true }
+    return [bool]$env:OPENROUTER_API_KEY
+}
+
+# 只读取密钥来源，字符串比较留给调用方，避免把密钥写进日志。
+function Get-OpenRouterKeySources {
+    $sources = @()
+    if (Test-Path -LiteralPath $script:OpenRouterAuthPath) {
+        try {
+            $raw = Get-Content -LiteralPath $script:OpenRouterAuthPath -Raw -Encoding utf8 | ConvertFrom-Json
+            foreach ($name in @('apiKey', 'api_key', 'key', 'token')) {
+                $value = Get-ConfigPropertyValue $raw $name
+                if ($value) { $sources += [string]$value }
+            }
+        } catch {
+        }
+    }
+    if ($env:OPENROUTER_API_KEY) { $sources += [string]$env:OPENROUTER_API_KEY }
+    return @($sources | Where-Object { $_ } | Sort-Object -Unique)
+}
+
+function Read-OpenRouterAuth {
+    $keys = @(Get-OpenRouterKeySources)
+    if ($keys.Count -eq 0) { throw 'missing-credential' }
+    return [pscustomobject]@{ ApiKey = $keys[0]; ApiKeyCount = $keys.Count }
+}
+
+function Get-OpenRouterAuthHeaders {
+    param($Auth)
+    return @{
+        Authorization = "Bearer $($Auth.ApiKey)"
+        Accept        = 'application/json'
+        'User-Agent'  = 'ai-usage-widget'
+    }
+}
+
+function Invoke-OpenRouterGet {
+    param($Auth, [string]$Path)
+    # OpenRouter keys are created in the web UI and have no refresh flow: a 401 is
+    # surfaced to Format-FetchError ("登录已过期") instead of being retried.
+    return Invoke-WidgetRest -Method Get -Uri "$($script:OpenRouterApiBaseUrl)$Path" -Headers (Get-OpenRouterAuthHeaders $Auth)
+}
+
+function Get-OpenRouterUsageSnapshot {
+    param($Auth)
+    $data = Invoke-OpenRouterGet -Auth $Auth -Path '/key'
+    return Convert-OpenRouterCredits $data
+}
+
+function Get-OpenRouterRowData {
+    param($Auth, [string]$Name, [string]$Id)
+    $auth = if ($Auth) { $Auth } else { Read-OpenRouterAuth }
+    $usage = Get-OpenRouterUsageSnapshot -Auth $auth
+    $display = if ($Name) { $Name } else { $script:OpenRouterDisplayName }
+    $details = @()
+    if ($usage.IsUnlimited) {
+        $details += (T 'row.unlimited' @($usage.Spent))
+    } else {
+        $details += (T 'row.limitUsage' @($usage.Spent, $usage.Limit, $usage.Percent))
+    }
+    $percent = $usage.Percent
+    if ($null -eq $percent) { $percent = 0.0 }
+    Write-WidgetLog ("usage openrouter {0} ok" -f $percent)
+    [pscustomobject]@{
+        Percent = $percent
+        Detail  = ($details -join ' · ')
+        Tip     = (T 'row.codexTip' @($display, (Format-PercentText $percent)))
+        Reset   = $null
+        ResetAt = $null
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
 # --- Rows / UI ---
 
 function Get-DemoRowTable {
@@ -1104,6 +1187,7 @@ function Get-DemoRowTable {
         [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = ((T 'row.window5hPercent' @(12)) + ' · ' + (T 'reset.daysHours' @(4, 4))); TrendPct = @(18, 24, 30, 35, 39, 43, 46) }
         [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = ((T 'row.window5hPercent' @(31)) + ' · ' + (T 'reset.daysHours' @(5, 4))); TrendPct = @(52, 58, 63, 67, 70, 72, 74) }
         [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = ((T 'row.window5hPercent' @(41)) + ' · ' + (T 'row.windowWeekPercent' @(93)) + ' · ' + (T 'reset.daysHours' @(3, 6))); TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
+        [pscustomobject]@{ Id = 'demo-openrouter'; Kind = 'openrouter'; Name = 'OpenRouter-3ad9f1c7'; OpenUrl = $script:OpenRouterUsagePageUrl; Percent = 12.5; Detail = (T 'row.limitUsage' @(12.5, 100, 12.5)); TrendPct = @(1.5, 3, 4.5, 6, 8, 10, 12.5) }
     )
 }
 
@@ -1171,6 +1255,18 @@ function Get-ProviderRows {
             Name    = $script:CommandCodeDisplayName
             OpenUrl = $script:CommandCodeUsagePageUrl
             Auth    = $null
+        }
+    }
+    if (Test-OpenRouterCredExists) {
+        # 每个本机密钥一行，行名用密钥指纹，密钥本身不进入界面与日志。
+        foreach ($key in @(Get-OpenRouterKeySources)) {
+            $rows += [pscustomobject]@{
+                Id      = 'openrouter-' + (Get-OpenRouterKeyFingerprint $key).Substring('OpenRouter-'.Length)
+                Kind    = 'openrouter'
+                Name    = (Get-OpenRouterKeyFingerprint $key)
+                OpenUrl = $script:OpenRouterUsagePageUrl
+                Auth    = [pscustomobject]@{ ApiKey = $key; ApiKeyCount = 1 }
+            }
         }
     }
     return $rows
@@ -1773,7 +1869,7 @@ function Show-WidgetSettings {
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
-    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 404))
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 420))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     Set-UiColor $dialog 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
     Set-UiColor $dialog 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
@@ -1811,6 +1907,7 @@ function Show-WidgetSettings {
     $chkKimi = New-SettingCheckBox $dialog 'Kimi' $colValue (Scale-Px 226) ([bool]$current.providers.kimi)
     $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.codex)
     $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
+    $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' (Scale-Px 208) (Scale-Px 252) ([bool]$current.providers.openrouter)
 
     [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 288) $muted)
     $comboItems = @((T 'settings.languageAuto'), (T 'settings.languageZh'), (T 'settings.languageEn'))
@@ -1845,11 +1942,12 @@ function Show-WidgetSettings {
                     kimi        = [bool]$chkKimi.Checked
                     codex       = [bool]$chkCodex.Checked
                     commandcode = [bool]$chkCommandCode.Checked
+                    openrouter  = [bool]$chkOpenRouter.Checked
                 }
             }
             $script:Config = Convert-WidgetConfig $picked
             if (-not $script:DemoMode) { [void](Write-WidgetConfig -Config $script:Config) }
-            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language)
+            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter)
             Apply-WidgetConfig
             $dialog.Close()
         } catch {
@@ -1938,6 +2036,7 @@ function New-WidgetForm {
     $miOpenKimi = $miOpen.DropDownItems.Add('Kimi')
     $miOpenCodex = $miOpen.DropDownItems.Add('ChatGPT')
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
+    $miOpenOpenRouter = $miOpen.DropDownItems.Add('OpenRouter')
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
@@ -2012,6 +2111,7 @@ function New-WidgetForm {
     $miOpenKimi.Add_Click({ Start-Process $script:KimiUsagePageUrl })
     $miOpenCodex.Add_Click({ Start-Process $script:CodexUsagePageUrl })
     $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
+    $miOpenOpenRouter.Add_Click({ Start-Process $script:OpenRouterUsagePageUrl })
     $miTop.Add_Click({
         if ($form.TopMost) {
             $form.TopMost = $false
@@ -2166,6 +2266,7 @@ function Update-Widget {
 function Get-WorkerScriptSource {
     $fnNames = @(
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
+        'Get-WidgetText', 'T',
         'Format-PercentText', 'Format-ResetText', 'Format-ResetTime', 'ConvertTo-ResetStamp',
         'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent',
         'Resolve-TrustedHttpsEndpoint', 'Get-AccountFingerprint', 'Convert-SafeLogText',
@@ -2190,7 +2291,9 @@ function Get-WorkerScriptSource {
         'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
         'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
         'Invoke-CommandCodeGet', 'Get-CommandCodeOrgId', 'Convert-CCWindow',
-        'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData'
+        'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData',
+        'Get-ConfigPropertyValue', 'Test-OpenRouterCredExists', 'Get-OpenRouterKeySources', 'Read-OpenRouterAuth', 'Get-OpenRouterAuthHeaders',
+        'Invoke-OpenRouterGet', 'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData'
     )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('param($Rows, $Cfg)')
@@ -2199,7 +2302,9 @@ function Get-WorkerScriptSource {
                    'CodexOAuthClientId', 'CodexTokenUrl', 'CodexUsageUrl', 'LogPath',
                    'AntigravityCredTarget', 'AntigravityClientId', 'AntigravityClientSecret',
                    'AntigravityTokenUrl', 'AntigravityQuotaUrl',
-                   'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName', 'SecureSnapshotRoot') {
+                   'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName',
+                   'OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName', 'SecureSnapshotRoot',
+                   'WidgetStrings', 'Language') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
     }
     foreach ($n in $fnNames) {
@@ -2218,6 +2323,7 @@ foreach ($row in @($Rows)) {
             'kimi'  { $d = Get-KimiRowData }
             'codex' { $d = Get-CodexRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
             'commandcode' { $d = Get-CommandCodeRowData }
+            'openrouter' { $d = Get-OpenRouterRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
             default { throw '未找到登录凭证' }
         }
         $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
@@ -2251,6 +2357,9 @@ function Start-BackgroundFetch {
         CommandCodeApiBaseUrl    = $script:CommandCodeApiBaseUrl
         CommandCodeShowBalance   = $script:CommandCodeShowBalance
         CommandCodeDisplayName   = $script:CommandCodeDisplayName
+        OpenRouterAuthPath       = $script:OpenRouterAuthPath
+        OpenRouterApiBaseUrl     = $script:OpenRouterApiBaseUrl
+        OpenRouterDisplayName    = $script:OpenRouterDisplayName
         SecureSnapshotRoot       = $script:SecureSnapshotRoot
         WidgetStrings            = $script:WidgetStrings
         Language                 = $script:Language

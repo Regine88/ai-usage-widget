@@ -14,7 +14,7 @@ function Get-WidgetConfigDefaults {
         trendDays       = 7
         alertThresholds = @(70, 90)
         quietHours      = @{ enabled = $false; start = '22:00'; end = '07:00' }
-        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true }
+        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true }
     }
 }
 

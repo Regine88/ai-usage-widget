@@ -6,6 +6,29 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.8.0] - 2026-09-17
+
+新增第 6 个供应商 OpenRouter：纯 API-key 接入，每个密钥一行，额度按「已用 / 上限」显示；没有上限的密钥会明确说明，而不是伪装成 0%。
+
+### Added
+
+- `OpenRouterQuota.ps1` + `test-OpenRouterQuota.ps1`：密钥短指纹（SHA256 前 8 位）与 `/api/v1/key` 载荷解析；`limit` 为 `null` 时返回 `IsUnlimited`，花超时百分比夹到 100%，非法载荷统一抛 `bad-payload`。
+- OpenRouter 供应商接入（`AiUsageWidget.ps1`）：`Read-OpenRouterAuth` 读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）与 `$env:OPENROUTER_API_KEY`，每个密钥一行，行名是密钥指纹而不是密钥本身。
+- 右键菜单「打开用量页」新增 OpenRouter 条目。
+- 语言包新增 `row.limitUsage` / `row.unlimited`，分别渲染「已用 $12.50 / 上限 $100.00（12.5%）」与「已用 $12.50（未设上限）」。
+- `-Demo` 演示数据新增 OpenRouter 行，截图与 UI 回归覆盖新供应商。
+- `test-OpenRouterProvider.ps1`：从主程序抽取函数在同一进程内断言端点、请求头、明细文本、凭证优先级与 worker 转发清单。
+- `test-WorkerSource.ps1`：构建后台 worker 脚本并逐个断言，worker 缺函数、缺 `$Cfg` 变量、缺 `switch` 分支时直接失败。
+
+### Fixed
+
+- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
+
+### Changed
+
+- `WidgetConfig.ps1` 的 `providers` 默认值新增 `openrouter`，设置面板出现对应开关。
+- `WidgetInstaller.ps1` 运行文件清单加入 `OpenRouterQuota.ps1`，安装与打包自动包含。
+
 ## [0.7.0] - 2026-09-17
 
 用量趋势、集中设置与中英双语界面：卡片内画出每行 7 天迷你折线，预测额度耗尽时间，把所有可调项收进 `ai-config.json`，界面文案全部改走语言包。
@@ -21,6 +44,10 @@
 - `install.ps1` + `WidgetInstaller.ps1` + `test-WidgetInstaller.ps1`：安装 / 升级 / 卸载。安装到 `%LOCALAPPDATA%\Programs\AIUsageWidget` 并创建开始菜单快捷方式；用户数据永不被覆盖，卸载默认保留，`-Purge` 才彻底删除。
 - `tools/package-release.ps1` 与 Release 工作流：推送 `v*` 标签后自动在双引擎跑全部测试，打包 zip、生成 SHA256 与 Scoop manifest 并发布 Release；本地可用同一脚本预演打包。
 - `WidgetStrings.ps1` + `strings/zh-CN.json` + `strings/en-US.json` + `test-WidgetStrings.ps1`：界面文案集中到语言包，`language` 支持 `auto` / `zh-CN` / `en-US`。语言代码走白名单解析（配置值不会被当成文件名），语言包缺失或 JSON 损坏时回退内置兜底表；测试还会扫描源码里的全部 `T 'key'` 调用，漏登记键名直接失败。
+
+### Fixed
+
+- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
 
 ### Changed
 
@@ -51,6 +78,10 @@
 - `test-Syntax.ps1`：把原先只存在于 CI 的语法解析收进离线套件，本地双版本跑测试即可覆盖。
 - 可选账号别名：程序目录下的 `grok-aliases.json`（或运行期的 `$script:GrokAccountAliases`）可把账号指纹映射成 `a` / `b` 这类短名字。
 
+### Fixed
+
+- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
+
 ### Changed
 
 - 启动日志带上版本号：`starting widget v0.6.0`。
@@ -77,6 +108,10 @@
 ### Added
 
 - 离线校验模块 `UsageValidation.ps1`、DPAPI 快照模块 `SecureSnapshot.ps1`、Kimi 配额解析模块 `KimiQuota.ps1` 及各自测试（[`21b448a`](https://github.com/Regine88/ai-usage-widget/commit/21b448a)）。
+
+### Fixed
+
+- 修复 0.7.0 引入的回归：后台 worker 里的行函数调用 `T` 取值，但 `T` / `Get-WidgetText` 没有被注入 worker，导致所有供应商的抓取都在构建明细文本时报 `The term 'T' is not recognized`，卡片每一行都只显示错误。现在 worker 会拿到 `T` 与同一张语言表（`WidgetStrings` / `Language`）。
 
 ### Changed
 

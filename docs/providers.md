@@ -11,6 +11,7 @@
 | Kimi | `kimi` | `~/.kimi-code/credentials/kimi-code.json`（或 `$env:KIMI_CODE_HOME`） | `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1` | 1 |
 | ChatGPT / Codex | `codex` | `~/.codex/auth.json`（或 `$env:CODEX_HOME`） | `https://chatgpt.com/backend-api/wham/usage` | 每个账号一行 |
 | Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits` | 1 |
+| OpenRouter | `openrouter` | `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）、`$env:OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/key` | 每个密钥一行 |
 
 ## 各供应商细节
 
@@ -59,6 +60,17 @@
   余额默认不显示，需要时把 `$script:CommandCodeShowBalance` 设为 `$true`。
 - **时间**：`Convert-CommandCodeTime` 负责把服务端时间转成本地重置时间。
 - **降级**：组织标识缺失或返回空窗口时显示"暂无用量数据"，不影响其他行。
+
+### OpenRouter
+
+- **凭证**：`~/.openrouter/auth.json`（可用 `$env:OPENROUTER_HOME` 改目录）里的 `apiKey` / `api_key` / `key` / `token`，
+  以及 `$env:OPENROUTER_API_KEY`；同一密钥在两处出现只算一行。
+- **多密钥**：每个密钥一行，行名是密钥的短指纹（形如 `OpenRouter-1f4a2c7e`），密钥本身既不进界面也不进日志。
+- **额度语义**：`/api/v1/key` 返回该密钥的累计消费 `usage` 与创建时设定的上限 `limit`。
+  有上限时显示「已用 $12.50 / 上限 $100.00（12.5%）」；`limit` 为 `null` 时显示「已用 $12.50（未设上限）」，
+  这一行按 0% 参与配色与趋势，而不是伪装成「没有数据」。
+- **无刷新流程**：密钥在网页端创建，没有 OAuth 刷新流程；`401` 直接显示「登录已过期，请重新登录」，不重试。
+- **降级**：`usage` 缺失或不是有限数、`limit` 不是正数时该行显示「暂无用量数据」，不影响其他行。
 
 ## 新增一个供应商
 

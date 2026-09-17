@@ -22,10 +22,11 @@ English · [简体中文](README.md)
 | **ChatGPT / Codex** | 5-hour and weekly window usage | Multi-account, one row each | `~/.codex/auth.json` |
 | **Gemini / Antigravity** | Quota percentage and reset time | Single account | Windows Credential Manager `gemini:antigravity` |
 | **Command Code** | Daily / 5-hour / weekly rolling windows, optional balance | Single account | `~/.commandcode/auth.json` |
+| **OpenRouter** | Spent credits and the key's spend limit (says so when unlimited) | One row per key | `~/.openrouter/auth.json` or `$env:OPENROUTER_API_KEY` |
 
 If you already signed in to the matching CLI (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
-when a token needs refreshing.
+when a token needs refreshing. OpenRouter is API-key only: the widget reads `~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) and shows one row per key.
 
 ## Features
 
@@ -57,7 +58,7 @@ when a token needs refreshing.
 ![Context menu](docs/images/demo-menu.en.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
-register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code),
+register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter),
 export usage CSV, settings, always on top, run at startup, quit.
 
 ## Quick start
@@ -110,7 +111,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.7.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.8.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -123,7 +124,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.7.0
+# AI Usage Widget 0.8.0
 ```
 
 ### Multiple accounts
@@ -176,7 +177,7 @@ and never published with the repository.
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
 | `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
-| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` |
 | `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
 
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
@@ -236,6 +237,7 @@ GrokAccounts.ps1         Grok multi-account support
 GeminiAntigravity.ps1    Gemini / Antigravity quota
 KimiQuota.ps1            Kimi payload parsing
 CommandCodeQuota.ps1     Command Code quota parsing
+OpenRouterQuota.ps1      OpenRouter key quota parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
 WidgetConfig.ps1         ai-config.json read/write and validation
@@ -269,6 +271,6 @@ logs or files containing personal data).
 Released under the [MIT License](LICENSE).
 
 This is an **unofficial** tool. It is not affiliated with or endorsed by Grok / xAI, Kimi / Moonshot,
-OpenAI, Google or Command Code. It only reads the credentials already present on your machine to display
+OpenAI, Google, Command Code or OpenRouter. It only reads the credentials already present on your machine to display
 quota information and never bypasses any paywall, rate limit or authorization mechanism; make sure your
 use complies with each service's terms.

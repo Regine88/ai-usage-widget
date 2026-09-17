@@ -15,6 +15,7 @@ $script:WidgetRuntimeFiles = @(
     'GeminiAntigravity.ps1'
     'KimiQuota.ps1'
     'CommandCodeQuota.ps1'
+    'OpenRouterQuota.ps1'
     'ModelRequestRecorder.ps1'
     'UsageHistory.ps1'
     'WidgetConfig.ps1'

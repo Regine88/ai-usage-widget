@@ -37,6 +37,7 @@ Get-Content -LiteralPath .\ai-widget.log -Tail 40
 | ChatGPT / Codex | Codex CLI 登录 | `~/.codex/auth.json` |
 | Command Code | Command Code CLI 登录 | `~/.commandcode/auth.json` |
 | Gemini / Antigravity | 登录 Antigravity | 凭据管理器条目 `gemini:antigravity` |
+| OpenRouter | 在网页端创建 API Key | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
 
 Grok 与 ChatGPT / Codex 是多账号模式：`auth.json` 存在后，还需要在右键菜单里"登记 Grok 账号" / "登记 ChatGPT 账号"，
 卡片才会为每个已登记账号渲染一行。
@@ -63,6 +64,14 @@ Grok 与 ChatGPT / Codex 是多账号模式：`auth.json` 存在后，还需要�
 - 确认 `~/.commandcode/auth.json` 存在，且组织标识可读取；缺少组织标识时会显示"暂无用量数据"。
 - 默认不显示余额，这是刻意设计；需要时把 `$script:CommandCodeShowBalance` 改成 `$true` 再重启。
 - 该接口路径为 `/alpha/billing/credits`，如果服务端改了路径，需要在 `CommandCodeQuota.ps1` 与主脚本的调用处同步更新。
+
+## OpenRouter 一行没有数据
+
+- 确认 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`）能读到密钥；读取顺序是文件优先、环境变量兜底。
+- 密钥没有设置上限时该行显示"未设上限"，百分比固定为 0%，这是刻意设计，不是取数失败。
+- `usage` / `limit` 异常（缺失、非数字、`limit` 不是正数）时显示"暂无用量数据"；可用
+  `Invoke-RestMethod https://openrouter.ai/api/v1/key -Headers @{ Authorization = "Bearer $env:OPENROUTER_API_KEY" }` 核对服务端返回。
+- 卡片只显示密钥指纹（形如 `OpenRouter-1f4a2c7e`），完整密钥不会出现在界面或日志里。
 
 ## Kimi 一行没有数据
 

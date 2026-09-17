@@ -44,6 +44,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `GeminiAntigravity.ps1` | Antigravity Gemini 配额：Windows 凭据管理器读写、OAuth 刷新、配额载荷转换 |
 | `KimiQuota.ps1` | Kimi 载荷解析纯函数：窗口时长换算、已用/限额解析 |
 | `CommandCodeQuota.ps1` | Command Code 配额解析纯函数：日 / 5 小时 / 周窗口、余额与时间换算 |
+| `OpenRouterQuota.ps1` | OpenRouter 密钥配额解析纯函数：密钥指纹、`usage` / `limit` 换算与无上限判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
