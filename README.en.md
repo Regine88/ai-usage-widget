@@ -13,6 +13,10 @@ English · [简体中文](README.md)
 
 > The screenshot is produced by `-Demo` mode: fixed sample data, no real credentials, no state file writes, no network access.
 
+The light theme uses the same layout (switch in the settings dialog, or run with `-Theme light`):
+
+![Light theme screenshot](docs/images/demo-card.light.png)
+
 ## Supported providers
 
 | Provider | What the card shows | Accounts | Credential source |
@@ -23,21 +27,25 @@ English · [简体中文](README.md)
 | **Gemini / Antigravity** | Quota percentage and reset time | Single account | Windows Credential Manager `gemini:antigravity` |
 | **Command Code** | Daily / 5-hour / weekly rolling windows, optional balance | Single account | `~/.commandcode/auth.json` |
 | **OpenRouter** | Spent credits and the key's spend limit (says so when unlimited) | One row per key | `~/.openrouter/auth.json` or `$env:OPENROUTER_API_KEY` |
+| **DeepSeek** | Account balance with the topped-up / granted breakdown (no percentage) | Single account | `~/.deepseek/auth.json` or `$env:DEEPSEEK_API_KEY` |
 
 If you already signed in to the matching CLI (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
-when a token needs refreshing. OpenRouter is API-key only: the widget reads `~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) and shows one row per key.
+when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the widget reads
+`~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) for one row per key, and
+`~/.deepseek/auth.json` (or `$env:DEEPSEEK_API_KEY`) to show the account balance instead of a percentage.
 
 ## Features
 
-- **Everything in one card** - a dark, rounded, always-on card; Grok and ChatGPT expand to one row per account.
+- **Everything in one card** - a rounded, always-on card; Grok and ChatGPT expand to one row per account.
+- **Dark / light themes** - switch in the settings dialog or per run with `-Theme dark|light`; every colour comes from a single palette, and window opacity is adjustable (0.5 - 1.0).
 - **Out of the way** - draggable, snap-to-edge, optional always-on-top, position and settings remembered.
 - **Tray icon** - double-click to show or hide; closing the window exits and releases the single-instance mutex.
 - **Threshold alerts** - configurable used-percent thresholds (70% and 90% by default), automatically re-armed after the quota resets; quiet hours supported.
 - **Double-click to open** - double-click any row to jump to that provider's official usage page.
 - **Trend sparkline** - a 7-day mini chart next to each progress bar, colored by current usage.
 - **Exhaustion forecast** - the tooltip estimates when the quota runs out and whether that happens before the next reset.
-- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, opacity, thresholds, quiet hours), and the full history exports to CSV.
+- **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, theme, opacity, thresholds, quiet hours), applied live on save, and the full history exports to CSV.
 - **Graceful degradation** - one slow provider only affects its own row and backs off exponentially (30s up to 15min).
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
 - **Two engines** - works on Windows PowerShell 5.1 and PowerShell 7.x; CI runs the same offline suites on both.
@@ -59,7 +67,7 @@ when a token needs refreshing. OpenRouter is API-key only: the widget reads `~/.
 ![Context menu](docs/images/demo-menu.en.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
-register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter),
+register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek),
 export usage CSV, settings, about, always on top, run at startup, quit.
 
 ## Quick start
@@ -112,7 +120,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.9.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.10.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -125,7 +133,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.9.0
+# AI Usage Widget 0.10.0
 ```
 
 ### Multiple accounts
@@ -162,6 +170,7 @@ Right-click the card and choose the startup item (click again to disable). It on
 | `-AddGrokAccount` | Register the current `~/.grok/auth.json` as an account |
 | `-MigrateSecrets` | Move legacy in-project snapshots into the DPAPI store |
 | `-IntervalSeconds <n>` | Refresh interval in seconds (minimum 15, default 300, overridden by the menu choice) |
+| `-Theme <dark\|light>` | Force the dark or light palette for this run only; `ai-config.json` is left untouched |
 
 ## Configuration (`ai-config.json`)
 
@@ -173,12 +182,13 @@ and never published with the repository.
 | --- | --- | --- |
 | `intervalSeconds` | `300` | Refresh interval in seconds (15 - 86400) |
 | `opacity` | `0.96` | Window opacity (0.5 - 1.0) |
+| `theme` | `"dark"` | UI theme: `dark` / `light`, applied live when saved from the settings dialog |
 | `showTrend` | `true` | Draw the 7-day sparkline next to each progress bar |
 | `showForecast` | `true` | Include the exhaustion forecast in the tooltip |
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
 | `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
-| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` |
 | `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
 
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
@@ -234,15 +244,18 @@ are documented in [docs/architecture.md](docs/architecture.md) and [docs/provide
 AiUsageWidget.ps1        Main program: UI, menu, timer, background fetch scheduling
 UsageValidation.ps1      Shared validation and redaction helpers
 SecureSnapshot.ps1       DPAPI protected account snapshots
+ApiKeyAuth.ps1           API-key credential reading and authed requests (shared by OpenRouter / DeepSeek)
 GrokAccounts.ps1         Grok multi-account support
 GeminiAntigravity.ps1    Gemini / Antigravity quota
 KimiQuota.ps1            Kimi payload parsing
 CommandCodeQuota.ps1     Command Code quota parsing
 OpenRouterQuota.ps1      OpenRouter key quota parsing
+DeepSeekQuota.ps1        DeepSeek balance parsing
 WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
 WidgetConfig.ps1         ai-config.json read/write and validation
+WidgetPalette.ps1        Dark / light palette (single source of UI colours)
 WidgetStrings.ps1        Language pack loading and string lookup
 strings/                 Language packs (zh-CN.json / en-US.json)
 WidgetInstaller.ps1      Install / upgrade / uninstall implementation
@@ -263,8 +276,8 @@ docs/                    Architecture, provider, troubleshooting docs and screen
 
 ## Contributing
 
-Issues and pull requests are welcome: new providers, usage trends, a settings panel, themes and
-packaging are all on the roadmap. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
+Issues and pull requests are welcome: new providers, more themes and layout modes (mini / multi-column),
+and packaging are all on the roadmap. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
 testing requirement (both PowerShell versions) and the security ground rules (never commit credentials,
 logs or files containing personal data).
 
@@ -273,6 +286,6 @@ logs or files containing personal data).
 Released under the [MIT License](LICENSE).
 
 This is an **unofficial** tool. It is not affiliated with or endorsed by Grok / xAI, Kimi / Moonshot,
-OpenAI, Google, Command Code or OpenRouter. It only reads the credentials already present on your machine to display
+OpenAI, Google, Command Code, OpenRouter or DeepSeek. It only reads the credentials already present on your machine to display
 quota information and never bypasses any paywall, rate limit or authorization mechanism; make sure your
 use complies with each service's terms.

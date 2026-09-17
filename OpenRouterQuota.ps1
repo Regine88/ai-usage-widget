@@ -6,6 +6,9 @@
 #               "limit_remaining": 87.5, "limit_reset": "monthly" } }
 # `limit` and `limit_remaining` are nullable: a key without a limit is "unlimited"
 # and has no percentage to show, so the row says so instead of faking 0%.
+#
+# Credentials and the authenticated GET live in ApiKeyAuth.ps1, shared with every
+# other bearer-token provider.
 
 if (-not (Get-Command Test-FiniteNumber -ErrorAction SilentlyContinue)) {
     $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'

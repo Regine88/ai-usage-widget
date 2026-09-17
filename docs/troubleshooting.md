@@ -77,10 +77,24 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
   `Invoke-RestMethod https://openrouter.ai/api/v1/key -Headers @{ Authorization = "Bearer $env:OPENROUTER_API_KEY" }` 核对服务端返回。
 - 卡片只显示密钥指纹（形如 `OpenRouter-1f4a2c7e`），完整密钥不会出现在界面或日志里。
 
+## DeepSeek 一行没有数据
+
+- 该行只在发现凭证时出现：`~/.deepseek/auth.json`（内含 `apiKey` / `api_key` / `key` / `token`）或 `$env:DEEPSEEK_API_KEY`；两者都没有时是预期的不显示。
+- 密钥被吊销或过期会显示"登录已过期，请重新登录"：去 platform.deepseek.com 重新生成密钥并更新文件即可。
+- 余额为 `0` 仍然显示 `¥0.00`（或对应币种），这是真实余额而不是读取失败。
+- 卡片显示的是**总余额**（充值 + 赠额），明细行分别列出两者，便于核对。
+
 ## Kimi 一行没有数据
 
 - 区域文件 `~/.kimi-code/region` 含 `global` 时走 `kimi.ai` 域名，否则走 `kimi.com`；域名与账号区域不匹配会取不到数据。
 - 需要临时覆盖时可设置 `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL`，但主机必须在白名单内，否则请求会被拒绝。
+
+## 主题颜色不对 / 想换回深色
+
+- `ai-config.json` 的 `theme` 只接受 `dark` / `light`，非法值自动回退到 `dark`；设置窗口保存后立即生效，无需重启。
+- 想临时对比两套主题，可以运行 `AiUsageWidget.ps1 -Demo -Theme light`（或 `-Theme dark`），只影响本次运行、不改写配置文件。
+- 右键菜单与托盘气泡来自系统原生控件，不随主题变化，这是预期行为。
+- 如果界面出现品红色块，说明某个控件引用了调色板里不存在的键：请附上截图与 `ai-widget.log` 提 Issue。
 
 ## 开机启动没有生效
 

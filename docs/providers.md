@@ -12,6 +12,7 @@
 | ChatGPT / Codex | `codex` | `~/.codex/auth.json`（或 `$env:CODEX_HOME`） | `https://chatgpt.com/backend-api/wham/usage` | 每个账号一行 |
 | Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits` | 1 |
 | OpenRouter | `openrouter` | `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）、`$env:OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/key` | 每个密钥一行 |
+| DeepSeek | `deepseek` | `~/.deepseek/auth.json`（或 `$env:DEEPSEEK_HOME`）、`$env:DEEPSEEK_API_KEY` | `https://api.deepseek.com/user/balance` | 1 |
 
 ## 各供应商细节
 
@@ -72,6 +73,17 @@
 - **无刷新流程**：密钥在网页端创建，没有 OAuth 刷新流程；`401` 直接显示「登录已过期，请重新登录」，不重试。
 - **降级**：`usage` 缺失或不是有限数、`limit` 不是正数时该行显示「暂无用量数据」，不影响其他行。
 
+### DeepSeek
+
+- **凭证**：`~/.deepseek/auth.json`（可用 `$env:DEEPSEEK_HOME` 改目录）里的 `apiKey` / `api_key` / `key` / `token`，
+  以及 `$env:DEEPSEEK_API_KEY`；读取与请求规则和 OpenRouter 共用 `ApiKeyAuth.ps1`（DRY，不再各写一份）。
+- **余额语义**：`/user/balance` 返回账户预充值余额，`balance_infos` 可能同时含 USD 与 CNY 两个钱包；
+  取第一个**有余额**的钱包，全为 0 时退回第一个可读钱包。金额按 invariant culture 格式化，绝不随系统区域设置变成逗号。
+- **行显示**：余额型供应商没有百分比，主数值直接显示金额（如 `¥1.58`），该行按 0% 参与配色；
+  明细行给出来源构成（充值 / 赠额），`is_available` 显式为 false 时额外提示余额不足。
+- **无刷新流程**：密钥在网页端创建，没有 OAuth 刷新流程；`401` 直接显示「登录已过期，请重新登录」，不重试。
+- **降级**：`balance_infos` 缺失或无法解析时该行显示「暂无用量数据」，不影响其他行。
+
 ## 新增一个供应商
 
 以接入 `Claude Code` 为例，一共七步，缺任何一步都会静默失效。
@@ -98,8 +110,8 @@ function Convert-ClaudeWindow {
 
 ### 3. 快照与行数据
 
-实现 `Get-ClaudeUsageSnapshot`（发请求 + 解析）与 `Get-ClaudeRowData`（返回 `Percent` / `Detail` / `Tip` / `Reset`）。
-`Percent` 一律表示**已用**百分比。
+实现 `Get-ClaudeUsageSnapshot`（发请求 + 解析）与 `Get-ClaudeRowData`（返回 `Percent` / `Detail` / `Tip` / `Reset`，余额型再带一个 `Display`）。
+`Percent` 一律表示**已用**百分比；余额型供应商用 `Display` 直接给出主数值文本（如 `¥1.58`），`Percent` 保持 `0`。
 
 ### 4. `Get-ProviderRows` 增加行定义
 
@@ -137,6 +149,7 @@ function Convert-ClaudeWindow {
 | --- | --- |
 | 其他行正常，新行永远"无数据" | worker 的 `$fnNames` 或 `$Cfg` 少了一项，或 `switch ($row.Kind)` 没加分派 |
 | 显示成 0% 却不刷新 | 把 `0` 当成了"没有数据"；`0` 是合法百分比，需要照常显示 |
+| 余额型供应商显示成「0%」 | 行数据没有带 `Display`，主数值回退成了百分比；补上 `Display` 字段即可（见 DeepSeek 一节） |
 | 中文乱码 | 新增 `.ps1` 文件没带 UTF-8 BOM，Windows PowerShell 5.1 会按 ANSI 读取 |
 | 一个供应商慢导致整轮卡住 | 请求没有走 `Invoke-WidgetRest`，丢失了硬超时保护 |
 | 设置窗口里没有新供应商的开关 | 忘了在 `Get-WidgetConfigDefaults` 的 `providers` 里加键（只是无法在界面关闭，功能正常） |

@@ -13,6 +13,10 @@
 
 > 截图由 `-Demo` 模式生成：固定演示数据，不读取任何真实账号，不写状态文件，也不联网。
 
+浅色主题使用同一套布局（设置窗口切换，或启动参数 `-Theme light`）：
+
+![浅色主题截图](docs/images/demo-card.light.png)
+
 ## 支持的供应商
 
 | 供应商 | 卡片显示 | 账号模式 | 凭证来源 |
@@ -23,20 +27,22 @@
 | **Gemini / Antigravity** | 配额百分比与重置时间 | 单账号 | Windows 凭据管理器 `gemini:antigravity` |
 | **Command Code** | 日 / 5 小时 / 周滚动窗口，可选余额 | 单账号 | `~/.commandcode/auth.json` |
 | **OpenRouter** | 密钥的已用额度与上限（未设上限时明确说明） | 每个密钥一行 | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
+| **DeepSeek** | 账户总余额与充值 / 赠额明细（余额型，没有百分比） | 单账号 | `~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY` |
 
 已经登录过对应 CLI（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity）就不会有额外配置负担：
-卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行。
+卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行；DeepSeek 同样只看 API-key（`~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY`），卡片显示账户余额而不是百分比。
 
 ## 特性
 
-- **一个窗口看全部**：暗色圆角卡片，Grok 与 ChatGPT 会按账号展开成多行。
+- **一个窗口看全部**：圆角常驻卡片，Grok 与 ChatGPT 会按账号展开成多行。
+- **深色 / 浅色双主题**：设置窗口或启动参数（`-Theme dark|light`）切换，全部颜色来自同一张调色板；窗口不透明度可调（0.5 – 1.0）。
 - **不打断工作**：常驻桌面、可置顶、拖拽移动、贴边吸附，位置与设置自动记忆。
 - **托盘常驻**：双击托盘图标显示 / 隐藏卡片；关闭窗口即退出并释放单实例互斥。
 - **阈值提醒**：用量达到 70% 与 90% 时弹一次气泡提醒，用满后自动重置提醒状态。
 - **双击直达**：双击任意一行直接打开该服务的官方用量页面。
 - **趋势可视**：每行进度条右侧画出最近 7 天迷你折线，颜色跟随当前用量（绿 / 黄 / 橙 / 红）。
 - **耗尽预测**：悬停提示按最近趋势估算额度耗尽时间，并提示是否早于本次重置。
-- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、不透明度、阈值、静音时段），历史可一键导出 CSV。
+- **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、主题、不透明度、阈值、静音时段），保存后即时生效，历史可一键导出 CSV。
 - **失败可降级**：单个供应商超时或报错只影响自己那一行，并进入指数退避（30 秒起，最长 15 分钟）。
 - **本地优先**：账号快照用 Windows DPAPI 加密，日志与错误文本统一脱敏，账号只以短哈希出现。
 - **双引擎可用**：Windows PowerShell 5.1 与 PowerShell 7.x 都支持，CI 双版本跑同一套离线测试。
@@ -58,7 +64,7 @@
 ![右键菜单](docs/images/demo-menu.png)
 
 右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记 Grok 账号、登记 ChatGPT 账号、
-打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter）、导出用量 CSV、设置…、关于…、浮在窗口上、开机启动、退出。
+打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek）、导出用量 CSV、设置…、关于…、浮在窗口上、开机启动、退出。
 
 ## 快速开始
 
@@ -109,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.9.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.10.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -122,7 +128,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.9.0
+# AI Usage Widget 0.10.0
 ```
 
 ### 多账号
@@ -157,6 +163,7 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `-AddGrokAccount` | 把当前 `~/.grok/auth.json` 登记为一个账号 |
 | `-MigrateSecrets` | 把旧版本遗留在程序目录里的账号快照迁移到 DPAPI 目录 |
 | `-IntervalSeconds <秒>` | 指定刷新间隔（最小 15 秒，默认 300 秒，会被右键菜单的选择覆盖） |
+| `-Theme <dark\|light>` | 只对本次运行强制深色 / 浅色主题，不改写 `ai-config.json` |
 
 ## 配置（`ai-config.json`）
 
@@ -167,12 +174,13 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | --- | --- | --- |
 | `intervalSeconds` | `300` | 刷新间隔秒数（15 – 86400） |
 | `opacity` | `0.96` | 窗口不透明度（0.5 – 1.0） |
+| `theme` | `"dark"` | 界面主题：`dark` / `light`，设置窗口保存后即时切换 |
 | `showTrend` | `true` | 在每行进度条右侧显示 7 天迷你折线 |
 | `showForecast` | `true` | 悬停提示里显示额度耗尽预测 |
 | `trendDays` | `7` | 折线与预测使用的天数（1 – 14） |
 | `alertThresholds` | `[70, 90]` | 触发气泡提醒的已用百分比，自动升序去重 |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | 静音时段，跨午夜自动识别 |
-| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` |
+| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` |
 | `language` | `"auto"` | 界面语言：`auto`（跟随系统）/ `zh-CN` / `en-US` |
 
 任何非法值（超范围、类型不对、时间格式错误）都会回退成默认值，不用担心把配置改坏。
@@ -226,15 +234,18 @@ foreach ($exe in @('pwsh', $ps51)) {
 AiUsageWidget.ps1        主程序：界面、菜单、定时器、后台抓取调度
 UsageValidation.ps1      共享校验与脱敏纯函数
 SecureSnapshot.ps1       DPAPI 账号快照读写
+ApiKeyAuth.ps1           API-key 凭证读取与鉴权请求（OpenRouter / DeepSeek 共用）
 GrokAccounts.ps1         Grok 多账号
 GeminiAntigravity.ps1    Gemini / Antigravity 配额
 KimiQuota.ps1            Kimi 载荷解析
 CommandCodeQuota.ps1     Command Code 配额解析
 OpenRouterQuota.ps1      OpenRouter 密钥配额解析
+DeepSeekQuota.ps1        DeepSeek 余额解析
 WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
 WidgetConfig.ps1         ai-config.json 的读写与校验
+WidgetPalette.ps1        深色 / 浅色调色板（界面颜色的唯一来源）
 WidgetStrings.ps1        界面文案的语言包加载与查询
 strings/                 语言包（zh-CN.json / en-US.json）
 WidgetInstaller.ps1      安装 / 升级 / 卸载实现
@@ -255,7 +266,7 @@ docs/                    架构、供应商、排错文档与截图
 
 ## 参与贡献
 
-欢迎提交 Issue 与 PR：新供应商、历史趋势、设置面板、主题、分发方式都在路线图上。
+欢迎提交 Issue 与 PR：新供应商、更多主题与布局模式（迷你 / 多列）、分发方式都在路线图上。
 提之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了测试要求（双 PowerShell 版本）与安全红线
 （绝不提交凭据、日志与含个人信息的文件）。
 
@@ -263,6 +274,6 @@ docs/                    架构、供应商、排错文档与截图
 
 本项目以 [MIT 许可证](LICENSE) 发布。
 
-这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter 均无关联，
+这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter、DeepSeek 均无关联，
 也未获得其背书。它只读取你本机已存在的登录凭证来显示配额，不绕过任何付费、限流或授权机制；
 请自行确认使用方式符合各服务的条款。

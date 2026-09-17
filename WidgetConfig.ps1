@@ -1,4 +1,9 @@
-﻿# Widget configuration: schema, validation and file IO for ai-config.json.
+﻿if (-not (Get-Command ConvertTo-WidgetTheme -ErrorAction SilentlyContinue)) {
+    $paletteHelper = Join-Path $PSScriptRoot 'WidgetPalette.ps1'
+    if (Test-Path -LiteralPath $paletteHelper) { . $paletteHelper }
+}
+
+# Widget configuration: schema, validation and file IO for ai-config.json.
 #
 # Convert-WidgetConfig is pure (raw object in, validated hashtable out) so the
 # whole schema can be tested offline. Every value is clamped or replaced by its
@@ -8,13 +13,14 @@ function Get-WidgetConfigDefaults {
     return @{
         intervalSeconds = 300
         language        = 'auto'
+        theme           = 'dark'
         opacity         = 0.96
         showTrend       = $true
         showForecast    = $true
         trendDays       = 7
         alertThresholds = @(70, 90)
         quietHours      = @{ enabled = $false; start = '22:00'; end = '07:00' }
-        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true }
+        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true }
     }
 }
 
@@ -89,6 +95,11 @@ function ConvertTo-ConfigLanguage {
     return $Default
 }
 
+function ConvertTo-ConfigTheme {
+    param($Value, [string]$Default = 'dark')
+    return (ConvertTo-WidgetTheme $Value $Default)
+}
+
 function ConvertTo-ConfigThresholds {
     param($Value, [int[]]$Default)
     $numbers = New-Object System.Collections.Generic.List[int]
@@ -111,6 +122,7 @@ function Convert-WidgetConfig {
 
     $config.intervalSeconds = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'intervalSeconds') $defaults.intervalSeconds 15 86400
     $config.language = ConvertTo-ConfigLanguage (Get-ConfigPropertyValue $Raw 'language') $defaults.language
+    $config.theme = ConvertTo-ConfigTheme (Get-ConfigPropertyValue $Raw 'theme') $defaults.theme
     $config.opacity = ConvertTo-ConfigDouble (Get-ConfigPropertyValue $Raw 'opacity') $defaults.opacity 0.5 1.0
     $config.showTrend = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'showTrend') $defaults.showTrend
     $config.showForecast = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'showForecast') $defaults.showForecast

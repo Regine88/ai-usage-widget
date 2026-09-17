@@ -40,15 +40,18 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `AiUsageWidget.ps1` | 主程序：常量与路径、UI 构建、菜单与托盘、定时器、后台抓取调度、行渲染、状态持久化 |
 | `UsageValidation.ps1` | 共享纯函数：数值有限性校验、百分比断言、比例换算、日志脱敏、账号指纹、受信任 HTTPS 主机校验 |
 | `SecureSnapshot.ps1` | 当前用户 DPAPI 保护快照：读写、原子替换、目录 ACL、文件锁 |
+| `ApiKeyAuth.ps1` | API-key 类供应商共用：凭证来源（文件 / 环境变量）、`Authorization: Bearer` 头构造、受信任主机鉴权请求（OpenRouter / DeepSeek） |
 | `GrokAccounts.ps1` | Grok 多账号：从 `~/.grok/auth.json` 解析账号、指纹命名、快照同步 |
 | `GeminiAntigravity.ps1` | Antigravity Gemini 配额：Windows 凭据管理器读写、OAuth 刷新、配额载荷转换 |
 | `KimiQuota.ps1` | Kimi 载荷解析纯函数：窗口时长换算、已用/限额解析 |
 | `CommandCodeQuota.ps1` | Command Code 配额解析纯函数：日 / 5 小时 / 周窗口、余额与时间换算 |
 | `OpenRouterQuota.ps1` | OpenRouter 密钥配额解析纯函数：密钥指纹、`usage` / `limit` 换算与无上限判定 |
-`WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
+| `DeepSeekQuota.ps1` | DeepSeek 余额解析纯函数：多钱包挑选、币种符号、金额格式化（invariant culture） |
+| `WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
+| `WidgetPalette.ps1` | 深色 / 浅色调色板：`ConvertTo-WidgetTheme` 白名单解析、`Get-WidgetPalette` 返回 13 键颜色表，界面颜色的唯一来源 |
 | `WidgetStrings.ps1` | 界面文案：语言代码白名单解析、语言包读取与兜底表、`T` / `Get-WidgetText` 取值（主进程与 worker 共用同一张表） |
 | `strings/*.json` | 语言包：纯键值 JSON，多种语言的键集必须一致，`_` 前缀的键在加载时忽略 |
 | `WidgetInstaller.ps1` | 安装 / 升级 / 卸载实现：运行文件清单、用户数据判定与开始菜单快捷方式；安装器与发布打包共用这份清单 |
@@ -67,7 +70,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 4. 行集合的 `Id` 拼接成签名，与上一轮不同则 `Rebuild-ProviderRows` 重建控件。
 5. `Start-BackgroundFetch` 把行定义与配置对象传给常驻 MTA runspace；worker 只拿到**纯数据**（没有函数闭包、没有凭据缓存）。
 6. worker 逐行调用对应的 `Get-*RowData`，每行独立 try/catch，返回
-   `@{ Id; Percent; Detail; Tip; Reset; Error }` 对象的数组。
+   `@{ Id; Percent; Display; Detail; Tip; Reset; Error }` 对象的数组。
 7. `Receive-BackgroundFetch` → `Apply-FetchResults` 把结果写进 UI：成功行调用 `Set-RowUsage` 并用最近 7 天序列刷新迷你折线、计算耗尽预测，失败行调用 `Set-RowError`；
    同时 `Write-UsageHistory` 追加历史、`Send-UsageAlert` 按 `ai-config.json` 的阈值弹气泡（静音时段内跳过）。
 8. 失败行通过 `Register-ProviderFailure` 进入指数退避：`min(900, 30 * 2^(n-1))` 秒，成功一次即清零。
@@ -82,6 +85,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | 字段 | 含义 | 备注 |
 | --- | --- | --- |
 | `Percent` | **已用**百分比 | `0` 是合法值，必须照常显示，不能当缺数据 |
+| `Display` | 主数值文本（可选） | 余额型供应商直接放金额（如 `¥1.58`）；为空时回退 `Percent` 百分比文本 |
 | `Detail` | 明细文本，例如 `5h 32% · 周 68%` | 由各供应商自行组合 |
 | `Tip` | 悬停提示 | 可含重置时间、套餐名等 |
 | `Reset` | 重置时间 | 由 `Format-ResetText` / `Format-ResetTime` 统一格式化 |
@@ -120,6 +124,19 @@ wscript.exe  Start-AiUsageWidget.vbs
 - 新增语言的登记点是 `$script:WidgetStringLanguages`；新增文案要同时补两个语言包与兜底表，
   `test-WidgetStrings.ps1` 会扫描源码里所有 `T 'key'` 调用，漏登记键名直接失败。
 
+### 界面主题
+
+界面颜色只有一个来源：`WidgetPalette.ps1` 的调色板。`Get-WidgetPalette <theme>` 返回 13 个键的哈希表
+（`Text` / `Muted` / `Dim` / `Background` / `Field` / `Track` / `Button` / `Danger` / `ErrorText` /
+`Link` / `Success` / `Warning` / `Ok`），`Get-WidgetColor` / `Set-UiThemeColor` 负责取值与控件配色；
+缺键时故意画成品红，漏配立刻可见。
+
+- 主题持久化在 `ai-config.json` 的 `theme` 字段（`dark` / `light`，非法值回退 `dark`），
+  设置窗口保存后 `Apply-WidgetConfig` 立即重建调色板并重画窗口底色，无需重启。
+- `-Theme dark|light` 只在本次运行覆盖配置；`ConvertTo-WidgetTheme` 是白名单解析入口，
+  与语言代码一样，配置值永远不会被直接当成未知字符串使用。
+- `test-WidgetPalette.ps1` 断言两套主题的键集合一致、同主题内不得出现同色、文字与背景保持最低对比度。
+
 ### 单实例
 
 `Ensure-SingleInstance` 使用命名互斥体 `Local\AiUsageDesktopWidget`；演示模式使用 `Local\AiUsageDesktopWidgetDemo`，
@@ -143,7 +160,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | DPAPI 保护的账号快照，文件名为账号指纹 | 否 |
 | `<程序目录>\ai-state.json` | 窗口位置、置顶、刷新间隔 | 否（`.gitignore`） |
 | `<安装目录>\ai-install.json` | 安装元数据：版本、安装时间与文件清单（由安装器维护） | 否 |
-| `<程序目录>\ai-config.json` | 供应商开关、刷新间隔、不透明度、趋势与提醒设置 | 否（`.gitignore`） |
+| `<程序目录>\ai-config.json` | 供应商开关、刷新间隔、主题、不透明度、趋势与提醒设置 | 否（`.gitignore`） |
 | `<程序目录>\ai-history.jsonl` | 用量百分比时间序列（超过 1MB 自动保留最后 2000 行） | 否 |
 | `<程序目录>\ai-request-events.jsonl` | 请求事件元数据 | 否 |
 | `<程序目录>\ai-widget.log` | 日志，自动轮转 | 否 |

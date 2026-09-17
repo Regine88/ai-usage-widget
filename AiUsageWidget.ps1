@@ -1,9 +1,11 @@
-﻿# Combined Grok / Kimi / ChatGPT / Gemini / Command Code weekly usage desktop widget.
-# One window, one row per provider. Grok and ChatGPT expand to one row per account.
+﻿# Combined weekly usage card for Grok / Kimi / ChatGPT / Gemini / Command Code with
+# the OpenRouter and DeepSeek balances. One window, one row per provider; Grok and
+# ChatGPT expand to one row per account.
 
 # Switches:
 #   -Version         print the widget version and exit
 #   -Demo            render fixed demo rows without credentials or network access
+#   -Theme <name>    force the dark or light palette for this run
 #   -Install         register the widget in the current user's startup folder
 #   -Uninstall       remove the startup registration
 #   -AddAccount      register the current ChatGPT / Codex account
@@ -19,6 +21,7 @@ param(
     [switch]$MigrateSecrets,
     [switch]$Version,
     [switch]$Demo,
+    [string]$Theme = '',
     [int]$IntervalSeconds = 300
 )
 
@@ -26,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.9.0'
+$script:AppVersion = '0.10.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -57,6 +60,7 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     if ($AddGrokAccount) { $argList += '-AddGrokAccount' }
     if ($MigrateSecrets) { $argList += '-MigrateSecrets' }
     if ($Demo) { $argList += '-Demo' }
+    if ($Theme) { $argList += @('-Theme', $Theme) }
     if ($PSBoundParameters.ContainsKey('IntervalSeconds')) { $argList += @('-IntervalSeconds', "$IntervalSeconds") }
     Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden
     exit 0
@@ -101,6 +105,12 @@ $script:OpenRouterApiBaseUrl = 'https://openrouter.ai/api/v1'
 $script:OpenRouterUsagePageUrl = 'https://openrouter.ai/settings/keys'
 $script:OpenRouterDisplayName = 'OpenRouter'
 
+$script:DeepSeekHomeDir = if ($env:DEEPSEEK_HOME) { $env:DEEPSEEK_HOME } else { Join-Path $env:USERPROFILE '.deepseek' }
+$script:DeepSeekAuthPath = Join-Path $script:DeepSeekHomeDir 'auth.json'
+$script:DeepSeekApiBaseUrl = 'https://api.deepseek.com'
+$script:DeepSeekUsagePageUrl = 'https://platform.deepseek.com/usage'
+$script:DeepSeekDisplayName = 'DeepSeek'
+
 $script:UpdateRepoSlug = 'Regine88/ai-usage-widget'
 $script:UpdateUserAgent = 'ai-usage-widget'
 $script:UpdatePageUrl = 'https://github.com/' + $script:UpdateRepoSlug
@@ -117,15 +127,18 @@ $script:RequestEventsPath = Join-Path $script:WidgetDir 'ai-request-events.jsonl
 $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'UsageValidation.ps1')
 . (Join-Path $script:WidgetDir 'SecureSnapshot.ps1')
+. (Join-Path $script:WidgetDir 'ApiKeyAuth.ps1')
 . (Join-Path $script:WidgetDir 'GrokAccounts.ps1')
 . (Join-Path $script:WidgetDir 'GeminiAntigravity.ps1')
 . (Join-Path $script:WidgetDir 'KimiQuota.ps1')
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'OpenRouterQuota.ps1')
+. (Join-Path $script:WidgetDir 'DeepSeekQuota.ps1')
 . (Join-Path $script:WidgetDir 'WidgetUpdates.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
+. (Join-Path $script:WidgetDir 'WidgetPalette.ps1')
 . (Join-Path $script:WidgetDir 'WidgetStrings.ps1')
 
 # 配置与语言包要在任何输出之前就绪：CLI 开关（-Install 等）也会用到同一套文案。
@@ -137,6 +150,11 @@ try {
     $script:Config = Convert-WidgetConfig $null
     $script:Language = ConvertTo-WidgetLanguage 'auto'
     $script:WidgetStrings = Get-WidgetStringFallback
+}
+
+# -Theme 只覆盖本次运行；配置文件仍然由设置面板写入。
+if ($PSBoundParameters.ContainsKey('Theme')) {
+    $script:Config.theme = ConvertTo-WidgetTheme $Theme
 }
 
 $script:Mutex = $null
@@ -157,7 +175,8 @@ $script:DragOffset = [System.Drawing.Point]::Empty
 $script:UiScale = $null
 $script:UiMetrics = $null
 $script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
-$script:Config = $null
+# 配置在 CLI 文案之前就已读取，这里按主题取一次调色板：界面颜色全部来自它。
+$script:Palette = Get-WidgetPalette $script:Config.theme
 $script:TrendSeries = @{}
 
 function Write-WidgetLog {
@@ -217,6 +236,21 @@ function Set-UiColor {
     }
 }
 
+# Every UI colour comes from the palette: a missing key paints magenta, so a
+# half-themed window is impossible to miss instead of silently turning black.
+function Get-WidgetColor {
+    param([string]$Name)
+    $rgb = $null
+    try { if ($script:Palette) { $rgb = $script:Palette[$Name] } } catch { }
+    if (-not $rgb) { return [System.Drawing.Color]::FromArgb(255, 0, 255) }
+    return [System.Drawing.Color]::FromArgb([int]$rgb[0], [int]$rgb[1], [int]$rgb[2])
+}
+
+function Set-UiThemeColor {
+    param($Control, [string]$Property, [string]$Name)
+    Set-UiColor $Control $Property ((Get-WidgetColor $Name).ToArgb())
+}
+
 function Register-UiExceptionHandlers {
     try {
         [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
@@ -241,9 +275,9 @@ function Register-UiExceptionHandlers {
 
 function Get-UsageColor {
     param([double]$Percent)
-    if ($Percent -ge 90) { return [System.Drawing.Color]::FromArgb(255, 107, 107) }
-    if ($Percent -ge 70) { return [System.Drawing.Color]::FromArgb(255, 196, 64) }
-    return [System.Drawing.Color]::FromArgb(48, 227, 160)
+    if ($Percent -ge 90) { return (Get-WidgetColor 'Danger') }
+    if ($Percent -ge 70) { return (Get-WidgetColor 'Warning') }
+    return (Get-WidgetColor 'Ok')
 }
 
 function New-RoundRectPath {
@@ -296,6 +330,14 @@ function Format-PercentText {
     param([double]$Percent)
     if (($Percent * 10) % 10 -ne 0) { return ('{0:0.0}%' -f $Percent) }
     return ('{0:0}%' -f $Percent)
+}
+
+# Balance-only providers carry no percentage at all: their row prints the amount it
+# was given, and the tooltip follows the same text so both stay in step.
+function Format-RowValueText {
+    param([string]$Display, [double]$Percent)
+    if ($Display) { return $Display }
+    return (Format-PercentText $Percent)
 }
 
 function Format-ResetText {
@@ -1112,61 +1154,21 @@ function Get-CommandCodeRowData {
     }
 }
 
+# --- Bearer-token providers ---
+# Credentials, auth headers and the authenticated GET are shared in ApiKeyAuth.ps1,
+# so each provider below only keeps what is genuinely its own.
+
 # --- OpenRouter ---
-
-function Test-OpenRouterCredExists {
-    if (Test-Path -LiteralPath $script:OpenRouterAuthPath) { return $true }
-    return [bool]$env:OPENROUTER_API_KEY
-}
-
-# 只读取密钥来源，字符串比较留给调用方，避免把密钥写进日志。
-function Get-OpenRouterKeySources {
-    $sources = @()
-    if (Test-Path -LiteralPath $script:OpenRouterAuthPath) {
-        try {
-            $raw = Get-Content -LiteralPath $script:OpenRouterAuthPath -Raw -Encoding utf8 | ConvertFrom-Json
-            foreach ($name in @('apiKey', 'api_key', 'key', 'token')) {
-                $value = Get-ConfigPropertyValue $raw $name
-                if ($value) { $sources += [string]$value }
-            }
-        } catch {
-        }
-    }
-    if ($env:OPENROUTER_API_KEY) { $sources += [string]$env:OPENROUTER_API_KEY }
-    return @($sources | Where-Object { $_ } | Sort-Object -Unique)
-}
-
-function Read-OpenRouterAuth {
-    $keys = @(Get-OpenRouterKeySources)
-    if ($keys.Count -eq 0) { throw 'missing-credential' }
-    return [pscustomobject]@{ ApiKey = $keys[0]; ApiKeyCount = $keys.Count }
-}
-
-function Get-OpenRouterAuthHeaders {
-    param($Auth)
-    return @{
-        Authorization = "Bearer $($Auth.ApiKey)"
-        Accept        = 'application/json'
-        'User-Agent'  = 'ai-usage-widget'
-    }
-}
-
-function Invoke-OpenRouterGet {
-    param($Auth, [string]$Path)
-    # OpenRouter keys are created in the web UI and have no refresh flow: a 401 is
-    # surfaced to Format-FetchError ("登录已过期") instead of being retried.
-    return Invoke-WidgetRest -Method Get -Uri "$($script:OpenRouterApiBaseUrl)$Path" -Headers (Get-OpenRouterAuthHeaders $Auth)
-}
 
 function Get-OpenRouterUsageSnapshot {
     param($Auth)
-    $data = Invoke-OpenRouterGet -Auth $Auth -Path '/key'
+    $data = Invoke-ApiKeyGet -Auth $Auth -BaseUrl $script:OpenRouterApiBaseUrl -Path '/key'
     return Convert-OpenRouterCredits $data
 }
 
 function Get-OpenRouterRowData {
     param($Auth, [string]$Name, [string]$Id)
-    $auth = if ($Auth) { $Auth } else { Read-OpenRouterAuth }
+    $auth = if ($Auth) { $Auth } else { Read-ApiKeyAuth -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY }
     $usage = Get-OpenRouterUsageSnapshot -Auth $auth
     $display = if ($Name) { $Name } else { $script:OpenRouterDisplayName }
     $details = @()
@@ -1188,6 +1190,38 @@ function Get-OpenRouterRowData {
     }
 }
 
+# --- DeepSeek ---
+
+function Get-DeepSeekUsageSnapshot {
+    param($Auth)
+    $data = Invoke-ApiKeyGet -Auth $Auth -BaseUrl $script:DeepSeekApiBaseUrl -Path '/user/balance'
+    return Convert-DeepSeekBalance $data
+}
+
+function Get-DeepSeekRowData {
+    param($Auth, [string]$Name)
+    $auth = if ($Auth) { $Auth } else { Read-ApiKeyAuth -AuthPath $script:DeepSeekAuthPath -EnvironmentValue $env:DEEPSEEK_API_KEY }
+    $usage = Get-DeepSeekUsageSnapshot -Auth $auth
+    $display = if ($Name) { $Name } else { $script:DeepSeekDisplayName }
+    # 余额供应商没有可展示的百分比：主数值直接放金额，明细行只说充值与赠额的构成。
+    $details = @()
+    if (-not $usage.IsAvailable) { $details += (T 'row.balanceInsufficient') }
+    $details += (T 'row.balanceToppedUp' @((Format-DeepSeekAmount $usage.ToppedUp $usage.Currency)))
+    if ($usage.Granted -gt 0) {
+        $details += (T 'row.balanceGranted' @((Format-DeepSeekAmount $usage.Granted $usage.Currency)))
+    }
+    Write-WidgetLog ("usage deepseek {0} ok" -f $usage.Display)
+    [pscustomobject]@{
+        Percent   = 0.0
+        Display   = $usage.Display
+        Detail    = ($details -join ' · ')
+        Tip       = (T 'row.balanceTip' @($display, $usage.Display))
+        Reset     = $null
+        ResetAt   = $null
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
 # --- Rows / UI ---
 
 function Get-DemoRowTable {
@@ -1197,6 +1231,7 @@ function Get-DemoRowTable {
         [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = ((T 'row.window5hPercent' @(31)) + ' · ' + (T 'reset.daysHours' @(5, 4))); TrendPct = @(52, 58, 63, 67, 70, 72, 74) }
         [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = ((T 'row.window5hPercent' @(41)) + ' · ' + (T 'row.windowWeekPercent' @(93)) + ' · ' + (T 'reset.daysHours' @(3, 6))); TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
         [pscustomobject]@{ Id = 'demo-openrouter'; Kind = 'openrouter'; Name = 'OpenRouter-3ad9f1c7'; OpenUrl = $script:OpenRouterUsagePageUrl; Percent = 12.5; Detail = (T 'row.limitUsage' @(12.5, 100, 12.5)); TrendPct = @(1.5, 3, 4.5, 6, 8, 10, 12.5) }
+        [pscustomobject]@{ Id = 'demo-deepseek'; Kind = 'deepseek'; Name = $script:DeepSeekDisplayName; OpenUrl = $script:DeepSeekUsagePageUrl; Percent = 0.0; Display = '¥14.00'; Detail = ((T 'row.balanceToppedUp' @('¥12.40')) + ' · ' + (T 'row.balanceGranted' @('¥1.60'))); TrendPct = @(0, 0, 0, 0, 0, 0, 0) }
     )
 }
 
@@ -1207,6 +1242,7 @@ function Get-DemoFetchResults {
         $results += [pscustomobject]@{
             Id      = $row.Id
             Percent = [double]$row.Percent
+            Display = [string]$row.Display
             Detail  = [string]$row.Detail
             Tip     = ('{0} {1}' -f $row.Name, (Format-PercentText $row.Percent))
             Reset   = $null
@@ -1266,9 +1302,9 @@ function Get-ProviderRows {
             Auth    = $null
         }
     }
-    if (Test-OpenRouterCredExists) {
+    if (Test-ApiKeyCredExists -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY) {
         # 每个本机密钥一行，行名用密钥指纹，密钥本身不进入界面与日志。
-        foreach ($key in @(Get-OpenRouterKeySources)) {
+        foreach ($key in @(Get-ApiKeySources -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY)) {
             $rows += [pscustomobject]@{
                 Id      = 'openrouter-' + (Get-OpenRouterKeyFingerprint $key).Substring('OpenRouter-'.Length)
                 Kind    = 'openrouter'
@@ -1276,6 +1312,16 @@ function Get-ProviderRows {
                 OpenUrl = $script:OpenRouterUsagePageUrl
                 Auth    = [pscustomobject]@{ ApiKey = $key; ApiKeyCount = 1 }
             }
+        }
+    }
+    if (Test-ApiKeyCredExists -AuthPath $script:DeepSeekAuthPath -EnvironmentValue $env:DEEPSEEK_API_KEY) {
+        # DeepSeek 的余额挂在账号上，多把密钥仍然只显示一行。
+        $rows += [pscustomobject]@{
+            Id      = 'deepseek'
+            Kind    = 'deepseek'
+            Name    = $script:DeepSeekDisplayName
+            OpenUrl = $script:DeepSeekUsagePageUrl
+            Auth    = $null
         }
     }
     return $rows
@@ -1531,8 +1577,8 @@ function Rebuild-ProviderRows {
     $script:Ui.RowControls = New-Object System.Collections.Generic.List[object]
     $script:Ui.Rows = New-Object System.Collections.Generic.List[hashtable]
 
-    $fg = [System.Drawing.Color]::FromArgb(244, 244, 247)
-    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
+    $fg = (Get-WidgetColor 'Text')
+    $muted = (Get-WidgetColor 'Muted')
     if (-not $script:Fonts) {
         $script:Fonts = @{
             Name   = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -1559,7 +1605,7 @@ function Rebuild-ProviderRows {
         $barBack = New-Object System.Windows.Forms.Panel
         $barBack.Location = New-Object System.Drawing.Point $m.MarginX, ($y + $m.BarTop)
         $barBack.Size = New-Object System.Drawing.Size $m.BarTrackW, $m.BarH
-        Set-UiColor $barBack 'BackColor' ([System.Drawing.Color]::FromArgb(42, 42, 50).ToArgb())
+        Set-UiThemeColor $barBack 'BackColor' 'Track'
         $barBack.Parent = $Form
         $barBack.Tag = $spec.OpenUrl
         $barFill = New-Object System.Windows.Forms.Panel
@@ -1663,11 +1709,11 @@ function Rebuild-ProviderRows {
 }
 
 function Set-RowUsage {
-    param($Row, [double]$Percent, [string]$Detail)
+    param($Row, [double]$Percent, [string]$Detail, [string]$Display)
     $colorPct = $Percent
     if ($Row.Kind -eq 'gemini') { $colorPct = [Math]::Max(0, [Math]::Min(100, 100.0 - $Percent)) }
     $argb = (Get-UsageColor $colorPct).ToArgb()
-    $text = Format-PercentText $Percent
+    $text = Format-RowValueText -Display $Display -Percent $Percent
     if ($Row.Pct.Text -ne $text) { $Row.Pct.Text = [string]$text }
     Set-UiColor $Row.Pct 'ForeColor' $argb
     Set-UiColor $Row.BarFill 'BackColor' $argb
@@ -1675,14 +1721,14 @@ function Set-RowUsage {
     $w = [Math]::Max(0, [Math]::Min($track, [int][Math]::Round($track * $colorPct / 100.0)))
     if ($Row.BarFill.Width -ne $w) { $Row.BarFill.Width = $w }
     if ($Row.Detail.Text -ne $Detail) { $Row.Detail.Text = [string]$Detail }
-    Set-UiColor $Row.Detail 'ForeColor' ([System.Drawing.Color]::FromArgb(152, 152, 160).ToArgb())
+    Set-UiThemeColor $Row.Detail 'ForeColor' 'Muted'
     return $text
 }
 
 function Set-RowError {
     param($Row, [string]$Message)
     $Row.Detail.Text = [string]$Message
-    Set-UiColor $Row.Detail 'ForeColor' ([System.Drawing.Color]::FromArgb(255, 107, 107).ToArgb())
+    Set-UiThemeColor $Row.Detail 'ForeColor' 'Danger'
 }
 
 function Get-RecentRequestLabel {
@@ -1782,7 +1828,7 @@ function Get-CodexRowData {
 
 function New-SettingLabel {
     param($Parent, [string]$Text, [int]$X, [int]$Y, $Color)
-    if (-not $Color) { $Color = [System.Drawing.Color]::FromArgb(244, 244, 247) }
+    if (-not $Color) { $Color = (Get-WidgetColor 'Text') }
     $font = New-Object System.Drawing.Font('Segoe UI', 9)
     $lbl = New-Label $Parent ("lbl-" + [guid]::NewGuid().ToString('N').Substring(0, 8)) $X $Y 10 20 $font $Color 'MiddleLeft'
     $lbl.Text = $Text
@@ -1798,7 +1844,7 @@ function New-SettingCheckBox {
     $box.AutoSize = $true
     $box.Checked = $Checked
     $box.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    Set-UiColor $box 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $box 'ForeColor' 'Text'
     $box.Parent = $Parent
     return $box
 }
@@ -1814,8 +1860,8 @@ function New-SettingNumber {
     $num.DecimalPlaces = $Decimals
     $num.Value = [decimal]([Math]::Max($Min, [Math]::Min($Max, $Value)))
     $num.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    Set-UiColor $num 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
-    Set-UiColor $num 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $num 'BackColor' 'Field'
+    Set-UiThemeColor $num 'ForeColor' 'Text'
     $num.Parent = $Parent
     return $num
 }
@@ -1827,8 +1873,8 @@ function New-SettingText {
     $box.Size = New-Object System.Drawing.Size $W, (Scale-Px 24)
     $box.Text = $Value
     $box.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    Set-UiColor $box 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
-    Set-UiColor $box 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $box 'BackColor' 'Field'
+    Set-UiThemeColor $box 'ForeColor' 'Text'
     $box.Parent = $Parent
     return $box
 }
@@ -1842,8 +1888,8 @@ function New-SettingCombo {
     [void]$combo.Items.AddRange([object[]]$Items)
     if ($Index -ge 0 -and $Index -lt $Items.Count) { $combo.SelectedIndex = $Index }
     $combo.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    Set-UiColor $combo 'BackColor' ([System.Drawing.Color]::FromArgb(32, 32, 40).ToArgb())
-    Set-UiColor $combo 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $combo 'BackColor' 'Field'
+    Set-UiThemeColor $combo 'ForeColor' 'Text'
     $combo.Parent = $Parent
     return $combo
 }
@@ -1855,8 +1901,8 @@ function New-SettingButton {
     $button.Size = New-Object System.Drawing.Size (Scale-Px 84), (Scale-Px 28)
     $button.Location = New-Object System.Drawing.Point $X, $Y
     $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    Set-UiColor $button 'BackColor' ([System.Drawing.Color]::FromArgb(38, 38, 46).ToArgb())
-    Set-UiColor $button 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $button 'BackColor' 'Button'
+    Set-UiThemeColor $button 'ForeColor' 'Text'
     $button.Parent = $Parent
     return $button
 }
@@ -1867,7 +1913,7 @@ function New-SettingButton {
 # switches rebuild the rows on the next update.
 function Show-WidgetSettings {
     $current = Convert-WidgetConfig $script:Config
-    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
+    $muted = (Get-WidgetColor 'Muted')
     $languages = @('auto', 'zh-CN', 'en-US')
     $languageIndex = [Math]::Max(0, [Array]::IndexOf($languages, [string]$current.language))
 
@@ -1878,10 +1924,10 @@ function Show-WidgetSettings {
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
-    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 420))
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 476))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    Set-UiColor $dialog 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
-    Set-UiColor $dialog 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $dialog 'BackColor' 'Background'
+    Set-UiThemeColor $dialog 'ForeColor' 'Text'
 
     $colLabel = Scale-Px 18
     $colValue = Scale-Px 124
@@ -1917,15 +1963,22 @@ function Show-WidgetSettings {
     $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.codex)
     $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
     $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' (Scale-Px 208) (Scale-Px 252) ([bool]$current.providers.openrouter)
+    $chkDeepSeek = New-SettingCheckBox $dialog 'DeepSeek' $colValue (Scale-Px 278) ([bool]$current.providers.deepseek)
 
-    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 288) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 310) $muted)
     $comboItems = @((T 'settings.languageAuto'), (T 'settings.languageZh'), (T 'settings.languageEn'))
-    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 288) (Scale-Px 150) $comboItems $languageIndex
+    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 310) (Scale-Px 150) $comboItems $languageIndex
 
-    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 316) $muted
+    [void](New-SettingLabel $dialog (T 'settings.theme') $colLabel (Scale-Px 340) $muted)
+    $themes = @('dark', 'light')
+    $themeIndex = [Math]::Max(0, [Array]::IndexOf($themes, [string]$current.theme))
+    $themeItems = @((T 'settings.themeDark'), (T 'settings.themeLight'))
+    $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 340) (Scale-Px 150) $themeItems $themeIndex
 
-    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 344)
-    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 344)
+    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 368) $muted
+
+    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 396)
+    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 396)
 
     $dialog.AcceptButton = $btnSave
     $dialog.CancelButton = $btnCancel
@@ -1952,16 +2005,18 @@ function Show-WidgetSettings {
                     codex       = [bool]$chkCodex.Checked
                     commandcode = [bool]$chkCommandCode.Checked
                     openrouter  = [bool]$chkOpenRouter.Checked
+                    deepseek    = [bool]$chkDeepSeek.Checked
                 }
+                theme           = $themes[$cmbTheme.SelectedIndex]
             }
             $script:Config = Convert-WidgetConfig $picked
             if (-not $script:DemoMode) { [void](Write-WidgetConfig -Config $script:Config) }
-            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter)
+            Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5} openrouter={6} deepseek={7} theme={8}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language, $script:Config.providers.openrouter, $script:Config.providers.deepseek, $script:Config.theme)
             Apply-WidgetConfig
             $dialog.Close()
         } catch {
             Write-WidgetLog ("settings save failed: $($_.Exception.Message)")
-            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 138, 128)
+            $lblStatus.ForeColor = (Get-WidgetColor 'ErrorText')
             $lblStatus.Text = (T 'settings.saveFailed' @((Convert-SafeLogText $_.Exception.Message 80)))
         }
     })
@@ -1975,8 +2030,8 @@ function Show-WidgetSettings {
 # short freeze and keeps the dialog free of extra moving parts. The version
 # comparison itself lives in WidgetUpdates.ps1 and is covered by offline tests.
 function Show-WidgetAbout {
-    $muted = [System.Drawing.Color]::FromArgb(152, 152, 160)
-    $linkColor = [System.Drawing.Color]::FromArgb(120, 190, 255)
+    $muted = (Get-WidgetColor 'Muted')
+    $linkColor = (Get-WidgetColor 'Link')
 
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = (T 'about.title')
@@ -1987,8 +2042,8 @@ function Show-WidgetAbout {
     $dialog.ShowInTaskbar = $false
     $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 420), (Scale-Px 268))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    Set-UiColor $dialog 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
-    Set-UiColor $dialog 'ForeColor' ([System.Drawing.Color]::FromArgb(244, 244, 247).ToArgb())
+    Set-UiThemeColor $dialog 'BackColor' 'Background'
+    Set-UiThemeColor $dialog 'ForeColor' 'Text'
 
     $lblApp = New-SettingLabel $dialog (T 'app.title') (Scale-Px 18) (Scale-Px 16) $null
     $lblApp.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
@@ -2061,7 +2116,7 @@ function Show-WidgetAbout {
             $info = Get-WidgetUpdateInfo -Release $release -CurrentVersion $script:AppVersion
             Write-WidgetLog ('update check: reason={0} latest={1}' -f $info.Reason, $info.LatestVersion)
             if ($info.HasUpdate) {
-                $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 160)
+                $lblStatus.ForeColor = (Get-WidgetColor 'Success')
                 $lblStatus.Text = (T 'about.updateAvailable' @($info.LatestVersion, $script:AppVersion))
                 $lblNotes.Text = $(if ($info.Notes) { $info.Notes } else { $info.Name })
                 $btnOpen.Visible = $true
@@ -2073,7 +2128,7 @@ function Show-WidgetAbout {
             }
         } catch {
             Write-WidgetLog ('update check failed: ' + (Convert-SafeLogText $_.Exception.Message 160))
-            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 138, 128)
+            $lblStatus.ForeColor = (Get-WidgetColor 'ErrorText')
             $lblStatus.Text = (T 'about.checkFailed' @((Format-FetchError $_.Exception.Message)))
         } finally {
             $btnCheck.Enabled = $true
@@ -2085,8 +2140,13 @@ function Show-WidgetAbout {
 }
 # Push the saved config into the live window without a restart.
 function Apply-WidgetConfig {
+    # 主题先换掉调色板，再重画窗口底色；行控件会在下一次 Update-Widget 时按新主题重建。
+    try { $script:Palette = Get-WidgetPalette $script:Config.theme } catch { }
     try {
-        if ($script:Ui -and $script:Ui.Form) { $script:Ui.Form.Opacity = [double]$script:Config.opacity }
+        if ($script:Ui -and $script:Ui.Form) {
+            Set-UiThemeColor $script:Ui.Form 'BackColor' 'Background'
+            $script:Ui.Form.Opacity = [double]$script:Config.opacity
+        }
     } catch { }
     try {
         if ($script:Ui -and $script:Ui.Form -and $script:Ui.Form.Tag) {
@@ -2113,7 +2173,7 @@ function New-WidgetForm {
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $m = Get-UiMetrics $form
     $form.Size = New-Object System.Drawing.Size($m.FormWidth, (Get-FormHeight 3))
-    Set-UiColor $form 'BackColor' ([System.Drawing.Color]::FromArgb(18, 18, 22).ToArgb())
+    Set-UiThemeColor $form 'BackColor' 'Background'
     $form.Opacity = [double]$script:Config.opacity
     $form.TopMost = $false
     $form.ShowInTaskbar = $false
@@ -2136,7 +2196,7 @@ function New-WidgetForm {
         $form.Region = New-Object System.Drawing.Region($round)
     }
 
-    $dim = [System.Drawing.Color]::FromArgb(108, 108, 116)
+    $dim = (Get-WidgetColor 'Dim')
     $footFont = New-Object System.Drawing.Font('Segoe UI', 8.5)
     $lblStamp = New-Label $form 'stamp' $m.MarginX ($form.Height - $m.StampInset) $m.ContentW $m.StampH $footFont $dim 'MiddleCenter'
     $lblStamp.Text = ''
@@ -2159,6 +2219,7 @@ function New-WidgetForm {
     $miOpenCodex = $miOpen.DropDownItems.Add('ChatGPT')
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     $miOpenOpenRouter = $miOpen.DropDownItems.Add('OpenRouter')
+    $miOpenDeepSeek = $miOpen.DropDownItems.Add('DeepSeek')
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
@@ -2236,6 +2297,7 @@ function New-WidgetForm {
     $miOpenCodex.Add_Click({ Start-Process $script:CodexUsagePageUrl })
     $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
     $miOpenOpenRouter.Add_Click({ Start-Process $script:OpenRouterUsagePageUrl })
+    $miOpenDeepSeek.Add_Click({ Start-Process $script:DeepSeekUsagePageUrl })
     $miTop.Add_Click({
         if ($form.TopMost) {
             $form.TopMost = $false
@@ -2416,8 +2478,11 @@ function Get-WorkerScriptSource {
         'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
         'Invoke-CommandCodeGet', 'Get-CommandCodeOrgId', 'Convert-CCWindow',
         'Convert-CommandCodeTime', 'Convert-CommandCodeCredits', 'Get-CommandCodeUsageSnapshot', 'Get-CommandCodeRowData',
-        'Get-ConfigPropertyValue', 'Test-OpenRouterCredExists', 'Get-OpenRouterKeySources', 'Read-OpenRouterAuth', 'Get-OpenRouterAuthHeaders',
-        'Invoke-OpenRouterGet', 'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData'
+        'Get-ConfigPropertyValue',
+        'Get-ApiKeyFileSources', 'Get-ApiKeySources', 'Test-ApiKeyCredExists', 'Read-ApiKeyAuth', 'Get-ApiKeyAuthHeaders', 'Invoke-ApiKeyGet',
+        'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData',
+        'Get-DeepSeekCurrencySymbol', 'Format-DeepSeekAmount', 'ConvertTo-DeepSeekPurse', 'Convert-DeepSeekBalance',
+        'Get-DeepSeekUsageSnapshot', 'Get-DeepSeekRowData'
     )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('param($Rows, $Cfg)')
@@ -2427,7 +2492,8 @@ function Get-WorkerScriptSource {
                    'AntigravityCredTarget', 'AntigravityClientId', 'AntigravityClientSecret',
                    'AntigravityTokenUrl', 'AntigravityQuotaUrl',
                    'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName',
-                   'OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName', 'SecureSnapshotRoot',
+                   'OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName',
+                   'DeepSeekAuthPath', 'DeepSeekApiBaseUrl', 'DeepSeekDisplayName', 'SecureSnapshotRoot',
                    'WidgetStrings', 'Language') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
     }
@@ -2448,9 +2514,10 @@ foreach ($row in @($Rows)) {
             'codex' { $d = Get-CodexRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
             'commandcode' { $d = Get-CommandCodeRowData }
             'openrouter' { $d = Get-OpenRouterRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
+            'deepseek' { $d = Get-DeepSeekRowData -Auth $row.Auth -Name $row.Name }
             default { throw '未找到登录凭证' }
         }
-        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
+        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Display = $d.Display; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
     } catch {
             $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; ResetAt = $null; Error = (Convert-SafeLogText $_.Exception.Message 240) }
     }
@@ -2484,6 +2551,9 @@ function Start-BackgroundFetch {
         OpenRouterAuthPath       = $script:OpenRouterAuthPath
         OpenRouterApiBaseUrl     = $script:OpenRouterApiBaseUrl
         OpenRouterDisplayName    = $script:OpenRouterDisplayName
+        DeepSeekAuthPath         = $script:DeepSeekAuthPath
+        DeepSeekApiBaseUrl       = $script:DeepSeekApiBaseUrl
+        DeepSeekDisplayName      = $script:DeepSeekDisplayName
         SecureSnapshotRoot       = $script:SecureSnapshotRoot
         WidgetStrings            = $script:WidgetStrings
         Language                 = $script:Language
@@ -2531,6 +2601,7 @@ function Convert-FetchRow {
     $tip = $null
     $reset = $null
     $resetAt = $null
+    $display = $null
     if ($null -ne $Raw) {
         try { if ($Raw.Id) { $id = [string]$Raw.Id } } catch { }
         try { if ($Raw.Error) { $err = [string]$Raw.Error } } catch { }
@@ -2541,11 +2612,13 @@ function Convert-FetchRow {
         try { if ($Raw.Tip) { $tip = [string]$Raw.Tip } } catch { }
         try { if ($Raw.Reset) { $reset = [string]$Raw.Reset } } catch { }
         try { if ($Raw.ResetAt) { $resetAt = [string]$Raw.ResetAt } } catch { }
+        try { if ($Raw.Display) { $display = [string]$Raw.Display } } catch { }
     }
     if (-not $id) { $id = $FallbackId }
     [pscustomobject]@{
         Id      = $id
         Percent = $pct
+        Display = $display
         Detail  = $detail
         Tip     = $tip
         Reset   = $reset
@@ -2760,7 +2833,7 @@ function Apply-FetchResults {
             $recentRequest = Get-RecentRequestLabel $row $requestEvents
             $rowDetail = [string]$r.Detail
             if ($recentRequest) { $rowDetail = @($rowDetail, $recentRequest) -join ' · ' }
-            Set-RowUsage $row $pct $rowDetail
+            Set-RowUsage $row $pct $rowDetail $r.Display
             $script:LastOkAt = Get-Date
 
             $forecastLine = $null
@@ -2783,7 +2856,7 @@ function Apply-FetchResults {
                 $upd += T 'status.delta' @($sign, $delta)
             }
             Set-RowTip $row @(
-                (T 'tip.rowTitle' @($row.Name, (Format-PercentText $pct))),
+                (T 'tip.rowTitle' @($row.Name, (Format-RowValueText -Display $r.Display -Percent $pct))),
                 [string]$r.Detail,
                 $recentRequest,
                 $forecastLine,

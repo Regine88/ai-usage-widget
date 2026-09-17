@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here 'UsageValidation.ps1')
+. (Join-Path $here 'WidgetPalette.ps1')
 . (Join-Path $here 'WidgetConfig.ps1')
 
 $failed = 0
@@ -19,6 +20,7 @@ function Assert-Eq {
 $defaults = Get-WidgetConfigDefaults
 Assert-Eq $defaults.intervalSeconds 300 'default interval'
 Assert-Eq $defaults.language 'auto' 'default language'
+Assert-Eq $defaults.theme 'dark' 'default theme'
 Assert-Eq $defaults.opacity 0.96 'default opacity'
 Assert-Eq $defaults.showTrend 'True' 'default show trend'
 Assert-Eq $defaults.trendDays 7 'default trend days'
@@ -31,6 +33,8 @@ Assert-Eq $defaults.providers.gemini 'True' 'default gemini enabled'
 Assert-Eq $defaults.providers.kimi 'True' 'default kimi enabled'
 Assert-Eq $defaults.providers.codex 'True' 'default codex enabled'
 Assert-Eq $defaults.providers.commandcode 'True' 'default commandcode enabled'
+Assert-Eq $defaults.providers.openrouter 'True' 'default openrouter enabled'
+Assert-Eq $defaults.providers.deepseek 'True' 'default deepseek enabled'
 
 # ---------- 数值校验 ----------
 Assert-Eq (ConvertTo-ConfigInt -Value 600 -Default 300 -Min 15 -Max 86400) 600 'int passthrough'
@@ -72,6 +76,14 @@ Assert-Eq (ConvertTo-ConfigLanguage 'zh-CN' 'auto') 'zh-CN' 'language zh'
 Assert-Eq (ConvertTo-ConfigLanguage 'auto' 'zh-CN') 'auto' 'language auto'
 Assert-Eq (ConvertTo-ConfigLanguage 'fr-FR' 'auto') 'auto' 'language unknown falls back'
 Assert-Eq (ConvertTo-ConfigLanguage $null 'auto') 'auto' 'language null falls back'
+# ---------- 主题 ----------
+Assert-Eq (ConvertTo-ConfigTheme 'light') 'light' 'theme light'
+Assert-Eq (ConvertTo-ConfigTheme 'DARK') 'dark' 'theme is case insensitive'
+Assert-Eq (ConvertTo-ConfigTheme 'neon') 'dark' 'unknown theme falls back'
+Assert-Eq (ConvertTo-ConfigTheme $null) 'dark' 'null theme falls back'
+Assert-Eq (ConvertTo-ConfigTheme '' 'light') 'light' 'empty theme keeps the given default'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ theme = 'light' })).theme 'light' 'theme is read from the config'
+Assert-Eq (Convert-WidgetConfig ([pscustomobject]@{ theme = 7 })).theme 'dark' 'broken theme falls back'
 
 # ---------- 阈值列表 ----------
 Assert-Eq ((ConvertTo-ConfigThresholds @(90, 70, 70) @(70, 90)) -join ',') '70,90' 'thresholds sort and dedupe'
@@ -180,6 +192,7 @@ try {
     $written = Convert-WidgetConfig ([pscustomobject]@{
         intervalSeconds = 120
         language        = 'en-US'
+        theme           = 'light'
         showTrend       = $false
         trendDays       = 3
         alertThresholds = @(60, 85)
@@ -193,6 +206,7 @@ try {
     $loaded = Read-WidgetConfig $configPath
     Assert-Eq $loaded.intervalSeconds 120 'round trip interval'
     Assert-Eq $loaded.language 'en-US' 'round trip language'
+Assert-Eq $loaded.theme 'light' 'round trip theme'
     Assert-Eq $loaded.showTrend 'False' 'round trip show trend'
     Assert-Eq $loaded.trendDays 3 'round trip trend days'
     Assert-Eq ($loaded.alertThresholds -join ',') '60,85' 'round trip thresholds'

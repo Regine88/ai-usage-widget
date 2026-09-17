@@ -30,10 +30,14 @@ function Get-ScriptFunctionNames {
 $entry = Join-Path $here 'AiUsageWidget.ps1'
 $entryText = [IO.File]::ReadAllText($entry)
 
-# worker 里的函数由主程序按名字导出，所以各模块必须先就位。
-foreach ($module in @('UsageValidation.ps1', 'SecureSnapshot.ps1', 'GrokAccounts.ps1', 'GeminiAntigravity.ps1', 'KimiQuota.ps1', 'CommandCodeQuota.ps1', 'OpenRouterQuota.ps1', 'WidgetConfig.ps1', 'WidgetStrings.ps1')) {
+# worker 里的函数由主程序按名字导出，所以主程序 dot-source 的模块必须先就位。
+# 模块清单直接从主程序解析：新模块漏改这里会立刻失败，而不是悄悄少一个函数。
+$moduleList = @([regex]::Matches($entryText, '\. \(Join-Path \$script:WidgetDir \x27([^\x27]+)\x27\)') | ForEach-Object { $_.Groups[1].Value })
+if ($moduleList.Count -lt 5) { throw 'the entry script does not expose its module list' }
+foreach ($module in $moduleList) {
     $path = Join-Path $here $module
-    if (Test-Path -LiteralPath $path) { . $path }
+    if (-not (Test-Path -LiteralPath $path)) { throw ('module is dot-sourced but missing: ' + $module) }
+    . $path
 }
 
 $definitions = ''

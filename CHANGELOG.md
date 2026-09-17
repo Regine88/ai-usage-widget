@@ -6,6 +6,32 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.10.0] - 2026-09-17
+
+第 7 个供应商 DeepSeek（余额型）与深色 / 浅色双主题；同时修复「`ai-config.json` 从未真正生效」的回归。
+
+### Added
+
+- `ApiKeyAuth.ps1` + `test-ApiKeyAuth.ps1`：API-key 类供应商共用的凭证读取与鉴权请求（文件 / 环境变量两种来源、受信任主机校验、`Authorization: Bearer` 头）；OpenRouter 原来的内联实现删除并改走本模块。
+- `DeepSeekQuota.ps1` + `test-DeepSeekQuota.ps1`：`/user/balance` 载荷解析纯函数；多钱包取第一个有余额的币种、金额格式化固定 invariant culture、`is_available` 缺失时保守处理。
+- DeepSeek 供应商接入（`AiUsageWidget.ps1` + `test-DeepSeekProvider.ps1`）：`~/.deepseek/auth.json`（或 `$env:DEEPSEEK_API_KEY`）显示为单行余额，主数值显示金额（新增 `Display` 字段贯通 worker → 行渲染 → 悬停提示），明细给出来源构成；右键菜单「打开用量页」与设置面板新增 DeepSeek。
+- `WidgetPalette.ps1` + `test-WidgetPalette.ps1`：深色 / 浅色两套调色板（13 个键），`Get-WidgetColor` / `Set-UiThemeColor` 成为界面颜色的唯一来源；缺键画品红。设置窗口新增「主题」下拉，保存后即时切换，无需重启。
+- 新增 `-Theme dark|light` 启动参数：只覆盖本次运行，不改写配置。
+- 语言包新增 `row.balanceTip` / `row.balanceToppedUp` / `row.balanceGranted` / `row.balanceInsufficient`、`settings.theme` / `settings.themeDark` / `settings.themeLight` 键，中英文同步。
+- `-Demo` 演示数据新增 DeepSeek 行与浅色主题截图（`docs/images/demo-card.light.png`）。
+
+### Fixed
+
+- **修复 0.7.0 引入的回归：`ai-config.json` 从未生效。** 主程序在读取配置之后又执行了 `$script:Config = $null`，导致保存的刷新间隔、不透明度、趋势开关与语言全部被默认值覆盖（不透明度实际为 `0`，仅因 WinForms 兜底才勉强可见）。移除该行后配置恢复正常，并用窗口分层属性实测验证（配置 0.85 对应 alpha 216）。
+- `-Demo` 的 DeepSeek 行补齐 `Display` 字段，演示数据与真实行渲染一致（不再显示 `0%`）。
+
+### Changed
+
+- `WidgetConfig.ps1`：默认值新增 `theme` 与 `providers.deepseek`，新增 `ConvertTo-ConfigTheme` 白名单解析。
+- 设置面板高度增加以容纳「主题」行；`Apply-WidgetConfig` 保存后即时应用主题、不透明度、刷新间隔与供应商开关。
+- `WidgetInstaller.ps1` 运行文件清单加入 `ApiKeyAuth.ps1`、`DeepSeekQuota.ps1`、`WidgetPalette.ps1`。
+- 文档全面更新：中英文 README 的供应商表 / 特性 / 配置表 / 项目结构、`docs/providers.md` 增补 DeepSeek 细节、`docs/architecture.md` 增补调色板与 `Display` 约定、排错手册增补 DeepSeek 与主题两节。
+
 ## [0.9.0] - 2026-09-17
 
 关于窗口与更新检查：右键菜单新增 **关于…**，显示版本、许可证与项目主页，并可从 GitHub Releases 检查新版本。
