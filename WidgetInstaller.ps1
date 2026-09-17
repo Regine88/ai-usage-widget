@@ -44,14 +44,25 @@ $script:WidgetDataFiles = @(
 
 $script:WidgetInstallManifestName = 'ai-install.json'
 
-# 目录路径的规范前缀（去掉结尾分隔符，保留盘符根）。用去掉前缀的方式求相对路径，
-# 而不是假设 Resolve-Path 与 Get-ChildItem 返回同一种路径写法：在 TEMP 被写成 8.3
-# 短名（如 RUNNER~1）的机器上，两种写法的长度不同，按长度截取会砍掉真实文件名。
+# 目录路径去掉结尾分隔符，盘符根保留反斜杠（"C:" 追加分隔符后才是根）。
+# 注意：只能用来拼接相对路径，不能拿它和 Get-ChildItem 的 FullName 比前缀——
+# FullName 会把 8.3 短名（如 RUNNER~1）换成真实长名（runneradmin），同一目录的
+# 两种写法长度不同，按长度截取会砍掉真实文件名。
 function Get-WidgetPathStem {
     param([string]$Path)
     $stem = ([string]$Path).TrimEnd([char]92, [char]47)
     if ($stem.EndsWith(':')) { $stem += [char]92 }
     return $stem
+}
+
+# 取 $Full 相对 $Stem 的部分，大小写不一致也接受，返回的仍是 $Full 里的原始写法。
+function Get-WidgetPathRelativeTo {
+    param([string]$Full, [string]$Stem)
+    $full = [string]$Full
+    if (-not $full.StartsWith($Stem, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ('路径不在预期目录内: ' + $full)
+    }
+    return $full.Substring($Stem.Length).TrimStart([char]92, [char]47)
 }
 
 function Get-WidgetRuntimeFileList {
@@ -61,17 +72,16 @@ function Get-WidgetRuntimeFileList {
         foreach ($rel in $script:WidgetRuntimeFiles) {
             if (Test-Path -LiteralPath (Join-Path $Dir $rel) -PathType Leaf) { [void]$list.Add($rel) }
         }
-        $stem = Get-WidgetPathStem $Dir
         foreach ($sub in $script:WidgetRuntimeDirs) {
             $subDir = Join-Path $Dir $sub
             if (-not (Test-Path -LiteralPath $subDir -PathType Container)) { continue }
+            # 只相对 $subDir 取相对路径：$subDir 由调用方传入的 $Dir 写法逐级拼出，
+            # 而 $file.FullName 的写法可能不同（8.3 短名 RUNNER~1 会展开成长名
+            # runneradmin），直接拿根目录做前缀会砍错长度，把 strings\zh-CN.json
+            # 变成 rce\strings\zh-CN.json。
+            $subStem = Get-WidgetPathStem $subDir
             foreach ($file in (Get-ChildItem -LiteralPath $subDir -Recurse -File)) {
-                $full = [string]$file.FullName
-                if (-not $full.StartsWith($stem, [StringComparison]::OrdinalIgnoreCase)) {
-                    throw ('运行文件在安装目录之外: ' + $full)
-                }
-                $rel = $full.Substring($stem.Length).TrimStart([char]92, [char]47)
-                [void]$list.Add($rel)
+                [void]$list.Add((Join-Path $sub (Get-WidgetPathRelativeTo $file.FullName $subStem)))
             }
         }
     }
