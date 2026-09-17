@@ -55,25 +55,18 @@ function Get-WidgetPathStem {
     return $stem
 }
 
-# 目录相对某个祖先目录的部分：逐级向上比。Windows PowerShell 5.1 没有
-# Path.GetRelativePath，所以自己走目录名。两个路径都来自同一次 Get-ChildItem，
-# 写法必然一致（Windows runner 上 8.3 短名会展开成长名，不能和调用方的写法比）。
-function Get-WidgetPathRelativeToSub {
-    param([string]$Dir, [string]$SubDir)
-    $dir = ([string]$Dir).TrimEnd([char]92, [char]47)
-    $sub = ([string]$SubDir).TrimEnd([char]92, [char]47)
-    $parts = New-Object System.Collections.ArrayList
-    while ($dir.Length -gt $sub.Length) {
-        $leaf = Split-Path -Leaf $dir
-        if (-not $leaf) { break }
-        $dir = ([string](Split-Path -Parent $dir)).TrimEnd([char]92, [char]47)
-        if (-not $dir) { break }
-        $parts.Insert(0, $leaf)
-    }
-    if (-not $dir.Equals($sub, [StringComparison]::OrdinalIgnoreCase)) {
-        throw ('路径不在预期目录内: ' + $Dir)
-    }
-    return ($parts -join '\')
+# 文件在其运行子目录里的相对路径，例如 strings\zh-CN.json。
+# 只用 $file.FullName 里 $SubDir 之后的部分，因为 FullName 的写法可能和调用方传入的
+# $Dir 不同：Windows runner 上 TEMP 写作 8.3 短名 RUNNER~1，FullName 展开成长名
+# runneradmin。按长度截取前缀会把 strings\zh-CN.json 砍成 rce\strings\zh-CN.json，
+# 而拿两种写法互相 StartsWith 又永远配不上。
+function Get-WidgetRuntimeRelativePath {
+    param([string]$Full, [string]$Sub)
+    $full = ([string]$Full).Replace([char]47, [char]92)
+    $marker = '\' + $Sub + '\'
+    $at = $full.LastIndexOf($marker, [StringComparison]::OrdinalIgnoreCase)
+    if ($at -lt 0) { throw ('路径不在运行目录内: ' + $full) }
+    return ($Sub + '\' + $full.Substring($at + $marker.Length))
 }
 
 function Get-WidgetRuntimeFileList {
@@ -86,14 +79,8 @@ function Get-WidgetRuntimeFileList {
         foreach ($sub in $script:WidgetRuntimeDirs) {
             $subDir = Join-Path $Dir $sub
             if (-not (Test-Path -LiteralPath $subDir -PathType Container)) { continue }
-            # Get-ChildItem 报出的 FullName 和 $Dir 的写法可以不同：Windows runner 上
-            # TEMP 写作 8.3 短名 RUNNER~1，而 FullName 展开成长名 runneradmin。所以
-            # 相对路径只能拿同一次列目录里的两个路径去比，不能和 $subDir 比：按长度
-            # 截取会把 strings\zh-CN.json 变成 rce\strings\zh-CN.json。
             foreach ($file in (Get-ChildItem -LiteralPath $subDir -Recurse -File)) {
-                $inner = Get-WidgetPathRelativeToSub $file.Directory.FullName $subDir
-                $rel = if ($inner) { Join-Path $sub $inner } else { $sub }
-                [void]$list.Add((Join-Path $rel $file.Name))
+                [void]$list.Add((Get-WidgetRuntimeRelativePath $file.FullName $sub))
             }
         }
     }

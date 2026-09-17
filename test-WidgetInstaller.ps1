@@ -143,6 +143,17 @@ try {
     Assert-Eq ($relList -contains 'strings\~extra\en-US.json') 'True' 'nested file keeps its relative path'
     Assert-Eq (@($relList | Where-Object { -not (Test-Path -LiteralPath (Join-Path $relRoot $_)) }) -join ',') '' 'every listed file resolves from the source dir'
     Assert-Eq (@($relList).Count) 3 'runtime dir list has no duplicates'
+
+    # windows-latest 上 TEMP 会以 8.3 短名（RUNNER~1）传进来，而 Get-ChildItem 报出的
+    # FullName 是长名（runneradmin）：前缀写法不同，所以相对路径只能看 FullName 里
+    # 运行子目录之后的部分。
+    $shortFull = (Join-Path $relRoot 'strings\zh-CN.json').Replace('\source\', '\SOURCE~1\')
+    $shortFull = $shortFull.Replace('\' + (Split-Path -Leaf $relRoot) + '\', '\DIFFERENT~1\')
+    Assert-Eq (Get-WidgetRuntimeRelativePath $shortFull 'strings') 'strings\zh-CN.json' 'relative path ignores a different path form in the directory prefix'
+    Assert-Eq (Get-WidgetRuntimeRelativePath (Join-Path $relDir 'en-US.json') 'strings') 'strings\~extra\en-US.json' 'relative path keeps nested folders'
+    $threwPath = $false
+    try { Get-WidgetRuntimeRelativePath (Join-Path $env:TEMP 'elsewhere\file.json') 'strings' } catch { $threwPath = $true }
+    Assert-Eq $threwPath 'True' 'file outside the runtime dir is rejected'
 } finally {
     Remove-Item -LiteralPath $relRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
