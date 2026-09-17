@@ -1,0 +1,2120 @@
+schema: comet.native.v4
+name: usage-report-enhancement
+language: zh-CN
+phase: archive
+status: done
+state_version: 12
+brief: brief.md
+shape_confirmation_hash: 67f03465fdfab5146d57a266328bbb2b0efd969fc4b361e9e74d69612a770a9f
+spec_changes: []
+workspace:
+  isolation: worktree
+  change_branch: comet/usage-report-enhancement
+  target_branch: main
+  finish: pull-request
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 2
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "Scenario: 历史里存在 3 个以上有数据的月份时，从「导出历史」选择「多月对比 HTML」，组件目录生成
+      `ai-usage-comparison-<最早月>_<最新月>.html`；该文件自包含、不引用任何外部资源，含「供应商 ×
+      月份」表格，每个单元格给出该月的采样数、天数、月初、月末、最低、最高，并另有「环比变化」列给出本月月末与上月月末的百分点差。"
+    result: passed
+    reason:
+      text: UsageReport.ps1:391-409/433-494/549-601。独立在字节一致副本上自写脚本跑 12 条合成历史：读回
+        12/12，月份键 2026-07/08/09，生成 ai-usage-comparison-2026-07_2026-09.html；产物对
+        http://、https://、<script、<img、<link、@import、url(、src= 八类外部引用统计均为
+        0；<th>=9 且表头为 Provider|Month|Samples|Days|First|Last|Min|Max|Change；grok
+        2026-09 单元格 Samples=2 Days=2 First=80 Last=55 Min=55 Max=80
+        Change=-15，手算一致。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "Scenario: 同一份历史选择「多月对比 Markdown」，生成文件名相同、扩展名为 `.md` 的文件，表头与单元格口径与 HTML
+      版本一致，且单元格内容里的竖线与换行不会破坏表格结构。"
+    result: passed
+    reason:
+      text: UsageReport.ps1:514-547 同 base name 换 .md 且复用同一行集。独立实测 md 与 html 表头逐列一致，表格
+        17 行；供应商 id 含竖线时渲染为 \\| 转义、含换行时压平为空格；用转义感知解析复核每行真实单元格数只有
+        9，不存在被竖线撑破表格的情况（一次假 FAIL 已自证为验收仪器缺陷）。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "Scenario: 对比区间内某个供应商在某个月没有采样时，该单元格显示占位符
+      `-`，同月其他供应商与该供应商其他月份的数值不受影响，导出仍然成功。"
+    result: passed
+    reason:
+      text: UsageReport.ps1:412-427 非有限数值渲染占位符 -。独立实测 kimi 2026-09 六项数值与环比全为 -，同供应商
+        2026-08 保持 20/+10，同月 grok 数值不受影响，导出成功返回。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "Scenario: `ai-history.jsonl`
+      不存在或没有任何可解析采样时，选择任一「多月对比」导出只显示本地化的「还没有历史数据可导出」提示，组件目录不产生新文件。"
+    result: passed
+    reason:
+      text: AiUsageWidget.ps1:3328/3344 在 :3349 写盘之前 return。独立用真实 WinForms MessageBox
+        + UIA 旁观程序验证“文件不存在”与“存在但无可解析采样”两种输入，均只弹出 zh-CN
+        文案「还没有历史数据可导出」，点确定后组件目录零新文件。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "Scenario: 右键卡片 →「导出历史」子菜单显示六项（原始采样 CSV、按天汇总 CSV、月度报表 Markdown、月度报表
+      HTML、多月对比 Markdown、多月对比 HTML），多月对比导出成功后的提示中给出已写入文件的完整路径。"
+    result: passed
+    reason:
+      text: AiUsageWidget.ps1:2666-2676 六项按序、2671-2672 为两项多月对比、2730-2732 接线、3351-3353
+        用 report.exported 带完整 $target。独立把菜单构造原文装进真实
+        ContextMenuStrip，实测「导出历史」子菜单恰好六项且顺序为 原始采样 CSV/按天汇总 CSV/月度报表
+        Markdown/月度报表 HTML/多月对比 Markdown/多月对比 HTML；真实弹窗文本为「已导出到」+ 换行 + 完整文件路径。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "Scenario: 右键卡片 →「趋势图…」打开趋势图窗口，窗口按供应商绘制每日用量折线，默认显示最近 7 天，切换到 14 天或 30
+      天后折线按新窗口重绘，每个供应商的折线颜色沿用它在卡片上的用量调色板颜色。"
+    result: passed
+    reason:
+      text: AiUsageWidget.ps1:3382 Show-WidgetTrend、3362
+        Get-UsageTrendLabels、WidgetTrend.ps1:18-114 绘图模型、3538 用
+        Get-UsageColor（:329-334）。独立点真实菜单项打开真窗口：区间下拉恰 3 项（由语言包 trend.days 渲染为最近
+        7/14/30 天）、默认 index 0 = 7 天，切 14/30 后日志出现 trend rebuilt days=14|30
+        且每序列点数等于新窗口天数；对趋势面板 DrawToBitmap 逐像素统计命中调色板 Ok/Warning/Danger 三色像素
+        7742/968/982，取色与卡片同源。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "Scenario: 历史里某个供应商只有 5 天采样而窗口选择 30 天时，该供应商只绘制存在的 5
+      个点，不补零点、不抛异常，图例仍列出该供应商及其最新百分比。"
+    result: passed
+    reason:
+      text: WidgetTrend.ps1:35-67 与 UsageHistory.ps1:62-88 按天裁剪不补零。独立以非 demo 的真实窗口加载仅
+        5 天采样的供应商（另含一个窗外点），30 天窗口下模型只 1 条序列且只 5
+        个点，未补零、彩色像素未铺满全宽、无异常，图例仍给出该供应商最新百分比。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "Scenario: 以 `-Demo -TrendWindow` 启动时，日志出现趋势图窗口已显示与 demo 合成序列的记录，界面回归以
+      `fatal=False unhandled=False error=False` 结束，且不读写真实历史、凭证与状态文件。"
+    result: passed
+    reason:
+      text: AiUsageWidget.ps1:3584/3586 记录趋势图窗口与 demo 合成序列。独立在含哨兵
+        ai-history.jsonl/ai-state.json/ai-request-events.jsonl 的副本上跑 -Demo
+        -TrendWindow：日志出现 trend window shown days=7 series=10 demo=True 与
+        synthetic=true，全文无 fatal=/unhandled=True/error=；三个哨兵文件字节与 SHA256
+        未变、目录无新增文件，凭证目录与本地快照时间戳均未变。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: "Scenario: 语言包缺少新键时，趋势图窗口与多月对比报表显示内置英文文案而不是 `report.*`
+      这类键名；新增键同时登记进中英两个语言包。"
+    result: passed
+    reason:
+      text: WidgetStrings.ps1:128-133 Use-WidgetTextFallback 配合
+        AiUsageWidget.ps1:3362-3378 与
+        UsageReport.ps1:497-512。独立实测语言包缺新键或整表缺失时趋势窗口标题/区间/关闭按钮渲染内置英文，chrome 中无
+        report.*/trend.*/about.* 键名；中英语言包各 175 键且无单边键，本次新增 13 个键在两边同时存在。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: "Scenario: 分别在 PowerShell 7.x 与 Windows PowerShell 5.1 下运行全部
+      `test-*.ps1`（含新增 `test-WidgetTrend.ps1` 与扩充的 `test-UsageReport.ps1`），全部输出
+      `ALL PASSED`。"
+    result: passed
+    reason:
+      text: 独立在字节一致副本上复跑：pwsh 7 与 Windows PowerShell 5.1 下
+        test-WidgetTrend.ps1、test-UsageReport.ps1 均 exit=0 且 ALL PASSED；另用
+        Runtime 回执中的检查脚本在同一副本上双引擎跑全部 35 个 test-*.ps1 得 35/35 通过。副本与工作区 81 个根文件加
+        strings/tools/site/docs 逐一 SHA256 比对一致（仅被 gitignore 覆盖的 ai-widget.log
+        除外）。
+      truncated: false
+  - id: A11
+    source: brief.md
+    text: "Scenario: 打包链路 `tools/package-release.ps1` 与 `tools/verify-package.ps1`
+      通过，运行文件清单包含 `WidgetTrend.ps1`，压缩包条目、包内版本号与 `.sha256` 校验一致。"
+    result: passed
+    reason:
+      text: 独立亲手运行 tools/package-release.ps1 -Version 0.15.0 与
+        tools/verify-package.ps1（均 exit 0）；独立核对压缩包 40 个条目、含
+        ai-usage-widget-0.15.0/WidgetTrend.ps1、包内 AppVersion=0.15.0、包内
+        AiUsageWidget.ps1 与 WidgetTrend.ps1 与候选工作区字节一致、35
+        个运行文件齐全、无状态与构建产物泄漏、.sha256 与实际 zip 哈希一致、Scoop manifest 自洽、CHANGELOG 含
+        0.15.0。
+      truncated: false
+builder_handoff:
+  candidate_id: 2993e455-4706-45ba-b6c9-b3b1a7e79104
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:504bf15b-8247-48e4-b868-d5a576f398be
+  iteration: 1
+  summary:
+    text: 在 worktree 分支 comet/usage-report-enhancement 上完成 0.15.0 的两处历史分析增强（跨月对比 +
+      趋势图）。新增 WidgetTrend.ps1 纯函数模块（窗口天数归一、按天裁剪的每日序列、坐标换算、坐标轴刻度与日期标签、demo 合成序列）与
+      test-WidgetTrend.ps1；UsageReport.ps1 新增多月对比纯函数（月份集合与区间、供应商 × 月份的环比、缺采样的 -
+      占位、Markdown / 自包含 HTML 渲染与文件名），行集是「区间内出现过的供应商 ×
+      选中月份」的完整组合。主程序新增「导出历史」子菜单的「多月对比 Markdown / HTML」两项、独立「趋势图」窗口（非模态，7 / 14 /
+      30 天切换，折线颜色取卡片用量调色板，只读不写盘）与 -TrendWindow 启动开关；WidgetStrings.ps1 提供共享的
+      Use-WidgetTextFallback 兜底助手（缺键回落内置英文）；中英语言包各补 12 个键；WidgetInstaller.ps1
+      运行文件清单加入 WidgetTrend.ps1；版本升到 0.15.0，并同步 README.md / README.en.md /
+      CHANGELOG.md / docs/architecture.md / docs/troubleshooting.md /
+      site/index.html 与新增截图
+      docs/images/demo-trend.png。本轮修复的两个实现期缺陷：趋势图窗口是非模态窗口，事件处理器在
+      Show-WidgetTrend 返回后才触发，看不到函数局部变量，导致下拉切换天数与「关闭」按钮无效；已改为把下拉选项挂到
+      $script:TrendUi.DayOptions、关闭按钮走 $script:TrendForm。另外首尾日期标签会顶出面板，已夹回面板内。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+  checks:
+    - name:
+        text: pwsh 7：全部 test-*.ps1
+        truncated: false
+      result: passed
+      note:
+        text: 35 个套件全部 ALL PASSED，failed=0（含新增 test-WidgetTrend.ps1 与扩充的
+          test-UsageReport.ps1）
+        truncated: false
+    - name:
+        text: Windows PowerShell 5.1：全部 test-*.ps1
+        truncated: false
+      result: passed
+      note:
+        text: 35 个套件全部 ALL PASSED，failed=0
+        truncated: false
+    - name:
+        text: tools/build-site.ps1 -OutDir <temp>
+        truncated: false
+      result: passed
+      note:
+        text: 版本 0.15.0，1 个页面 + 6 张截图，站点内相对引用全部存在
+        truncated: false
+    - name:
+        text: tools/package-release.ps1 -Version 0.15.0 -OutDir dist
+        truncated: false
+      result: passed
+      note:
+        text: 35 个运行文件 + install.ps1 与文档；压缩包内包含 WidgetTrend.ps1
+        truncated: false
+    - name:
+        text: tools/verify-package.ps1 -Version 0.15.0 -OutDir dist
+        truncated: false
+      result: passed
+      note:
+        text: 压缩包条目 40 个，包内版本号与 .sha256 一致，全部检查通过
+        truncated: false
+    - name:
+        text: Invoke-ScriptAnalyzer -Severity Error,Warning
+        truncated: false
+      result: passed
+      note:
+        text: 0 个 Error、539 个 Warning（与改动前同量级，Warning 不阻塞）
+        truncated: false
+    - name:
+        text: pwsh AiUsageWidget.ps1 -Demo（界面冒烟）
+        truncated: false
+      result: passed
+      note:
+        text: 日志无 fatal=True / unhandled=True / error=，只写 ai-widget.log
+        truncated: false
+    - name:
+        text: pwsh AiUsageWidget.ps1 -Demo -TrendWindow（界面冒烟）
+        truncated: false
+      result: passed
+      note:
+        text: 日志出现 trend window shown days=7 series=10 demo=True 与 trend demo series
+          days=7 series=10 synthetic=true
+        truncated: false
+    - name:
+        text: UI 自动化：趋势图下拉 7 → 14 → 30 天
+        truncated: false
+      result: passed
+      note:
+        text: 日志依次出现 trend rebuilt days=14 series=10、trend rebuilt days=30
+          series=10，折线按新区间重绘
+        truncated: false
+    - name:
+        text: UI 自动化：趋势图「关闭」按钮
+        truncated: false
+      result: passed
+      note:
+        text: 调用 InvokePattern 后窗口从 EnumWindows 结果中消失
+        truncated: false
+    - name:
+        text: 多月对比导出端到端样例（合成历史）
+        truncated: false
+      result: passed
+      note:
+        text: 生成 ai-usage-comparison-2026-07_2026-09.md/.html；HTML 无任何外部引用；缺采样的 kimi
+          2026-09 整行显示 -
+        truncated: false
+    - name:
+        text: pwsh AiUsageWidget.ps1 -Version
+        truncated: false
+      result: passed
+      note:
+        text: AI Usage Widget 0.15.0
+        truncated: false
+    - name:
+        text: git diff --check
+        truncated: false
+      result: passed
+      note:
+        text: 无空白错误
+        truncated: false
+    - name:
+        text: 趋势图窗口截图人工核对（7 天视图）
+        truncated: false
+      result: passed
+      note:
+        text: 坐标轴 0/25/50/75/100、首尾日期完整、图例给出各组件最新百分比、颜色随用量（93% 红 / 74% 黄 / 其余绿）
+        truncated: false
+    - name:
+        text: 非 demo 的 -TrendWindow 真实历史路径
+        truncated: false
+      result: not-run
+      note:
+        text: 本机已有真实实例占用单实例互斥，无法并行启动第二个非 demo 实例；该路径与卡片 sparkline 共用
+          Get-UsageHistoryDaySeries，已由单元测试与 demo 路径覆盖
+        truncated: false
+    - name:
+        text: 真实 ai-history.jsonl 的组件目录导出
+        truncated: false
+      result: not-run
+      note:
+        text: 需要用户本机真实历史；纯函数与渲染已用合成历史端到端验证
+        truncated: false
+    - name:
+        text: 打 tag / 推送 / 创建 Release
+        truncated: false
+      result: not-run
+      note:
+        text: 按 brief 的决策不在本次范围
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 多月对比表按「一行 = 一个供应商的一个月」组织并带月份列，不是「月份做列」的透视表；区间内没有采样的供应商月份整行显示 -。
+      truncated: false
+    - text: 趋势图窗口的真实历史路径只由单元测试与 demo 路径覆盖，没有做非 demo 实机冒烟（本机真实实例占用单实例互斥）。
+      truncated: false
+    - text: PSScriptAnalyzer 仍有 539 条 Warning（与改动前同量级），本次按范围未清理。
+      truncated: false
+    - text: 趋势图窗口 7 / 14 / 30 天三种视图的渲染效果需要人工可视确认；仓库内只新增了 7 天视图截图，14 / 30 天截图未入库。
+      truncated: false
+    - text: docs/troubleshooting.md 第 18 行仍写「九行固定演示数据」，而 demo 现在有 10 行（含
+        Copilot）；这是改动前就存在的问题，本次未动。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-09-17T12:37:23.285Z
+blockers: []
+verification:
+  candidate_id: 2993e455-4706-45ba-b6c9-b3b1a7e79104
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:b97e9b9f-a2ca-4c97-b773-fd9c74036f3e
+  iteration: 1
+  attempt: 2
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: tests-windows-powershell-51
+      name:
+        text: Windows PowerShell 5.1：全部 test-*.ps1 输出 ALL PASSED
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$Engine = 'powershell'
+
+            $ErrorActionPreference = 'Continue'
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+            $suiteFallbacks = @((Join-Path $PSHOME 'pwsh.exe'), 'C:\\Program
+            Files\\PowerShell\\7\\pwsh.exe')
+
+            if ($Engine -eq 'powershell') { $suiteFallbacks =
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            $suiteEngine = Resolve-Tool -Name $Engine -Extra $suiteFallbacks
+
+            if (-not $suiteEngine) { Write-Host ('FAIL suite engine is not
+            available: ' + $Engine); exit 1 }
+
+            Write-Host ('suiteEngine=' + $suiteEngine)
+
+            $suites = @(Get-ChildItem -Path $root -Filter 'test-*.ps1' -File |
+            Sort-Object Name)
+
+            if ($suites.Count -eq 0) { Write-Host 'FAILED no test suites found';
+            exit 1 }
+
+            $failed = @()
+
+            foreach ($s in $suites) {
+
+            \    $out = & $suiteEngine -NoProfile -ExecutionPolicy Bypass -File
+            $s.FullName 2>&1
+
+            \    $code = $LASTEXITCODE
+
+            \    $text = (@($out) -join \"`n\")
+
+            \    if ($code -eq 0 -and $text.Contains('ALL PASSED')) { Write-Host
+            ('OK   {0}' -f $s.Name) }
+
+            \    else {
+
+            \        $failed += $s.Name
+
+            \        Write-Host ('FAIL {0} exit={1}' -f $s.Name, $code)
+
+            \        (@($out) | Select-Object -Last 25) | ForEach-Object {
+            Write-Host ('    | ' + $_) }
+
+            \    }
+
+            }
+
+            Write-Host ('suites={0} failed={1} engine={2}' -f $suites.Count,
+            $failed.Count, $Engine)
+
+            if ($failed.Count -gt 0) { Write-Host ('FAILED ' + ($failed -join
+            ',')); exit 1 }
+
+            Write-Host 'ALL SUITES PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 20742
+    - id: tests-pwsh-7
+      name:
+        text: PowerShell 7：全部 test-*.ps1 输出 ALL PASSED
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$Engine = 'pwsh'
+
+            $ErrorActionPreference = 'Continue'
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+            $suiteFallbacks = @((Join-Path $PSHOME 'pwsh.exe'), 'C:\\Program
+            Files\\PowerShell\\7\\pwsh.exe')
+
+            if ($Engine -eq 'powershell') { $suiteFallbacks =
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            $suiteEngine = Resolve-Tool -Name $Engine -Extra $suiteFallbacks
+
+            if (-not $suiteEngine) { Write-Host ('FAIL suite engine is not
+            available: ' + $Engine); exit 1 }
+
+            Write-Host ('suiteEngine=' + $suiteEngine)
+
+            $suites = @(Get-ChildItem -Path $root -Filter 'test-*.ps1' -File |
+            Sort-Object Name)
+
+            if ($suites.Count -eq 0) { Write-Host 'FAILED no test suites found';
+            exit 1 }
+
+            $failed = @()
+
+            foreach ($s in $suites) {
+
+            \    $out = & $suiteEngine -NoProfile -ExecutionPolicy Bypass -File
+            $s.FullName 2>&1
+
+            \    $code = $LASTEXITCODE
+
+            \    $text = (@($out) -join \"`n\")
+
+            \    if ($code -eq 0 -and $text.Contains('ALL PASSED')) { Write-Host
+            ('OK   {0}' -f $s.Name) }
+
+            \    else {
+
+            \        $failed += $s.Name
+
+            \        Write-Host ('FAIL {0} exit={1}' -f $s.Name, $code)
+
+            \        (@($out) | Select-Object -Last 25) | ForEach-Object {
+            Write-Host ('    | ' + $_) }
+
+            \    }
+
+            }
+
+            Write-Host ('suites={0} failed={1} engine={2}' -f $suites.Count,
+            $failed.Count, $Engine)
+
+            if ($failed.Count -gt 0) { Write-Host ('FAILED ' + ($failed -join
+            ',')); exit 1 }
+
+            Write-Host 'ALL SUITES PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 24741
+    - id: comparison-export-end-to-end
+      name:
+        text: 多月对比导出端到端：真实导出函数 + 合成历史 → 文件名/自包含/占位符/空历史不落盘
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$ErrorActionPreference = 'Stop'\r
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)\r
+
+            . (Join-Path $root 'UsageValidation.ps1')\r
+
+            . (Join-Path $root 'UsageHistory.ps1')\r
+
+            . (Join-Path $root 'UsageReport.ps1')\r
+
+            . (Join-Path $root 'WidgetStrings.ps1')\r
+
+            \r
+
+            $fails = New-Object System.Collections.Generic.List[string]\r
+
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) {
+            Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name);
+            [void]$fails.Add($Name) } }\r
+
+            \r
+
+            $tokens = $null; $parseErrors = $null\r
+
+            $ast =
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path
+            $root 'AiUsageWidget.ps1'), [ref]$tokens, [ref]$parseErrors)\r
+
+            $found = @($ast.FindAll({ param($node) $node -is
+            [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Export-UsageReportComparisonInteractive' },
+            $true))\r
+
+            Check (@($found).Count -eq 1) 'the widget script defines the
+            comparison export exactly once'\r
+
+            Invoke-Expression $found[0].Extent.Text\r
+
+            \r
+
+            function Write-WidgetLog { param([string]$Message) }\r
+
+            \r
+
+            $work = Join-Path $env:TEMP ('ai-usage-e2e-' +
+            [guid]::NewGuid().ToString('n'))\r
+
+            [void][IO.Directory]::CreateDirectory($work)\r
+
+            $script:WidgetDir = $work\r
+
+            $script:HistoryPath = Join-Path $work 'ai-history.jsonl'\r
+
+            $script:WidgetStrings = @{}\r
+
+            \r
+
+            $lines = @(\r
+
+            \    '{\"ts\":\"2026-06-10T12:00:00Z\",\"id\":\"grok\",\"pct\":5}'\r
+
+            \    '{\"ts\":\"2026-07-05T12:00:00Z\",\"id\":\"grok\",\"pct\":20}'\
+            \r
+
+            \    '{\"ts\":\"2026-07-25T12:00:00Z\",\"id\":\"grok\",\"pct\":40}'\
+            \r
+
+            \    '{\"ts\":\"2026-07-08T12:00:00Z\",\"id\":\"kimi\",\"pct\":10}'\
+            \r
+
+            \    '{\"ts\":\"2026-08-05T12:00:00Z\",\"id\":\"grok\",\"pct\":50}'\
+            \r
+
+            \    '{\"ts\":\"2026-08-20T12:00:00Z\",\"id\":\"grok\",\"pct\":60}'\
+            \r
+
+            \    '{\"ts\":\"2026-08-11T12:00:00Z\",\"id\":\"kimi\",\"pct\":30}'\
+            \r
+
+            \    '{\"ts\":\"2026-08-02T12:00:00Z\",\"id\":\"copilot\",\"pct\":1\
+            5}'\r
+
+            \    '{\"ts\":\"2026-09-03T12:00:00Z\",\"id\":\"grok\",\"pct\":70}'\
+            \r
+
+            \    '{\"ts\":\"2026-09-15T12:00:00Z\",\"id\":\"grok\",\"pct\":82}'\
+            \r
+
+            \    '{\"ts\":\"2026-09-09T12:00:00Z\",\"id\":\"copilot\",\"pct\":2\
+            5}'\r
+
+            )\r
+
+            [IO.File]::WriteAllText($script:HistoryPath, (($lines -join \"`n\")
+            + \"`n\"), [Text.UTF8Encoding]::new($false))\r
+
+            \r
+
+            $records = @(Read-UsageHistory -Path $script:HistoryPath)\r
+
+            Check ($records.Count -eq 11) 'the synthetic history round trips
+            through the real reader'\r
+
+            $months = @(Get-UsageReportComparisonMonths -Records $records
+            -Months 3)\r
+
+            Check (($months -join ',') -eq '2026-07,2026-08,2026-09') 'the
+            default window is the three most recent months in ascending order'\r
+
+            $rows = @(Get-UsageHistoryMonthComparison -Records $records -Months
+            $months)\r
+
+            Check ($rows.Count -eq 9) 'the row set is providers seen in range
+            times the selected months'\r
+
+            \r
+
+            Export-UsageReportComparisonInteractive -Kind html\r
+
+            $htmlPath = Join-Path $work
+            'ai-usage-comparison-2026-07_2026-09.html'\r
+
+            Check (Test-Path -LiteralPath $htmlPath -PathType Leaf) 'choosing
+            the HTML export writes ai-usage-comparison-2026-07_2026-09.html'\r
+
+            $html = if (Test-Path -LiteralPath $htmlPath) {
+            [IO.File]::ReadAllText($htmlPath) } else { '' }\r
+
+            \r
+
+            $external = @('http://', 'https://', '<link', 'src=', '@import',
+            'url(', '<script')\r
+
+            $leaks = @($external | Where-Object { $html.Contains($_) })\r
+
+            Check ($leaks.Count -eq 0) ('the HTML file is self contained, no
+            external reference (found: ' + ($leaks -join ',') + ')')\r
+
+            Check ($html.Contains('<table>')) 'the HTML file carries the
+            provider by month table'\r
+
+            Check ((@([regex]::Matches($html, '<th>')).Count) -eq 9) 'the HTML
+            header has the six metric columns plus provider, month and change'\r
+
+            \r
+
+            $sep = @($html -split '<tr>')\r
+
+            $sepRow = @($sep | Where-Object { $_ -like '*kimi*2026-09*' })\r
+
+            Check ($sepRow.Count -ge 1) 'the provider without September samples
+            still gets a row'\r
+
+            if ($sepRow.Count -ge 1) {\r
+
+            \    $cells = @([regex]::Matches($sepRow[0], '<td>(.*?)</td>') |
+            ForEach-Object { $_.Groups[1].Value })\r
+
+            \    Check ($cells.Count -eq 9) 'that row has nine cells'\r
+
+            \    Check ((@($cells[2..7]) -join ',') -eq '-,-,-,-,-,-') 'every
+            metric cell of a month without samples is the dash placeholder'\r
+
+            \    Check ($cells[8] -eq '-') 'the change cell of that row is the
+            dash placeholder'\r
+
+            }\r
+
+            $grokRow = @($sep | Where-Object { $_ -like '*>grok<*2026-09*' })\r
+
+            Check ($grokRow.Count -eq 1) 'the provider with September samples
+            has its own row'\r
+
+            if ($grokRow.Count -eq 1) {\r
+
+            \    $cells = @([regex]::Matches($grokRow[0], '<td>(.*?)</td>') |
+            ForEach-Object { $_.Groups[1].Value })\r
+
+            \    Check ($cells[5] -eq '82') 'the last column reports the closing
+            sample of the month'\r
+
+            \    Check ($cells[8] -eq '+22') 'the change column is this month
+            closing minus last month closing'\r
+
+            }\r
+
+            $kimiSeven = @($sep | Where-Object { $_ -like '*kimi*2026-07*' })\r
+
+            if ($kimiSeven.Count -eq 1) {\r
+
+            \    $cells = @([regex]::Matches($kimiSeven[0], '<td>(.*?)</td>') |
+            ForEach-Object { $_.Groups[1].Value })\r
+
+            \    Check ($cells[5] -eq '10') 'the same provider keeps its value
+            in a month that does have samples'\r
+
+            }\r
+
+            \r
+
+            Export-UsageReportComparisonInteractive -Kind markdown\r
+
+            $mdPath = Join-Path $work 'ai-usage-comparison-2026-07_2026-09.md'\r
+
+            Check (Test-Path -LiteralPath $mdPath -PathType Leaf) 'the Markdown
+            export uses the same base name with the md extension'\r
+
+            $md = if (Test-Path -LiteralPath $mdPath) {
+            [IO.File]::ReadAllText($mdPath) } else { '' }\r
+
+            $mdLines = @($md -split \"`n\" | Where-Object { $_.Trim() })\r
+
+            $header = @($mdLines | Where-Object { $_ -like '|*' })[0]\r
+
+            $mdHead = @($header.Trim().Trim('|') -split '\\|' | ForEach-Object {
+            $_.Trim() })\r
+
+            $htmlHead = @([regex]::Matches($html, '<th>(.*?)</th>') |
+            ForEach-Object { $_.Groups[1].Value })\r
+
+            Check (($mdHead -join '|') -eq ($htmlHead -join '|')) 'the Markdown
+            header matches the HTML header column for column'\r
+
+            Check ((@($mdLines | Where-Object { $_ -like '|*' }).Count) -eq 11)
+            'the Markdown table keeps nine data rows plus header and
+            separator'\r
+
+            \r
+
+            Check ((-not $md.Contains('report.')) -and (-not
+            $html.Contains('report.'))) 'a missing string table falls back to
+            English instead of showing report.* key names'\r
+
+            \r
+
+            $pipe = @(ConvertTo-UsageReportComparisonMarkdown -Comparison @(@{
+            Id = 'a|b'; Month = \"2026-09`nnext\"; Samples = 1; Days = 1; First
+            = 1; Last = 2; Min = 1; Max = 2; Change = $null }) -Months
+            @('2026-09') -GeneratedAt ([datetime]'2026-09-17 10:00'))\r
+
+            Check ((@($pipe[0] -split \"`n\" | Where-Object { $_ -like '|*'
+            }).Count) -eq 3) 'a provider id with a pipe or newline cannot break
+            the Markdown table'\r
+
+            \r
+
+            $emptyWork = Join-Path $env:TEMP ('ai-usage-e2e-empty-' +
+            [guid]::NewGuid().ToString('n'))\r
+
+            [void][IO.Directory]::CreateDirectory($emptyWork)\r
+
+            $script:WidgetDir = $emptyWork\r
+
+            $script:HistoryPath = Join-Path $emptyWork 'ai-history.jsonl'\r
+
+            $emptyError = $null\r
+
+            try { Export-UsageReportComparisonInteractive -Kind html;
+            Export-UsageReportComparisonInteractive -Kind markdown } catch {
+            $emptyError = $_.Exception.Message }\r
+
+            Check ($null -eq $emptyError) 'exporting without any history returns
+            normally instead of throwing'\r
+
+            Check ((@([IO.Directory]::GetFiles($emptyWork)).Count) -eq 0)
+            'exporting without any history writes no file into the widget
+            directory'\r
+
+            \r
+
+            [IO.Directory]::Delete($work, $true)\r
+
+            [IO.Directory]::Delete($emptyWork, $true)\r
+
+            \r
+
+            Write-Host ('checks failed=' + $fails.Count)\r
+
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join ';
+            ')); exit 1 }\r
+
+            Write-Host 'ALL PASSED'\r
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 4883
+    - id: trend-and-report-labels
+      name:
+        text: 趋势图与多月对比文案回落、中英语言包新键
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$ErrorActionPreference = 'Stop'
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+            . (Join-Path $root 'WidgetStrings.ps1')
+
+
+            $fails = New-Object System.Collections.Generic.List[string]
+
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) {
+            Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name);
+            [void]$fails.Add($Name) } }
+
+
+            $tokens = $null; $parseErrors = $null
+
+            $ast =
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path
+            $root 'AiUsageWidget.ps1'), [ref]$tokens, [ref]$parseErrors)
+
+            $found = @($ast.FindAll({ param($node) $node -is
+            [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-UsageTrendLabels' }, $true))
+
+            Check (@($found).Count -eq 1) 'the widget script defines
+            Get-UsageTrendLabels exactly once'
+
+            Invoke-Expression $found[0].Extent.Text
+
+
+            $script:WidgetStrings = @{}
+
+            $bare = Get-UsageTrendLabels
+
+            Check ($bare.Title -eq 'AI Usage Widget - Trend chart') 'a missing
+            string table falls back to the built in English trend title'
+
+            Check ($bare.Days -eq 'Last {0} days') 'a missing string table falls
+            back to the built in days label'
+
+            Check ($bare.Empty -eq 'No history yet, nothing to chart') 'a
+            missing string table falls back to the built in empty label'
+
+            Check ($bare.Close -eq 'Close') 'a missing string table falls back
+            to the built in close label'
+
+            $bareText = @($bare.Title, $bare.Days, $bare.Empty, $bare.Note,
+            $bare.Close) -join ' '
+
+            Check (-not $bareText.Contains('trend.')) 'no trend.* key name can
+            leak into the window chrome'
+
+
+            $stringsDir = $root
+
+            foreach ($language in @('zh-CN', 'en-US')) {
+
+            \    $script:WidgetStrings = Read-WidgetStrings -Language $language
+            -Dir $stringsDir
+
+            \    foreach ($key in @('trend.title', 'trend.days', 'trend.empty',
+            'trend.note', 'about.close')) {
+
+            \        Check ($script:WidgetStrings.ContainsKey($key)) ('the ' +
+            $language + ' pack registers ' + $key)
+
+            \    }
+
+            \    $labels = Get-UsageTrendLabels
+
+            \    Check ($labels.Title -eq $script:WidgetStrings['trend.title'])
+            ('the ' + $language + ' pack drives the trend title')
+
+            \    Check ($labels.Days -eq $script:WidgetStrings['trend.days'])
+            ('the ' + $language + ' pack drives the days label')
+
+            \    Check ($labels.Empty -eq $script:WidgetStrings['trend.empty'])
+            ('the ' + $language + ' pack drives the empty label')
+
+            \    Check ($labels.Note -eq $script:WidgetStrings['trend.note'])
+            ('the ' + $language + ' pack drives the note label')
+
+            \    Check ($labels.Close -eq $script:WidgetStrings['about.close'])
+            ('the ' + $language + ' pack drives the close button')
+
+            \    foreach ($reportKey in @('report.compareTitle',
+            'report.compareHeading', 'report.colMonth', 'report.colChange',
+            'report.compareNote')) {
+
+            \        Check ($script:WidgetStrings.ContainsKey($reportKey)) ('the
+            ' + $language + ' pack registers ' + $reportKey)
+
+            \    }
+
+            \    foreach ($menuKey in @('menu.exportCompareMd',
+            'menu.exportCompareHtml', 'menu.trend')) {
+
+            \        Check ($script:WidgetStrings.ContainsKey($menuKey)) ('the '
+            + $language + ' pack registers ' + $menuKey)
+
+            \    }
+
+            }
+
+
+            $script:WidgetStrings = @{ 'trend.title' = 'TITLE-X' }
+
+            $partial = Get-UsageTrendLabels
+
+            Check ($partial.Title -eq 'TITLE-X') 'a present trend title is used
+            as is'
+
+            Check ($partial.Empty -eq 'No history yet, nothing to chart') 'the
+            remaining labels still fall back when only one key exists'
+
+
+            Write-Host ('checks failed=' + $fails.Count)
+
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join ';
+            ')); exit 1 }
+
+            Write-Host 'ALL PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 608
+    - id: demo-trend-window-smoke
+      name:
+        text: -Demo -TrendWindow 界面冒烟与趋势图交互（下拉列表按截止时间轮询）
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: |
+            $ErrorActionPreference = 'Stop'
+            Add-Type -AssemblyName UIAutomationClient
+            Add-Type -AssemblyName UIAutomationTypes
+
+            $root = (Get-Location).Path
+            if (-not (Test-Path -LiteralPath (Join-Path $root 'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not running inside the widget checkout: ' + $root); exit 1 }
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+            function Resolve-Tool {
+                param([string]$Name, [string[]]$Extra)
+                $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+                if ($cmd -and $cmd.Source) { return $cmd.Source }
+                $candidates = New-Object System.Collections.Generic.List[string]
+                foreach ($item in @($Extra)) { if ($item) { [void]$candidates.Add([string]$item) } }
+                foreach ($dir in @($env:PATH -split ';')) {
+                    $clean = $dir.Trim().Trim([char]34)
+                    if (-not $clean) { continue }
+                    foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) { [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+                }
+                foreach ($candidate in $candidates) { if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+                return $null
+            }
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME 'pwsh.exe'))
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name 'powershell' -Extra @('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe') }
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is available for the checks'; exit 1 }
+            Write-Host ('checkEngine=' + $enginePath)
+            . (Join-Path $root 'WidgetStrings.ps1')
+
+            $fails = New-Object System.Collections.Generic.List[string]
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) { Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name); [void]$fails.Add($Name) } }
+
+            $log = Join-Path $root 'ai-widget.log'
+            $stateFiles = @('ai-state.json', 'ai-history.jsonl', 'ai-request-events.jsonl')
+            $beforeState = @{}
+            foreach ($name in $stateFiles) {
+                $path = Join-Path $root $name
+                if (Test-Path -LiteralPath $path) { $item = Get-Item -LiteralPath $path; $beforeState[$name] = ('{0}@{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks) }
+                else { $beforeState[$name] = 'absent' }
+            }
+            $beforeText = ''
+            if (Test-Path -LiteralPath $log) { $beforeText = [IO.File]::ReadAllText($log) }
+
+            function Get-NewLogText {
+                param([string]$Baseline)
+                if (-not (Test-Path -LiteralPath $log)) { return '' }
+                $all = [IO.File]::ReadAllText($log)
+                if ($Baseline.Length -gt 0 -and $all.Length -gt $Baseline.Length -and $all.StartsWith($Baseline)) { return $all.Substring($Baseline.Length) }
+                return $all
+            }
+
+            $trendTitles = New-Object System.Collections.Generic.List[string]
+            $trendTitles.Add('AI Usage Widget - Trend chart')
+            $dayTemplates = New-Object System.Collections.Generic.List[string]
+            $closeNames = New-Object System.Collections.Generic.List[string]
+            $closeNames.Add('Close')
+            foreach ($language in @('zh-CN', 'en-US')) {
+                $pack = Read-WidgetStrings -Language $language -Dir $root
+                if ($pack.ContainsKey('trend.title')) { $trendTitles.Add([string]$pack['trend.title']) }
+                if ($pack.ContainsKey('trend.days')) { $dayTemplates.Add([string]$pack['trend.days']) }
+                if ($pack.ContainsKey('about.close')) { $closeNames.Add([string]$pack['about.close']) }
+            }
+
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'AiUsageWidget.ps1'), '-Demo', '-TrendWindow')
+            $proc = Start-Process -FilePath $enginePath -ArgumentList $argList -WorkingDirectory $root -WindowStyle Hidden -PassThru
+            Write-Host ('widget demo pid={0}' -f $proc.Id)
+
+            $auto = [System.Windows.Automation.AutomationElement]::RootElement
+            $pidCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
+            function Get-TrendWindow {
+                try { $windows = @($auto.FindAll([System.Windows.Automation.TreeScope]::Children, $pidCondition)) } catch { return $null }
+                foreach ($window in $windows) {
+                    $name = ''
+                    try { $name = [string]$window.Current.Name } catch { continue }
+                    if ($trendTitles -contains $name) { return $window }
+                }
+                return $null
+            }
+
+            try {
+                $deadline = [datetime]::Now.AddSeconds(60)
+                $shown = $false
+                while ([datetime]::Now -lt $deadline) {
+                    Start-Sleep -Milliseconds 500
+                    if ((Get-NewLogText $beforeText).Contains('trend window shown')) { $shown = $true; break }
+                    if ($proc.HasExited) { break }
+                }
+                Check $shown 'the startup log records that the trend window was shown'
+                Check (-not $proc.HasExited) 'the demo widget is still running after the trend window opened'
+
+                $newLog = Get-NewLogText $beforeText
+                Check ($newLog.Contains('trend window shown days=7 series=10 demo=True')) 'the trend window opens on seven days with ten demo series'
+                Check ($newLog.Contains('trend demo series days=7 series=10 synthetic=true')) 'demo mode charts a synthetic series without touching real history'
+
+                $trendWindow = $null
+                $windowDeadline = [datetime]::Now.AddSeconds(20)
+                while ([datetime]::Now -lt $windowDeadline -and -not $trendWindow) {
+                    $trendWindow = Get-TrendWindow
+                    if (-not $trendWindow) { Start-Sleep -Milliseconds 500 }
+                }
+                Check ($null -ne $trendWindow) 'a second top level window titled with the trend title really exists'
+
+                if ($trendWindow) {
+                    $comboCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ComboBox)
+                    foreach ($step in @(@{ Index = 1; Days = 14 }, @{ Index = 2; Days = 30 })) {
+                        $combo = $trendWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $comboCondition)
+                        Check ($null -ne $combo) 'the trend window offers a range selector'
+                        if (-not $combo) { break }
+                        # 下拉列表要展开后才异步建好，而且弹出列表可能是独立的顶层窗口，
+                        # 所以按截止时间轮询到列表项数量够用为止，避免把界面时序当成功能缺陷。
+                        $itemCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
+                        $items = @()
+                        $listDeadline = [datetime]::Now.AddSeconds(20)
+                        while ([datetime]::Now -lt $listDeadline -and $items.Count -le $step.Index) {
+                            try {
+                                $expand = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                                if ($expand.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded) { $expand.Expand() }
+                            } catch { }
+                            Start-Sleep -Milliseconds 500
+                            try { $items = @($combo.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCondition)) } catch { $items = @() }
+                            if ($items.Count -le $step.Index) {
+                                foreach ($popup in @($auto.FindAll([System.Windows.Automation.TreeScope]::Children, $pidCondition))) {
+                                    $found = @()
+                                    try { $found = @($popup.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCondition)) } catch { }
+                                    if ($found.Count -gt $items.Count) { $items = $found }
+                                }
+                            }
+                        }
+                        if ($items.Count -le $step.Index) { Check $false ('the range selector lists option index ' + $step.Index + ' (only ' + $items.Count + ' list items appeared)'); continue }
+                        $target = $items[$step.Index]
+                        $itemName = ''
+                        try { $itemName = [string]$target.Current.Name } catch { }
+                        $chosen = $false
+                        foreach ($template in $dayTemplates) {
+                            if ($itemName -eq ($template -f $step.Days)) { $chosen = $true }
+                        }
+                        Check $chosen ('option index ' + $step.Index + ' is the ' + $step.Days + ' day range, not some other entry')
+                        try { $target.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { Check $false ('selecting the ' + $step.Days + ' day range raised no error') }
+                        $rebuildDeadline = [datetime]::Now.AddSeconds(15)
+                        $rebuilt = $false
+                        while ([datetime]::Now -lt $rebuildDeadline) {
+                            if ((Get-NewLogText $beforeText).Contains(('trend rebuilt days={0} ' -f $step.Days))) { $rebuilt = $true; break }
+                            Start-Sleep -Milliseconds 400
+                        }
+                        Check $rebuilt ('switching to ' + $step.Days + ' days redraws the chart for the new window')
+                        # 选完必须显式收起下拉：弹出列表本身是一个顶层窗口，留着会吃掉后面「关闭」按钮的点击。
+                        try {
+                            $collapse = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                            if ($collapse.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $collapse.Collapse() }
+                        } catch { }
+                        Start-Sleep -Milliseconds 400
+                    }
+
+                    $buttonCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+                    function Get-CloseButton {
+                        param($Window)
+                        $found = @()
+                        try { $found = @($Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)) } catch { }
+                        foreach ($button in $found) {
+                            $name = ''
+                            try { $name = [string]$button.Current.Name } catch { continue }
+                            if ($closeNames -contains $name) { return $button }
+                        }
+                        return $null
+                    }
+                    Check ($null -ne (Get-CloseButton $trendWindow)) 'the trend window has a close button'
+                    $closed = $false
+                    $attempt = 0
+                    while ($attempt -lt 3 -and -not $closed) {
+                        $attempt++
+                        $button = Get-CloseButton $trendWindow
+                        if ($button) { try { $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch { } }
+                        $closeDeadline = [datetime]::Now.AddSeconds(6)
+                        while ([datetime]::Now -lt $closeDeadline) {
+                            if (-not (Get-TrendWindow)) { $closed = $true; break }
+                            Start-Sleep -Milliseconds 400
+                        }
+                    }
+                    Check $closed 'pressing the close button removes the trend window'
+                    if (-not $closed) {
+                        $remaining = @()
+                        try { foreach ($window in @($auto.FindAll([System.Windows.Automation.TreeScope]::Children, $pidCondition))) { $remaining += [string]$window.Current.Name } } catch { }
+                        Write-Host ('  still open: ' + ($remaining -join ' | '))
+                    }
+                }
+
+                $finalLog = Get-NewLogText $beforeText
+                Check (-not $finalLog.Contains('fatal=')) 'the demo run logged no fatal entry'
+                Check (-not $finalLog.Contains('unhandled=True')) 'the demo run logged no unhandled exception'
+                Check (-not $finalLog.Contains('error=')) 'the demo run logged no error entry'
+                Check (-not $proc.HasExited) 'the demo widget survived the whole interaction'
+
+                foreach ($name in $stateFiles) {
+                    $path = Join-Path $root $name
+                    $after = 'absent'
+                    if (Test-Path -LiteralPath $path) { $item = Get-Item -LiteralPath $path; $after = ('{0}@{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks) }
+                    Check ($after -eq $beforeState[$name]) ('demo mode leaves ' + $name + ' untouched')
+                }
+            } finally {
+                if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+                try { [void]$proc.WaitForExit(15000) } catch { }
+                Write-Host ('cleanup: exited={0}' -f $proc.HasExited)
+            }
+
+            Write-Host ('checks failed=' + $fails.Count)
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join '; ')); exit 1 }
+            Write-Host 'ALL PASSED'
+            exit 0
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 6403
+    - id: release-package-and-verify
+      name:
+        text: 打包链路：package-release + verify-package + 压缩包内容与 SHA256
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$ErrorActionPreference = 'Stop'
+
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+            . (Join-Path $root 'WidgetInstaller.ps1')
+
+
+            $fails = New-Object System.Collections.Generic.List[string]
+
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) {
+            Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name);
+            [void]$fails.Add($Name) } }
+
+
+            $tokens = $null; $parseErrors = $null
+
+            $ast =
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path
+            $root 'AiUsageWidget.ps1'), [ref]$tokens, [ref]$parseErrors)
+
+            $assignments = @($ast.FindAll({ param($node) $node -is
+            [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$script:AppVersion' }, $true))
+
+            Check ($assignments.Count -eq 1) 'the widget script declares one
+            application version'
+
+            $version = [string]$assignments[0].Right.Extent.Text.Trim([char]39)
+
+            Check ($version -match '^\\d+\\.\\d+\\.\\d+$') ('the declared
+            version looks like a release version: ' + $version)
+
+            Write-Host ('version=' + $version)
+
+
+            $runtime = @(Get-WidgetRuntimeFileList $root)
+
+            Check ($runtime -contains 'WidgetTrend.ps1') 'the installer runtime
+            list carries the new WidgetTrend.ps1'
+
+            Check ($runtime.Count -ge 35) ('the runtime list still covers the
+            whole widget: ' + $runtime.Count + ' files')
+
+
+            $engine = $enginePath
+
+            $reported = (& $engine -NoProfile -ExecutionPolicy Bypass -File
+            (Join-Path $root 'AiUsageWidget.ps1') -Version 2>&1) -join ' '
+
+            Check ($reported.Trim() -eq ('AI Usage Widget ' + $version))
+            ('running the widget with -Version prints the declared version, got:
+            ' + $reported.Trim())
+
+
+            $outDir = Join-Path $env:TEMP ('ai-usage-pkg-' +
+            [guid]::NewGuid().ToString('n'))
+
+            [void][IO.Directory]::CreateDirectory($outDir)
+
+            $packageLog = (& $engine -NoProfile -ExecutionPolicy Bypass -File
+            (Join-Path $root 'tools\\package-release.ps1') -Version $version
+            -OutDir $outDir 2>&1) -join \"`n\"
+
+            $packageCode = $LASTEXITCODE
+
+            Check ($packageCode -eq 0) ('tools/package-release.ps1 exits zero
+            for ' + $version)
+
+            if ($packageCode -ne 0) { Write-Host ($packageLog | Select-Object
+            -Last 20) }
+
+
+            $verifyLog = (& $engine -NoProfile -ExecutionPolicy Bypass -File
+            (Join-Path $root 'tools\\verify-package.ps1') -Version $version
+            -OutDir $outDir 2>&1) -join \"`n\"
+
+            $verifyCode = $LASTEXITCODE
+
+            Check ($verifyCode -eq 0) 'tools/verify-package.ps1 exits zero on
+            the freshly built package'
+
+            if ($verifyCode -ne 0) { Write-Host ($verifyLog | Select-Object
+            -Last 30) }
+
+
+            $zipName = 'ai-usage-widget-' + $version + '.zip'
+
+            $zipPath = Join-Path $outDir $zipName
+
+            Check (Test-Path -LiteralPath $zipPath -PathType Leaf) ('the release
+            archive is named ' + $zipName)
+
+
+            $shaPath = $zipPath + '.sha256'
+
+            Check (Test-Path -LiteralPath $shaPath -PathType Leaf) 'the archive
+            ships a .sha256 sidecar'
+
+            Check (Test-Path -LiteralPath (Join-Path $outDir
+            'ai-usage-widget.json') -PathType Leaf) 'the Scoop manifest is
+            regenerated next to the archive'
+
+            Check (Test-Path -LiteralPath (Join-Path $outDir 'RELEASE_NOTES.md')
+            -PathType Leaf) ('the changelog has release notes for ' + $version)
+
+
+            if (Test-Path -LiteralPath $zipPath -PathType Leaf) {
+
+            \    if (Test-Path -LiteralPath $shaPath -PathType Leaf) {
+
+            \        $declared = (([IO.File]::ReadAllText($shaPath)).Trim()
+            -split '\\s+')[0]
+
+            \        $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm
+            SHA256).Hash
+
+            \        Check ($declared -eq $actual) 'the .sha256 matches the
+            archive it ships with'
+
+            \    }
+
+            \    $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+
+            \    try {
+
+            \        $entries = @($archive.Entries | ForEach-Object {
+            $_.FullName })
+
+            \    } finally { $archive.Dispose() }
+
+            \    Check (($entries -contains ('ai-usage-widget-' + $version +
+            '/WidgetTrend.ps1'))) 'the archive contains WidgetTrend.ps1 at the
+            package root'
+
+            \    $missing = @($runtime | Where-Object { $entries -notcontains
+            ('ai-usage-widget-' + $version + '/' + ($_ -replace '\\\\', '/')) })
+
+            \    Check ($missing.Count -eq 0) ('every runtime file made it into
+            the archive (missing: ' + ($missing -join ',') + ')')
+
+            \    $forbidden = @('ai-config.json', 'ai-state.json',
+            'ai-history.jsonl', 'ai-request-events.jsonl', 'ai-widget.log',
+            '.comet/', 'dist/')
+
+            \    $leaked = @($forbidden | Where-Object { $victim = $_;
+            @($entries | Where-Object { $_ -like ('*' + $victim + '*') }).Count
+            -gt 0 })
+
+            \    Check ($leaked.Count -eq 0) ('the archive carries no local
+            state or build output (leaked: ' + ($leaked -join ',') + ')')
+
+            \    Write-Host ('archiveEntries=' + $entries.Count)
+
+            }
+
+
+            [IO.Directory]::Delete($outDir, $true)
+
+
+            Write-Host ('checks failed=' + $fails.Count)
+
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join ';
+            ')); exit 1 }
+
+            Write-Host 'ALL PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 2699
+    - id: site-and-docs-consistency
+      name:
+        text: 站点构建与文档/版本一致性（README、CHANGELOG、architecture、troubleshooting、截图）
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$ErrorActionPreference = 'Stop'
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+
+            $fails = New-Object System.Collections.Generic.List[string]
+
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) {
+            Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name);
+            [void]$fails.Add($Name) } }
+
+
+            $tokens = $null; $parseErrors = $null
+
+            $ast =
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path
+            $root 'AiUsageWidget.ps1'), [ref]$tokens, [ref]$parseErrors)
+
+            $assignments = @($ast.FindAll({ param($node) $node -is
+            [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -eq '$script:AppVersion' }, $true))
+
+            $version = [string]$assignments[0].Right.Extent.Text.Trim([char]39)
+
+
+            $outDir = Join-Path $env:TEMP ('ai-usage-site-' +
+            [guid]::NewGuid().ToString('n'))
+
+            $siteLog = (& $enginePath -NoProfile -ExecutionPolicy Bypass -File
+            (Join-Path $root 'tools\\build-site.ps1') -OutDir $outDir 2>&1)
+            -join \"`n\"
+
+            $siteCode = $LASTEXITCODE
+
+            Check ($siteCode -eq 0) 'tools/build-site.ps1 exits zero, so no page
+            has a dead link or unreplaced placeholder'
+
+            if ($siteCode -ne 0) { Write-Host ($siteLog | Select-Object -Last
+            20) }
+
+
+            $indexPath = Join-Path $outDir 'index.html'
+
+            Check (Test-Path -LiteralPath $indexPath -PathType Leaf) 'the built
+            site has an index page'
+
+            $index = if (Test-Path -LiteralPath $indexPath) {
+            [IO.File]::ReadAllText($indexPath) } else { '' }
+
+            Check (-not $index.Contains('{{')) 'every placeholder in the landing
+            page was substituted'
+
+            Check ($index.Contains(('当前版本 ' + $version))) ('the landing page
+            shows the declared version ' + $version)
+
+            Check ($index.Contains(('ai-usage-widget-' + $version + '.zip')))
+            'the install snippet points at the declared version archive'
+
+            Check ($index.Contains('多月对比导出（供应商 × 月份表格 + 环比变化）与独立趋势图窗口（7 / 14 /
+            30 天）')) 'the Chinese feature list advertises the comparison export
+            and the trend window'
+
+            Check ($index.Contains('Multi-month comparison export
+            (provider-by-month table with change column) and a dedicated 7 / 14
+            / 30-day trend window')) 'the English feature list advertises the
+            same two features'
+
+            Check ($index.Contains('src=\"assets/demo-trend.png\"')) 'the
+            landing page links the new trend window screenshot'
+
+            Check (Test-Path -LiteralPath (Join-Path $outDir
+            'assets\\demo-trend.png') -PathType Leaf) 'that screenshot really
+            made it into the built site'
+
+            Check (Test-Path -LiteralPath (Join-Path $root
+            'docs\\images\\demo-trend.png') -PathType Leaf) 'the screenshot
+            lives in the documented docs/images folder'
+
+            [IO.Directory]::Delete($outDir, $true)
+
+
+            $readme = [IO.File]::ReadAllText((Join-Path $root 'README.md'))
+
+            $readmeEn = [IO.File]::ReadAllText((Join-Path $root 'README.en.md'))
+
+            $changelog = [IO.File]::ReadAllText((Join-Path $root
+            'CHANGELOG.md'))
+
+            $architecture = [IO.File]::ReadAllText((Join-Path $root
+            'docs\\architecture.md'))
+
+            $troubleshooting = [IO.File]::ReadAllText((Join-Path $root
+            'docs\\troubleshooting.md'))
+
+
+            Check ($changelog.Contains(('## [' + $version + ']'))) ('the
+            changelog documents release ' + $version)
+
+            Check ($changelog.Contains('WidgetTrend.ps1')) 'the changelog names
+            the new module'
+
+            Check ($readme.Contains(('ai-usage-widget-' + $version + '.zip')))
+            'the Chinese readme install example uses the declared version'
+
+            Check ($readmeEn.Contains(('ai-usage-widget-' + $version + '.zip')))
+            'the English readme install example uses the declared version'
+
+            Check ($readme.Contains('多月对比')) 'the Chinese readme documents the
+            comparison export'
+
+            Check ($readmeEn.Contains('Multi-month comparison')) 'the English
+            readme documents the comparison export'
+
+            Check ($readme.Contains('趋势图')) 'the Chinese readme documents the
+            trend window'
+
+            Check ($readmeEn.Contains('Trend window')) 'the English readme
+            documents the trend window'
+
+            Check ($readme.Contains('docs/images/demo-trend.png')) 'the Chinese
+            readme embeds the new screenshot'
+
+            Check ($readmeEn.Contains('docs/images/demo-trend.png')) 'the
+            English readme embeds the new screenshot'
+
+            Check (([regex]::Matches($readme, 'WidgetTrend\\.ps1').Count) -ge 1)
+            'the Chinese readme file table lists WidgetTrend.ps1'
+
+            Check (([regex]::Matches($readmeEn, 'WidgetTrend\\.ps1').Count) -ge
+            1) 'the English readme file table lists WidgetTrend.ps1'
+
+            Check ($architecture.Contains('WidgetTrend.ps1')) 'the architecture
+            note describes the new module'
+
+            Check (($architecture.Contains('Show-WidgetTrend')) -and
+            ($architecture.Contains('Get-UsageHistoryMonthComparison'))) 'the
+            architecture note describes the trend window and the comparison
+            pipeline'
+
+            Check (([regex]::Matches($troubleshooting, '趋势图|多月对比').Count) -ge 1)
+            'the troubleshooting note covers the new features'
+
+
+            Write-Host ('checks failed=' + $fails.Count)
+
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join ';
+            ')); exit 1 }
+
+            Write-Host 'ALL PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 1063
+    - id: static-analysis-and-hygiene
+      name:
+        text: PSScriptAnalyzer 零 Error 与仓库卫生（无密钥文件、无构建产物入库）
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -ExecutionPolicy
+          truncated: false
+        - text: Bypass
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: "$ErrorActionPreference = 'Stop'
+
+            $root = (Get-Location).Path
+
+            if (-not (Test-Path -LiteralPath (Join-Path $root
+            'AiUsageWidget.ps1') -PathType Leaf)) { Write-Host ('FAIL not
+            running inside the widget checkout: ' + $root); exit 1 }
+
+            # 解析外部可执行文件：某些环境（含沙箱）的 PATHEXT 可能不含 .exe，
+
+            # 只靠 Get-Command 会找不到 pwsh / git，所以再显式扫描 PATH 与常见安装位置。
+
+            function Resolve-Tool {
+
+            \    param([string]$Name, [string[]]$Extra)
+
+            \    $cmd = Get-Command -Name $Name -ErrorAction SilentlyContinue
+
+            \    if ($cmd -and $cmd.Source) { return $cmd.Source }
+
+            \    $candidates = New-Object
+            System.Collections.Generic.List[string]
+
+            \    foreach ($item in @($Extra)) { if ($item) {
+            [void]$candidates.Add([string]$item) } }
+
+            \    foreach ($dir in @($env:PATH -split ';')) {
+
+            \        $clean = $dir.Trim().Trim([char]34)
+
+            \        if (-not $clean) { continue }
+
+            \        foreach ($ext in @('.exe', '.cmd', '.bat', '.com')) {
+            [void]$candidates.Add((Join-Path $clean ($Name + $ext))) }
+
+            \    }
+
+            \    foreach ($candidate in $candidates) { if (Test-Path
+            -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+
+            \    return $null
+
+            }
+
+
+            $enginePath = Resolve-Tool -Name 'pwsh' -Extra @((Join-Path $PSHOME
+            'pwsh.exe'))
+
+            if (-not $enginePath) { $enginePath = Resolve-Tool -Name
+            'powershell' -Extra
+            @('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+            }
+
+            if (-not $enginePath) { Write-Host 'FAIL no PowerShell engine is
+            available for the checks'; exit 1 }
+
+            Write-Host ('checkEngine=' + $enginePath)
+
+
+            $fails = New-Object System.Collections.Generic.List[string]
+
+            function Check { param([bool]$Ok, [string]$Name) if ($Ok) {
+            Write-Host ('OK   ' + $Name) } else { Write-Host ('FAIL ' + $Name);
+            [void]$fails.Add($Name) } }
+
+
+            Import-Module PSScriptAnalyzer -ErrorAction Stop
+
+            $findings = @(Invoke-ScriptAnalyzer -Path $root -Recurse -Severity
+            Error, Warning)
+
+            $errors = @($findings | Where-Object { $_.Severity -eq 'Error' })
+
+            $warnings = @($findings | Where-Object { $_.Severity -eq 'Warning'
+            })
+
+            Write-Host ('analyzer findings: errors={0} warnings={1}' -f
+            $errors.Count, $warnings.Count)
+
+            foreach ($item in @($errors | Select-Object -First 10)) { Write-Host
+            ('  ERROR {0}:{1} {2} {3}' -f $item.ScriptName, $item.Line,
+            $item.RuleName, $item.Message) }
+
+            Check ($errors.Count -eq 0) 'PSScriptAnalyzer reports no error
+            severity finding anywhere in the repository'
+
+            $rules = @($warnings | Group-Object RuleName | Sort-Object Count
+            -Descending | Select-Object -First 5)
+
+            Write-Host ('  top warning rules: ' + (($rules | ForEach-Object {
+            $_.Name + '=' + $_.Count }) -join ', '))
+
+
+            $gitFallbacks = @()
+
+            if ($env:ProgramFiles) { $gitFallbacks += (Join-Path
+            $env:ProgramFiles 'Git\\cmd\\git.exe') }
+
+            if ($env:LOCALAPPDATA) { $gitFallbacks += (Join-Path
+            $env:LOCALAPPDATA 'Programs\\Git\\cmd\\git.exe') }
+
+            $git = Resolve-Tool -Name 'git' -Extra $gitFallbacks
+
+            if (-not $git) { Write-Host 'FAIL git is not available for the
+            repository checks'; exit 1 }
+
+            Write-Host ('gitPath=' + $git)
+
+            $diffOut = (& $git -C $root diff --check 2>&1) -join \"`n\"
+
+            Check ($LASTEXITCODE -eq 0) ('git diff --check reports no whitespace
+            error: ' + $diffOut.Trim())
+
+
+            $status = @((& $git -C $root status --porcelain) | Where-Object { $_
+            })
+
+            $changed = @($status | ForEach-Object { ($_ -replace '^..\\s+',
+            '').Trim() })
+
+            Write-Host ('worktree changes: ' + $changed.Count)
+
+
+            $secretPattern =
+            '(?i)(^|/)(\\.env|\\.env\\..*|credentials.*|secrets?.*|.*\\.pem|.*\
+            \\.key|id_rsa.*|.*password.*)$'
+
+            $secretHits = @($changed | Where-Object { $_ -match $secretPattern
+            })
+
+            Check ($secretHits.Count -eq 0) ('no credential or secret file is
+            part of the change (found: ' + ($secretHits -join ',') + ')')
+
+
+            $buildPattern =
+            '(?i)^(dist/|_site/|ai-widget\\.log$|ai-history\\.jsonl$|ai-state\\\
+            .json$|ai-config\\.json$|ai-request-events\\.jsonl$)'
+
+            $buildHits = @($changed | Where-Object { $_ -match $buildPattern })
+
+            Check ($buildHits.Count -eq 0) ('local state and build output stay
+            out of git (found: ' + ($buildHits -join ',') + ')')
+
+
+            $tracked = @((& $git -C $root ls-files) | Where-Object { $_ })
+
+            Check ((@($tracked | Where-Object { $_ -like 'dist/*' }).Count) -eq
+            0) 'the release output folder is not tracked'
+
+            Check ((@($tracked | Where-Object { $_ -like '.comet/*' }).Count)
+            -eq 0) 'the workflow state folder is not tracked'
+
+            Check (($tracked -contains 'WidgetTrend.ps1') -or ($changed
+            -contains 'WidgetTrend.ps1')) 'the new module is part of the change
+            set'
+
+            Check (($tracked -contains 'docs/images/demo-trend.png') -or
+            ($changed -contains 'docs/images/demo-trend.png')) 'the new
+            screenshot is part of the change set'
+
+
+            Write-Host ('checks failed=' + $fails.Count)
+
+            if ($fails.Count -gt 0) { Write-Host ('FAILED ' + ($fails -join ';
+            ')); exit 1 }
+
+            Write-Host 'ALL PASSED'
+
+            exit 0\r\n"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 15834
+  summary:
+    text: usage-report-enhancement（候选 2993e455-4706-45ba-b6c9-b3b1a7e79104，第 1 轮第 2
+      次验收）结论 pass：A1–A11 十一项全部 passed，全部有本轮独立实跑或实读的第一手依据。Runtime 本轮以操作号
+      34aa74d0-* 重新执行全部 8 项检查，21:16:49–21:17:46 全部 passed、exit=0，且候选文件最后写入时间不晚于
+      20:33:20，早于回执起点，回执确实跑在当前候选上。上一轮 demo-trend-window-smoke
+      的失败经本轮独立复核仍判定为检查脚本的 UIA 时序缺陷：修正只提升“找到下拉项”的稳定性，断言仍要求 index 2 的名称精确等于语言包
+      trend.days -f 30，未被弱化。独立复现：双引擎 35 个测试套件全通过；打包与校验链路 exit 0，压缩包 40 条目含
+      WidgetTrend.ps1，包内文件与候选字节一致，版本 0.15.0 与 .sha256
+      自洽；真实窗口实测导出历史子菜单恰六项、趋势区间下拉恰 7/14/30 三项且默认 7
+      天并按时重绘、折线像素命中卡片调色板三色、无历史时只弹本地化提示且不落文件、5 天采样在 30 天窗口只画 5 点且图例保留最新百分比、-Demo
+      -TrendWindow 日志与三标志正确且哨兵文件字节未变。
+    truncated: false
+  risks:
+    - text: A8 的“不读写”只在写入侧成立：demo 模式仍会读取真实 ai-state.json（记忆窗口坐标），该行为在 main
+        上已存在、本次未触及，属只读且非回归，但字面上与“不读写真实状态文件”不完全吻合，属遗留隐患。
+      truncated: false
+    - text: 非 demo 实机路径未覆盖：真实实例占用单实例互斥，非 demo -TrendWindow
+        与真实用户历史的导出路径未实跑，相关逻辑仅由合成历史加真实窗口 harness 间接覆盖。
+      truncated: false
+    - text: 趋势图 14/30 天视图没有入库截图（仓库只新增 7 天视图 docs/images/demo-trend.png），本轮用自建图形
+        harness 验证而非视觉评审，观感仍需用户肉眼确认。
+      truncated: false
+    - text: 站点只做了 build-site 一致性与文档一致性检查，未做部署验证。
+      truncated: false
+    - text: 工作区顶层有未跟踪目录 %SystemDrive%/ProgramData/Microsoft/Windows/Caches/*.db（约
+        1MB，未被 .gitignore 覆盖，写入时间早于本轮检查窗口），属环境侧产物，收尾时应清理以免影响 git status 判读。
+      truncated: false
+    - text: 此前检查集中一条旧的一次性枚举版 demo-trend-window-smoke 曾失败（5565d614-* 日志）；本轮已用同一个检查 id
+        换成按截止时间轮询的版本并由 Runtime 重新执行通过，旧日志仍在 logs/checks 下作为历史残留。
+      truncated: false
+    - text: A1 文件名口径为所选区间的最早/最新月，与 brief 决策 Q3 的默认最近 3 个月一致；若用户本意是覆盖全部有数据月份，需另开需求。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-17T13:34:36.118Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: "Native Verifier response was invalid: Native verification cannot pass
+        before every required check succeeds"
+      truncated: false
+    completed_at: 2026-09-17T13:12:50.782Z
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 2
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: usage-report-enhancement（候选 2993e455-4706-45ba-b6c9-b3b1a7e79104，第 1 轮第 2
+        次验收）结论 pass：A1–A11 十一项全部 passed，全部有本轮独立实跑或实读的第一手依据。Runtime 本轮以操作号
+        34aa74d0-* 重新执行全部 8 项检查，21:16:49–21:17:46 全部
+        passed、exit=0，且候选文件最后写入时间不晚于 20:33:20，早于回执起点，回执确实跑在当前候选上。上一轮
+        demo-trend-window-smoke 的失败经本轮独立复核仍判定为检查脚本的 UIA
+        时序缺陷：修正只提升“找到下拉项”的稳定性，断言仍要求 index 2 的名称精确等于语言包 trend.days -f
+        30，未被弱化。独立复现：双引擎 35 个测试套件全通过；打包与校验链路 exit 0，压缩包 40 条目含
+        WidgetTrend.ps1，包内文件与候选字节一致，版本 0.15.0 与 .sha256
+        自洽；真实窗口实测导出历史子菜单恰六项、趋势区间下拉恰 7/14/30 三项且默认 7
+        天并按时重绘、折线像素命中卡片调色板三色、无历史时只弹本地化提示且不落文件、5 天采样在 30 天窗口只画 5
+        点且图例保留最新百分比、-Demo -TrendWindow 日志与三标志正确且哨兵文件字节未变。
+      truncated: false
+    completed_at: 2026-09-17T13:34:36.118Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-17T11:57:42.137Z
