@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 排错手册
+    url: https://github.com/Regine88/ai-usage-widget/blob/main/docs/troubleshooting.md
+    about: 安装、凭据、刷新失败、DPI 等常见问题请先看这里
+  - name: 安全漏洞
+    url: https://github.com/Regine88/ai-usage-widget/security/advisories/new
+    about: 请通过私密渠道报告安全问题，不要开公开 Issue
+  - name: 使用与配置说明
+    url: https://github.com/Regine88/ai-usage-widget#readme
+    about: 命令行开关、供应商支持范围、数据存放位置

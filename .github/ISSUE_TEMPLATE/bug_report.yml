@@ -1,0 +1,84 @@
+name: Bug 报告
+description: 报告可复现的功能异常（请勿附带任何密钥或账号信息）
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索现有 Issue，并确认已阅读 [排错手册](https://github.com/Regine88/ai-usage-widget/blob/main/docs/troubleshooting.md)。
+        请勿粘贴 token、cookie、邮箱或截图中的个人信息。You may write in English or Chinese.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题现象
+      description: 实际发生了什么？你期望的结果是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 运行 .\AiUsageWidget.ps1
+        2. 右键点击卡片
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: widget-version
+    attributes:
+      label: 小组件版本
+      description: 运行 `.\AiUsageWidget.ps1 -Version` 的输出
+      placeholder: AI Usage Widget 0.6.0
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: 使用的 PowerShell
+      options:
+        - Windows PowerShell 5.1
+        - PowerShell 7.x
+        - 两者都有
+        - 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: 涉及的供应商
+      multiple: true
+      options:
+        - Grok
+        - Gemini / Antigravity
+        - Kimi
+        - ChatGPT / Codex
+        - Command Code
+        - 界面 / 布局 / DPI
+        - 开机启动 / 托盘
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 来自 `ai-widget.log` 的片段；请删除邮箱、账号 ID 等个人信息
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Windows 版本
+      placeholder: Windows 11 23H2 (22631.4169)
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他补充
+      description: 截图（已脱敏）、缩放比例、代理设置等
+    validations:
+      required: false

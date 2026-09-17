@@ -1,0 +1,54 @@
+name: 功能建议
+description: 提议新供应商、新能力或体验改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        新增供应商前请先阅读 [供应商扩展指南](https://github.com/Regine88/ai-usage-widget/blob/main/docs/providers.md)。
+        You may write in English or Chinese.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 建议类型
+      options:
+        - 新增供应商
+        - 历史 / 趋势统计
+        - 设置面板
+        - 界面 / 主题
+        - 提醒策略
+        - 分发 / 安装
+        - 文档 / 工程
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+      description: 你现在遇到什么不便？为什么现有功能不能满足？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的方案
+      description: 你希望它怎么工作？例如卡片上显示什么、菜单里出现什么选项
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案
+      description: 你考虑过的其他做法，或同类工具的处理方式
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 你能提供的帮助
+      options:
+        - label: 我可以提交实现
+        - label: 我可以帮忙测试
+        - label: 我可以提供接口样例（已脱敏）

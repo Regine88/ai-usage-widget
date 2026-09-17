@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.label }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: PowerShell 7
+            shell: pwsh
+          - label: Windows PowerShell 5.1
+            shell: powershell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse check
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Path . -Recurse -Include '*.ps1', '*.psm1' -File
+          $bad = 0
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($item in $errors) {
+              $bad++
+              Write-Host ('::error file={0},line={1}::{2}' -f $file.FullName, $item.Extent.StartLineNumber, $item.Message)
+            }
+          }
+          Write-Host ('parsed {0} file(s) with {1} syntax error(s)' -f $files.Count, $bad)
+          if ($bad -gt 0) { throw 'PowerShell syntax errors found' }
+
+      - name: Version switch
+        shell: ${{ matrix.shell }}
+        run: |
+          $output = & .\AiUsageWidget.ps1 -Version
+          Write-Host $output
+          if ($output -notmatch 'AI Usage Widget \d') { throw 'Unexpected -Version output' }
+
+      - name: Offline test suites
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hostExe = (Get-Process -Id $PID).Path
+          $tests = Get-ChildItem -Path . -Filter 'test-*.ps1' -File | Sort-Object Name
+          if ($tests.Count -eq 0) { throw 'No test suites found' }
+          $failed = @()
+          foreach ($test in $tests) {
+            Write-Host ('::group::' + $test.Name)
+            $output = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $test.FullName 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            Write-Host $output
+            Write-Host '::endgroup::'
+            if ($code -ne 0 -or $output -notmatch 'ALL PASSED') {
+              $failed += $test.Name
+              Write-Host ('::error::{0} failed with exit code {1}' -f $test.Name, $code)
+            }
+          }
+          if ($failed.Count -gt 0) { throw ('failed suites: ' + ($failed -join ', ')) }
+          Write-Host ('{0} suite(s) passed on {1}' -f $tests.Count, $PSVersionTable.PSVersion)
+
+  analyze:
+    name: PSScriptAnalyzer (report only)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Analyze
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning
+          if (-not $results) {
+            Write-Host 'PSScriptAnalyzer reported no findings'
+            return
+          }
+          $results |
+            Sort-Object ScriptName, Line |
+            Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message |
+            Out-String -Width 220 |
+            Write-Host
+          Write-Host ('{0} finding(s); this job only reports and never fails the build' -f $results.Count)
