@@ -23,7 +23,7 @@ function Get-WidgetConfigDefaults {
         lockPosition    = $false
         layout          = 'full'
         providerAlertThresholds = @{}
-        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true }
+        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true; claude = $true; cursor = $true; glm = $true }
     }
 }
 

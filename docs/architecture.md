@@ -47,6 +47,9 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `CommandCodeQuota.ps1` | Command Code 配额解析纯函数：日 / 5 小时 / 周窗口、余额与时间换算 |
 | `OpenRouterQuota.ps1` | OpenRouter 密钥配额解析纯函数：密钥指纹、`usage` / `limit` 换算与无上限判定 |
 | `DeepSeekQuota.ps1` | DeepSeek 余额解析纯函数：多钱包挑选、币种符号、金额格式化（invariant culture） |
+| `ClaudeQuota.ps1` | Claude Code OAuth 用量解析：5 小时 / 周窗口、`utilization` 百分比 |
+| `CursorQuota.ps1` | Cursor 计费周期解析，以及从 state.vscdb 取出 JWT 的扫描函数 |
+| `ZaiQuota.ps1` | GLM / Z.AI Coding Plan 配额解析：5 小时 / 周窗口 |
 | `WidgetUpdates.ps1` | 版本比较与 GitHub Release 解析纯函数：tag 规范化、draft / prerelease / 非法载荷判定 |
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |

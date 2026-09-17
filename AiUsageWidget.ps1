@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.11.1'
+$script:AppVersion = '0.12.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -111,6 +111,29 @@ $script:DeepSeekApiBaseUrl = 'https://api.deepseek.com'
 $script:DeepSeekUsagePageUrl = 'https://platform.deepseek.com/usage'
 $script:DeepSeekDisplayName = 'DeepSeek'
 
+$script:ClaudeHomeDir = if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE '.claude' }
+$script:ClaudeCredPath = Join-Path $script:ClaudeHomeDir '.credentials.json'
+$script:ClaudeUsageUrl = 'https://api.anthropic.com/api/oauth/usage'
+$script:ClaudeTokenUrl = 'https://platform.claude.com/v1/oauth/token'
+$script:ClaudeTokenUrlLegacy = 'https://console.anthropic.com/v1/oauth/token'
+$script:ClaudeOAuthClientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+$script:ClaudeUsagePageUrl = 'https://claude.ai/settings/usage'
+$script:ClaudeDisplayName = 'Claude'
+
+$script:CursorStateDbPath = if ($env:CURSOR_STATE_DB) { $env:CURSOR_STATE_DB } else { Join-Path $env:APPDATA 'Cursor\User\globalStorage\state.vscdb' }
+$script:CursorUsageUrl = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage'
+$script:CursorUsagePageUrl = 'https://cursor.com/dashboard/spending'
+$script:CursorDisplayName = 'Cursor'
+
+$script:ZaiHomeDir = if ($env:ZAI_HOME) { $env:ZAI_HOME } else { Join-Path $env:USERPROFILE '.zai' }
+$script:ZhipuHomeDir = if ($env:ZHIPU_HOME) { $env:ZHIPU_HOME } else { Join-Path $env:USERPROFILE '.zhipu' }
+$script:ZaiAuthPath = Join-Path $script:ZaiHomeDir 'auth.json'
+$script:ZhipuAuthPath = Join-Path $script:ZhipuHomeDir 'auth.json'
+$script:ZaiApiBaseUrl = 'https://api.z.ai'
+$script:ZhipuApiBaseUrl = 'https://open.bigmodel.cn'
+$script:ZaiUsagePageUrl = 'https://z.ai/manage-apikey/billing'
+$script:ZaiDisplayName = 'GLM'
+
 $script:UpdateRepoSlug = 'Regine88/ai-usage-widget'
 $script:UpdateUserAgent = 'ai-usage-widget'
 $script:UpdatePageUrl = 'https://github.com/' + $script:UpdateRepoSlug
@@ -134,6 +157,9 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'OpenRouterQuota.ps1')
 . (Join-Path $script:WidgetDir 'DeepSeekQuota.ps1')
+. (Join-Path $script:WidgetDir 'ClaudeQuota.ps1')
+. (Join-Path $script:WidgetDir 'CursorQuota.ps1')
+. (Join-Path $script:WidgetDir 'ZaiQuota.ps1')
 . (Join-Path $script:WidgetDir 'WidgetUpdates.ps1')
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
@@ -181,6 +207,7 @@ $script:State = @{ x = $null; y = $null; topMost = $false; interval = $null }
 # 配置在 CLI 文案之前就已读取，这里按主题取一次调色板：界面颜色全部来自它。
 $script:Palette = Get-WidgetPalette $script:Config.theme
 $script:TrendSeries = @{}
+$script:CursorTokenCache = $null
 
 function Write-WidgetLog {
     param([string]$Message)
@@ -1163,6 +1190,254 @@ function Get-DeepSeekRowData {
     }
 }
 
+# --- Claude Code ---
+
+function Test-ClaudeCredExists {
+    Test-Path -LiteralPath $script:ClaudeCredPath
+}
+
+function Read-ClaudeAuthFromFile {
+    param([string]$Path = $script:ClaudeCredPath)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { throw 'missing-credential' }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+    return (Convert-ClaudeRawAuth $raw)
+}
+
+function Save-ClaudeAuth {
+    param($Auth, [string]$Path = $script:ClaudeCredPath)
+    if (-not $Auth -or -not $Path) { return }
+    $raw = $Auth.Raw
+    if (-not $raw) { return }
+    $oauth = $null
+    if ($raw.PSObject.Properties['claudeAiOauth']) { $oauth = $raw.claudeAiOauth }
+    if (-not $oauth -and $raw.PSObject.Properties['oauth']) { $oauth = $raw.oauth }
+    if ($oauth) {
+        $oauth.accessToken = $Auth.AccessToken
+        if ($Auth.RefreshToken) { $oauth.refreshToken = $Auth.RefreshToken }
+        if ($Auth.ExpiresAt) {
+            $epoch = [datetime]::SpecifyKind([datetime]'1970-01-01', 'Utc')
+            $ms = [int64]($Auth.ExpiresAt.ToUniversalTime() - $epoch).TotalMilliseconds
+            try { $oauth.expiresAt = $ms } catch { }
+        }
+    }
+    $json = $raw | ConvertTo-Json -Depth 10
+    Invoke-SecureSnapshotFileLock -Path $Path -Action {
+        $tmp = "$Path.tmp"
+        [IO.File]::WriteAllText($tmp, ($json.TrimEnd("`r", "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $tmp -Destination $Path -Force
+    }
+}
+
+function Update-ClaudeToken {
+    param($Auth)
+    if (-not $Auth -or -not $Auth.RefreshToken) { return $Auth }
+    if ($Auth.ExpiresAt -and $Auth.ExpiresAt.ToUniversalTime() -gt [datetime]::UtcNow.AddMinutes(2)) { return $Auth }
+    $body = 'grant_type=refresh_token&refresh_token={0}&client_id={1}' -f [Uri]::EscapeDataString($Auth.RefreshToken), [Uri]::EscapeDataString($script:ClaudeOAuthClientId)
+    $resp = $null
+    try {
+        $resp = Invoke-WidgetRest -Method Post -Uri $script:ClaudeTokenUrl -Body $body -ContentType 'application/x-www-form-urlencoded'
+    } catch {
+        $resp = Invoke-WidgetRest -Method Post -Uri $script:ClaudeTokenUrlLegacy -Body $body -ContentType 'application/x-www-form-urlencoded'
+    }
+    $access = [string]$resp.access_token
+    if (-not $access) { $access = [string]$resp.accessToken }
+    if (-not $access) { throw 'token-refresh' }
+    $Auth.AccessToken = $access
+    $newRefresh = [string]$resp.refresh_token
+    if (-not $newRefresh) { $newRefresh = [string]$resp.refreshToken }
+    if ($newRefresh) { $Auth.RefreshToken = $newRefresh }
+    $expiresIn = $resp.expires_in
+    if (Test-FiniteNumber $expiresIn) { $Auth.ExpiresAt = [datetime]::UtcNow.AddSeconds([double]$expiresIn) }
+    try { Save-ClaudeAuth $Auth } catch { Write-WidgetLog ('claude save token ' + (Convert-SafeLogText $_.Exception.Message 120)) }
+    return $Auth
+}
+
+function Get-ClaudeAuthHeaders {
+    param($Auth)
+    return @{
+        Authorization        = "Bearer $($Auth.AccessToken)"
+        Accept               = 'application/json'
+        'anthropic-version'  = '2023-06-01'
+        'anthropic-beta'     = 'oauth-2025-04-20'
+        'x-app'              = 'cli'
+        'User-Agent'         = 'claude-cli/2.1.201 (external, cli)'
+    }
+}
+
+function Get-ClaudeUsageSnapshot {
+    param($Auth)
+    $auth = Update-ClaudeToken $Auth
+    $data = Invoke-WidgetRest -Method Get -Uri $script:ClaudeUsageUrl -Headers (Get-ClaudeAuthHeaders $auth)
+    return (Convert-ClaudeUsage $data)
+}
+
+function Get-ClaudeRowData {
+    param($Auth, [string]$Name)
+    $auth = if ($Auth) { $Auth } else { Read-ClaudeAuthFromFile }
+    $usage = Get-ClaudeUsageSnapshot -Auth $auth
+    $display = if ($Name) { $Name } else { $script:ClaudeDisplayName }
+    $details = @()
+    if ($usage.FiveHour) { $details += (T 'row.window5hPercent' @($usage.FiveHour.Percent)) }
+    if ($usage.Weekly) { $details += (T 'row.windowWeekPercent' @($usage.Weekly.Percent)) }
+    $reset = Format-ResetText $usage.ResetAt
+    if ($reset) { $details += $reset }
+    Write-WidgetLog ("usage claude {0} ok" -f $usage.Percent)
+    [pscustomobject]@{
+        Percent   = $usage.Percent
+        Detail    = ($details -join ' · ')
+        Tip       = (T 'row.claudeTip' @((Format-PercentText $usage.Percent)))
+        Reset     = $(if ($usage.ResetAt) { Format-ResetTime $usage.ResetAt } else { $null })
+        ResetAt   = $(if ($usage.ResetAt) { ConvertTo-ResetStamp $usage.ResetAt } else { $null })
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
+# --- Cursor ---
+
+function Get-CursorStateDbPath {
+    if ($script:CursorStateDbPath) { return $script:CursorStateDbPath }
+    return (Join-Path $env:APPDATA 'Cursor\User\globalStorage\state.vscdb')
+}
+
+function Read-CursorAuth {
+    $path = Get-CursorStateDbPath
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { throw 'missing-credential' }
+    $stamp = $null
+    try { $stamp = (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks } catch { }
+    if ($script:CursorTokenCache -and $script:CursorTokenCache.Stamp -eq $stamp -and $script:CursorTokenCache.Token) {
+        return [pscustomobject]@{ AccessToken = $script:CursorTokenCache.Token }
+    }
+    $tmp = Join-Path $env:TEMP ('cursor-state-' + [guid]::NewGuid().ToString('N') + '.vscdb')
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $out = [IO.File]::Create($tmp)
+        try { $stream.CopyTo($out) } finally { $out.Dispose() }
+    } finally {
+        if ($stream) { $stream.Dispose() }
+    }
+    try {
+        $bytes = [IO.File]::ReadAllBytes($tmp)
+        $token = Get-CursorSqliteTextValue -Bytes $bytes -Key 'cursorAuth/accessToken'
+        if (-not $token) { throw 'missing-credential' }
+        $script:CursorTokenCache = @{ Stamp = $stamp; Token = $token }
+        return [pscustomobject]@{ AccessToken = $token }
+    } finally {
+        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
+
+function Test-CursorCredExists {
+    $path = Get-CursorStateDbPath
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        $auth = Read-CursorAuth
+        return [bool]$auth.AccessToken
+    } catch { return $false }
+}
+
+function Get-CursorUsageSnapshot {
+    param($Auth)
+    $auth = if ($Auth) { $Auth } else { Read-CursorAuth }
+    $headers = @{
+        Authorization                 = "Bearer $($auth.AccessToken)"
+        Accept                        = 'application/json'
+        'Content-Type'                = 'application/json'
+        'Connect-Protocol-Version'    = '1'
+        'User-Agent'                  = 'ai-usage-widget'
+    }
+    $data = Invoke-WidgetRest -Method Post -Uri $script:CursorUsageUrl -Headers $headers -Body '{}' -ContentType 'application/json'
+    return (Convert-CursorPeriodUsage $data)
+}
+
+function Get-CursorRowData {
+    param($Auth, [string]$Name)
+    $usage = Get-CursorUsageSnapshot -Auth $Auth
+    $display = if ($Name) { $Name } else { $script:CursorDisplayName }
+    $details = @()
+    if ($usage.Membership) { $details += $usage.Membership }
+    if ($null -ne $usage.Used -and $null -ne $usage.Limit) {
+        $details += (T 'row.limitUsage' @($usage.Used, $usage.Limit, $usage.Percent))
+    } elseif ($null -ne $usage.Remaining) {
+        $details += ('${0:0.00}' -f $usage.Remaining)
+    }
+    $reset = Format-ResetText $usage.ResetAt
+    if ($reset) { $details += $reset }
+    Write-WidgetLog ("usage cursor {0} ok" -f $usage.Percent)
+    [pscustomobject]@{
+        Percent   = $usage.Percent
+        Detail    = ($details -join ' · ')
+        Tip       = (T 'row.cursorTip' @((Format-PercentText $usage.Percent)))
+        Reset     = $(if ($usage.ResetAt) { Format-ResetTime $usage.ResetAt } else { $null })
+        ResetAt   = $(if ($usage.ResetAt) { ConvertTo-ResetStamp $usage.ResetAt } else { $null })
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
+# --- GLM / Z.AI ---
+
+function Get-ZaiResolvedAuthPath {
+    if (Test-Path -LiteralPath $script:ZaiAuthPath) { return $script:ZaiAuthPath }
+    if (Test-Path -LiteralPath $script:ZhipuAuthPath) { return $script:ZhipuAuthPath }
+    return $script:ZaiAuthPath
+}
+
+function Get-ZaiEnvironmentKey {
+    if ($env:ZAI_API_KEY) { return $env:ZAI_API_KEY }
+    return $env:ZHIPU_API_KEY
+}
+
+function Get-ZaiResolvedBaseUrl {
+    if ($env:ZAI_API_BASE) { return $env:ZAI_API_BASE.Trim().TrimEnd('/') }
+    $path = Get-ZaiResolvedAuthPath
+    if ($env:ZHIPU_API_KEY -and -not $env:ZAI_API_KEY) { return $script:ZhipuApiBaseUrl }
+    if ($path -and ($path -replace '/', '\').ToLowerInvariant().Contains('\.zhipu\')) { return $script:ZhipuApiBaseUrl }
+    return $script:ZaiApiBaseUrl
+}
+
+function Test-ZaiCredExists {
+    Test-ApiKeyCredExists -AuthPath (Get-ZaiResolvedAuthPath) -EnvironmentValue (Get-ZaiEnvironmentKey)
+}
+
+function Get-ZaiAuthHeaders {
+    param($Auth)
+    return @{
+        Authorization     = [string]$Auth.ApiKey
+        Accept            = 'application/json'
+        'Accept-Language' = 'en-US,en'
+        'User-Agent'      = 'ai-usage-widget'
+    }
+}
+
+function Get-ZaiUsageSnapshot {
+    param($Auth)
+    $auth = if ($Auth) { $Auth } else { Read-ApiKeyAuth -AuthPath (Get-ZaiResolvedAuthPath) -EnvironmentValue (Get-ZaiEnvironmentKey) }
+    $url = (Get-ZaiResolvedBaseUrl) + '/api/monitor/usage/quota/limit'
+    $data = Invoke-WidgetRest -Method Get -Uri $url -Headers (Get-ZaiAuthHeaders $auth)
+    return (Convert-ZaiQuota $data)
+}
+
+function Get-ZaiRowData {
+    param($Auth, [string]$Name)
+    $usage = Get-ZaiUsageSnapshot -Auth $Auth
+    $display = if ($Name) { $Name } else { $script:ZaiDisplayName }
+    $details = @()
+    if ($usage.Level) { $details += $usage.Level }
+    if ($usage.FiveHour) { $details += (T 'row.window5hPercent' @($usage.FiveHour.Percent)) }
+    if ($usage.Weekly) { $details += (T 'row.windowWeekPercent' @($usage.Weekly.Percent)) }
+    $reset = Format-ResetText $usage.ResetAt
+    if ($reset) { $details += $reset }
+    Write-WidgetLog ("usage glm {0} ok" -f $usage.Percent)
+    [pscustomobject]@{
+        Percent   = $usage.Percent
+        Detail    = ($details -join ' · ')
+        Tip       = (T 'row.glmTip' @((Format-PercentText $usage.Percent)))
+        Reset     = $(if ($usage.ResetAt) { Format-ResetTime $usage.ResetAt } else { $null })
+        ResetAt   = $(if ($usage.ResetAt) { ConvertTo-ResetStamp $usage.ResetAt } else { $null })
+        FetchedAt = $usage.FetchedAt
+    }
+}
+
 # --- Rows / UI ---
 
 function Get-DemoRowTable {
@@ -1173,6 +1448,9 @@ function Get-DemoRowTable {
         [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = ((T 'row.window5hPercent' @(41)) + ' · ' + (T 'row.windowWeekPercent' @(93)) + ' · ' + (T 'reset.daysHours' @(3, 6))); TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
         [pscustomobject]@{ Id = 'demo-openrouter'; Kind = 'openrouter'; Name = 'OpenRouter-3ad9f1c7'; OpenUrl = $script:OpenRouterUsagePageUrl; Percent = 12.5; Detail = (T 'row.limitUsage' @(12.5, 100, 12.5)); TrendPct = @(1.5, 3, 4.5, 6, 8, 10, 12.5) }
         [pscustomobject]@{ Id = 'demo-deepseek'; Kind = 'deepseek'; Name = $script:DeepSeekDisplayName; OpenUrl = $script:DeepSeekUsagePageUrl; Percent = 0.0; Display = '¥14.00'; Detail = ((T 'row.balanceToppedUp' @('¥12.40')) + ' · ' + (T 'row.balanceGranted' @('¥1.60'))); TrendPct = @(0, 0, 0, 0, 0, 0, 0) }
+        [pscustomobject]@{ Id = 'demo-claude'; Kind = 'claude'; Name = $script:ClaudeDisplayName; OpenUrl = $script:ClaudeUsagePageUrl; Percent = 37.0; Detail = ((T 'row.window5hPercent' @(11)) + ' · ' + (T 'row.windowWeekPercent' @(37)) + ' · ' + (T 'reset.daysHours' @(4, 8))); TrendPct = @(12, 18, 22, 27, 31, 34, 37) }
+        [pscustomobject]@{ Id = 'demo-cursor'; Kind = 'cursor'; Name = $script:CursorDisplayName; OpenUrl = $script:CursorUsagePageUrl; Percent = 58.0; Detail = (T 'row.limitUsage' @(11.6, 20, 58)); TrendPct = @(20, 28, 35, 42, 48, 53, 58) }
+        [pscustomobject]@{ Id = 'demo-glm'; Kind = 'glm'; Name = $script:ZaiDisplayName; OpenUrl = $script:ZaiUsagePageUrl; Percent = 22.0; Detail = ((T 'row.window5hPercent' @(8)) + ' · ' + (T 'row.windowWeekPercent' @(22)) + ' · ' + (T 'reset.hoursMinutes' @(3, 10))); TrendPct = @(4, 7, 10, 13, 16, 19, 22) }
     )
 }
 
@@ -1264,6 +1542,33 @@ function Get-ProviderRows {
             Kind    = 'deepseek'
             Name    = $script:DeepSeekDisplayName
             OpenUrl = $script:DeepSeekUsagePageUrl
+            Auth    = $null
+        }
+    }
+    if (Test-ClaudeCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'claude'
+            Kind    = 'claude'
+            Name    = $script:ClaudeDisplayName
+            OpenUrl = $script:ClaudeUsagePageUrl
+            Auth    = $null
+        }
+    }
+    if (Test-CursorCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'cursor'
+            Kind    = 'cursor'
+            Name    = $script:CursorDisplayName
+            OpenUrl = $script:CursorUsagePageUrl
+            Auth    = $null
+        }
+    }
+    if (Test-ZaiCredExists) {
+        $rows += [pscustomobject]@{
+            Id      = 'glm'
+            Kind    = 'glm'
+            Name    = $script:ZaiDisplayName
+            OpenUrl = $script:ZaiUsagePageUrl
             Auth    = $null
         }
     }
@@ -1872,7 +2177,7 @@ function Show-WidgetSettings {
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
-    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 508))
+    $dialog.ClientSize = New-Object System.Drawing.Size ((Scale-Px 360), (Scale-Px 560))
     $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     Set-UiThemeColor $dialog 'BackColor' 'Background'
     Set-UiThemeColor $dialog 'ForeColor' 'Text'
@@ -1912,24 +2217,27 @@ function Show-WidgetSettings {
     $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
     $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' (Scale-Px 208) (Scale-Px 252) ([bool]$current.providers.openrouter)
     $chkDeepSeek = New-SettingCheckBox $dialog 'DeepSeek' $colValue (Scale-Px 278) ([bool]$current.providers.deepseek)
+    $chkClaude = New-SettingCheckBox $dialog 'Claude' (Scale-Px 208) (Scale-Px 278) ([bool]$current.providers.claude)
+    $chkCursor = New-SettingCheckBox $dialog 'Cursor' $colValue (Scale-Px 304) ([bool]$current.providers.cursor)
+    $chkGlm = New-SettingCheckBox $dialog 'GLM' (Scale-Px 208) (Scale-Px 304) ([bool]$current.providers.glm)
 
-    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 310) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 336) $muted)
     $comboItems = @((T 'settings.languageAuto'), (T 'settings.languageZh'), (T 'settings.languageEn'))
-    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 310) (Scale-Px 150) $comboItems $languageIndex
+    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 336) (Scale-Px 150) $comboItems $languageIndex
 
-    [void](New-SettingLabel $dialog (T 'settings.theme') $colLabel (Scale-Px 340) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.theme') $colLabel (Scale-Px 366) $muted)
     $themes = @('dark', 'light')
     $themeIndex = [Math]::Max(0, [Array]::IndexOf($themes, [string]$current.theme))
     $themeItems = @((T 'settings.themeDark'), (T 'settings.themeLight'))
-    $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 340) (Scale-Px 150) $themeItems $themeIndex
+    $cmbTheme = New-SettingCombo $dialog $colValue (Scale-Px 366) (Scale-Px 150) $themeItems $themeIndex
 
-    $chkCompact = New-SettingCheckBox $dialog (T 'settings.compact') $colLabel (Scale-Px 370) ([string]$current.layout -eq 'compact')
-    $chkLock = New-SettingCheckBox $dialog (T 'settings.lockPosition') (Scale-Px 208) (Scale-Px 370) ([bool]$current.lockPosition)
+    $chkCompact = New-SettingCheckBox $dialog (T 'settings.compact') $colLabel (Scale-Px 396) ([string]$current.layout -eq 'compact')
+    $chkLock = New-SettingCheckBox $dialog (T 'settings.lockPosition') (Scale-Px 208) (Scale-Px 396) ([bool]$current.lockPosition)
 
-    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 398) $muted
+    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 424) $muted
 
-    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 428)
-    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 428)
+    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 454)
+    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 454)
 
     $dialog.AcceptButton = $btnSave
     $dialog.CancelButton = $btnCancel
@@ -1957,6 +2265,9 @@ function Show-WidgetSettings {
                     commandcode = [bool]$chkCommandCode.Checked
                     openrouter  = [bool]$chkOpenRouter.Checked
                     deepseek    = [bool]$chkDeepSeek.Checked
+                    claude      = [bool]$chkClaude.Checked
+                    cursor      = [bool]$chkCursor.Checked
+                    glm         = [bool]$chkGlm.Checked
                 }
                 theme           = $themes[$cmbTheme.SelectedIndex]
                 layout          = $(if ($chkCompact.Checked) { 'compact' } else { 'full' })
@@ -2187,6 +2498,9 @@ function New-WidgetForm {
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     $miOpenOpenRouter = $miOpen.DropDownItems.Add('OpenRouter')
     $miOpenDeepSeek = $miOpen.DropDownItems.Add('DeepSeek')
+    $miOpenClaude = $miOpen.DropDownItems.Add('Claude')
+    $miOpenCursor = $miOpen.DropDownItems.Add('Cursor')
+    $miOpenGlm = $miOpen.DropDownItems.Add('GLM')
     [void]$menu.Items.Add($miOpen)
     $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
@@ -2272,6 +2586,9 @@ function New-WidgetForm {
     $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
     $miOpenOpenRouter.Add_Click({ Start-Process $script:OpenRouterUsagePageUrl })
     $miOpenDeepSeek.Add_Click({ Start-Process $script:DeepSeekUsagePageUrl })
+    $miOpenClaude.Add_Click({ Start-Process $script:ClaudeUsagePageUrl })
+    $miOpenCursor.Add_Click({ Start-Process $script:CursorUsagePageUrl })
+    $miOpenGlm.Add_Click({ Start-Process $script:ZaiUsagePageUrl })
     $miLock.Add_Click({
         $script:Config.lockPosition = -not [bool]$script:Config.lockPosition
         $miLock.Checked = [bool]$script:Config.lockPosition
@@ -2473,7 +2790,16 @@ function Get-WorkerScriptSource {
         'Get-OpenRouterKeyFingerprint', 'Get-OpenRouterRowId',
         'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData',
         'Get-DeepSeekCurrencySymbol', 'Format-DeepSeekAmount', 'ConvertTo-DeepSeekPurse', 'Convert-DeepSeekBalance',
-        'Get-DeepSeekUsageSnapshot', 'Get-DeepSeekRowData'
+        'Get-DeepSeekUsageSnapshot', 'Get-DeepSeekRowData',
+        'Convert-ClaudeWindow', 'Convert-ClaudeUsage', 'Convert-ClaudeRawAuth',
+        'Test-ClaudeCredExists', 'Read-ClaudeAuthFromFile', 'Save-ClaudeAuth', 'Update-ClaudeToken',
+        'Get-ClaudeAuthHeaders', 'Get-ClaudeUsageSnapshot', 'Get-ClaudeRowData',
+        'ConvertTo-CursorDollars', 'Convert-CursorUnixMs', 'Get-CursorPlanUsageObject', 'Convert-CursorPeriodUsage',
+        'Find-Utf8NeedleIndex', 'Get-CursorJwtFromBytes', 'Get-CursorSqliteTextValue',
+        'Get-CursorStateDbPath', 'Read-CursorAuth', 'Test-CursorCredExists', 'Get-CursorUsageSnapshot', 'Get-CursorRowData',
+        'Convert-ZaiResetTime', 'Convert-ZaiLimitItem', 'Test-ZaiFiveHourType', 'Test-ZaiWeeklyType', 'Convert-ZaiQuota',
+        'Get-ZaiResolvedAuthPath', 'Get-ZaiEnvironmentKey', 'Get-ZaiResolvedBaseUrl', 'Test-ZaiCredExists',
+        'Get-ZaiAuthHeaders', 'Get-ZaiUsageSnapshot', 'Get-ZaiRowData'
     )
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('param($Rows, $Cfg)')
@@ -2484,7 +2810,11 @@ function Get-WorkerScriptSource {
                    'AntigravityTokenUrl', 'AntigravityQuotaUrl',
                    'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName',
                    'OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName',
-                   'DeepSeekAuthPath', 'DeepSeekApiBaseUrl', 'DeepSeekDisplayName', 'SecureSnapshotRoot',
+                   'DeepSeekAuthPath', 'DeepSeekApiBaseUrl', 'DeepSeekDisplayName',
+                   'ClaudeCredPath', 'ClaudeUsageUrl', 'ClaudeTokenUrl', 'ClaudeTokenUrlLegacy', 'ClaudeOAuthClientId', 'ClaudeDisplayName',
+                   'CursorStateDbPath', 'CursorUsageUrl', 'CursorDisplayName', 'CursorTokenCache',
+                   'ZaiAuthPath', 'ZhipuAuthPath', 'ZaiApiBaseUrl', 'ZhipuApiBaseUrl', 'ZaiDisplayName',
+                   'SecureSnapshotRoot',
                    'WidgetStrings', 'Language') {
         [void]$sb.AppendLine("`$script:$v = `$Cfg.$v")
     }
@@ -2506,6 +2836,9 @@ foreach ($row in @($Rows)) {
             'commandcode' { $d = Get-CommandCodeRowData }
             'openrouter' { $d = Get-OpenRouterRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
             'deepseek' { $d = Get-DeepSeekRowData -Auth $row.Auth -Name $row.Name }
+            'claude' { $d = Get-ClaudeRowData -Auth $row.Auth -Name $row.Name }
+            'cursor' { $d = Get-CursorRowData -Auth $row.Auth -Name $row.Name }
+            'glm' { $d = Get-ZaiRowData -Auth $row.Auth -Name $row.Name }
             default { throw '未找到登录凭证' }
         }
         $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Display = $d.Display; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
@@ -2545,6 +2878,21 @@ function Start-BackgroundFetch {
         DeepSeekAuthPath         = $script:DeepSeekAuthPath
         DeepSeekApiBaseUrl       = $script:DeepSeekApiBaseUrl
         DeepSeekDisplayName      = $script:DeepSeekDisplayName
+        ClaudeCredPath           = $script:ClaudeCredPath
+        ClaudeUsageUrl           = $script:ClaudeUsageUrl
+        ClaudeTokenUrl           = $script:ClaudeTokenUrl
+        ClaudeTokenUrlLegacy     = $script:ClaudeTokenUrlLegacy
+        ClaudeOAuthClientId      = $script:ClaudeOAuthClientId
+        ClaudeDisplayName        = $script:ClaudeDisplayName
+        CursorStateDbPath        = $script:CursorStateDbPath
+        CursorUsageUrl           = $script:CursorUsageUrl
+        CursorDisplayName        = $script:CursorDisplayName
+        CursorTokenCache         = $script:CursorTokenCache
+        ZaiAuthPath              = $script:ZaiAuthPath
+        ZhipuAuthPath            = $script:ZhipuAuthPath
+        ZaiApiBaseUrl            = $script:ZaiApiBaseUrl
+        ZhipuApiBaseUrl          = $script:ZhipuApiBaseUrl
+        ZaiDisplayName           = $script:ZaiDisplayName
         SecureSnapshotRoot       = $script:SecureSnapshotRoot
         WidgetStrings            = $script:WidgetStrings
         Language                 = $script:Language

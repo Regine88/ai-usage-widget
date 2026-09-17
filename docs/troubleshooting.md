@@ -15,7 +15,7 @@ pwsh -NoProfile -File .\AiUsageWidget.ps1 -Demo
 Get-Content -LiteralPath .\ai-widget.log -Tail 40
 ```
 
-如果第 2 步能正常显示六行固定演示数据（Grok / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek），说明界面与运行环境没问题，问题在凭证或网络。演示模式不含 Gemini 行。
+如果第 2 步能正常显示九行固定演示数据（Grok / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM），说明界面与运行环境没问题，问题在凭证或网络。演示模式不含 Gemini 行。
 
 ## 卡片完全没有出现
 
@@ -116,7 +116,7 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
 3. 手动卸载时：删除程序目录（含 `ai-state.json`、`ai-history.jsonl`、`ai-request-events.jsonl`、`ai-widget.log`）。
 4. 删除受保护的账号快照：`Remove-Item "$env:LOCALAPPDATA\AIUsageWidget" -Recurse`。
 5. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
-6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek` 是各供应商 CLI 的数据，本程序不会写入，按需自行保留。
+6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek`、`~/.claude`、`~/.zai`、`~/.zhipu` 以及 Cursor 的 `%APPDATA%\Cursor` 是各供应商自己的数据，本程序不会写入（Claude 令牌过期时会原地刷新），按需自行保留。
 
 ## 报告问题前请准备
 

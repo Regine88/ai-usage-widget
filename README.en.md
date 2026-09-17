@@ -28,6 +28,9 @@ The light theme uses the same layout (switch in the settings dialog, or run with
 | **Command Code** | 5-hour and weekly window usage, optional balance | Single account | `~/.commandcode/auth.json` |
 | **OpenRouter** | Spent credits and the key's spend limit (says so when unlimited) | One row per key | `~/.openrouter/auth.json` or `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | Account balance with the topped-up / granted breakdown (no percentage) | Single account | `~/.deepseek/auth.json` or `$env:DEEPSEEK_API_KEY` |
+| **Claude Code** | 5-hour and weekly window usage | Single account | `~/.claude/.credentials.json` (OAuth, not an API key) |
+| **Cursor** | Current billing-cycle used percent and remaining pool | Single account | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
+| **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Single account | `~/.zai/auth.json`, `~/.zhipu/auth.json`, or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
 
 If you already signed in to the matching CLI (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
@@ -120,7 +123,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.11.1.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.12.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -133,7 +136,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.11.1
+# AI Usage Widget 0.12.0
 ```
 
 ### Multiple accounts
@@ -191,7 +194,7 @@ and never published with the repository.
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
 | `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
-| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` |
 | `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
 
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
@@ -254,6 +257,9 @@ KimiQuota.ps1            Kimi payload parsing
 CommandCodeQuota.ps1     Command Code quota parsing
 OpenRouterQuota.ps1      OpenRouter key quota parsing
 DeepSeekQuota.ps1        DeepSeek balance parsing
+ClaudeQuota.ps1          Claude Code quota parsing
+CursorQuota.ps1          Cursor billing-cycle parsing
+ZaiQuota.ps1             GLM / Z.AI Coding Plan quota parsing
 WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
@@ -293,6 +299,6 @@ logs or files containing personal data).
 Released under the [MIT License](LICENSE).
 
 This is an **unofficial** tool. It is not affiliated with or endorsed by Grok / xAI, Kimi / Moonshot,
-OpenAI, Google, Command Code, OpenRouter or DeepSeek. It only reads the credentials already present on your machine to display
+OpenAI, Google, Command Code, OpenRouter, DeepSeek, Anthropic, Cursor or Z.AI / Zhipu. It only reads the credentials already present on your machine to display
 quota information and never bypasses any paywall, rate limit or authorization mechanism; make sure your
 use complies with each service's terms.

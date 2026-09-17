@@ -13,6 +13,9 @@
 | Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits`（5 小时 / 周） | 1 |
 | OpenRouter | `openrouter` | `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）、`$env:OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/key` | 每个密钥一行 |
 | DeepSeek | `deepseek` | `~/.deepseek/auth.json`（或 `$env:DEEPSEEK_HOME`）、`$env:DEEPSEEK_API_KEY` | `https://api.deepseek.com/user/balance` | 1 |
+| Claude Code | `claude` | `~/.claude/.credentials.json`（或 `$env:CLAUDE_HOME`） | `https://api.anthropic.com/api/oauth/usage` | 1 |
+| Cursor | `cursor` | `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（或 `$env:CURSOR_STATE_DB`） | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | 1 |
+| GLM / Z.AI | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json`，`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（国内站 `open.bigmodel.cn`） | 1 |
 
 ## 各供应商细节
 
@@ -83,6 +86,27 @@
   明细行给出来源构成（充值 / 赠额），`is_available` 显式为 false 时额外提示余额不足。
 - **无刷新流程**：密钥在网页端创建，没有 OAuth 刷新流程；`401` 直接显示「登录已过期，请重新登录」，不重试。
 - **降级**：`balance_infos` 缺失或无法解析时该行显示「暂无用量数据」，不影响其他行。
+
+### Claude Code
+
+- **凭证**：`~/.claude/.credentials.json`（可用 `$env:CLAUDE_HOME` 改目录）里的 `claudeAiOauth` 或 `oauth`。只认 OAuth，不认 `ANTHROPIC_API_KEY`（API key 账户没有订阅配额窗口）。
+- **窗口**：`GET https://api.anthropic.com/api/oauth/usage`，请求头带 `anthropic-beta: oauth-2025-04-20`。`five_hour` / `seven_day` 的 `utilization` 已是已用百分比；卡片主数值取两者中较大的那个。
+- **刷新**：access token 过期前 2 分钟用 refresh token 打 `platform.claude.com/v1/oauth/token`，失败再试 `console.anthropic.com`；刷新成功后写回原凭证文件。
+- **降级**：没有 `.credentials.json` 时这一行不出现。载荷缺窗口或百分比非法时该行报错，不影响其他行。
+
+### Cursor
+
+- **凭证**：本机 Cursor 编辑器的 `%APPDATA%\Cursor\User\globalStorage\state.vscdb` 中 `cursorAuth/accessToken`（JWT）。不引入 sqlite 依赖，按 key 扫描文本。可用 `$env:CURSOR_STATE_DB` 覆盖路径。
+- **额度语义**：`POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`，`planUsage.totalPercentUsed` 为已用百分比；`remaining` / `limit` 单位是美分，明细里换成美元。
+- **无刷新流程**：token 由 Cursor 自己维护；`401` 显示登录过期。
+- **降级**：找不到 state 库或扫不到 JWT 时这一行不出现。接口缺 `planUsage` 时该行报错。
+
+### GLM / Z.AI
+
+- **凭证**：`~/.zai/auth.json` 或 `~/.zhipu/auth.json`，以及 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY`。请求头是 `Authorization: <key>`，**没有** `Bearer ` 前缀。
+- **主机**：默认 `https://api.z.ai`。存在 `.zhipu` 凭证或只设置了 `ZHIPU_API_KEY` 时改走 `https://open.bigmodel.cn`。也可用 `$env:ZAI_API_BASE` 覆盖。
+- **窗口**：`GET /api/monitor/usage/quota/limit` 的 `limits[]`，匹配 5 小时与周两类 `type`；`percentage` 是已用百分比。
+- **降级**：没有密钥时这一行不出现。`limits` 为空或无法识别窗口时该行报错。
 
 ## 新增一个供应商
 

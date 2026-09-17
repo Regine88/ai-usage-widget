@@ -28,6 +28,9 @@
 | **Command Code** | 5 小时窗与周窗口的用量，可选余额 | 单账号 | `~/.commandcode/auth.json` |
 | **OpenRouter** | 密钥的已用额度与上限（未设上限时明确说明） | 每个密钥一行 | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | 账户总余额与充值 / 赠额明细（余额型，没有百分比） | 单账号 | `~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY` |
+| **Claude Code** | 5 小时窗与周窗口的用量 | 单账号 | `~/.claude/.credentials.json`（OAuth，不是 API key） |
+| **Cursor** | 当前计费周期已用百分比与剩余额度 | 单账号 | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
+| **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 单账号 | `~/.zai/auth.json`、`~/.zhipu/auth.json` 或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` |
 
 已经登录过对应 CLI（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity）就不会有额外配置负担：
 卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行；DeepSeek 同样只看 API-key（`~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY`），卡片显示账户余额而不是百分比。
@@ -115,7 +118,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.11.1.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.12.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -128,7 +131,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.11.1
+# AI Usage Widget 0.12.0
 ```
 
 ### 多账号
@@ -183,7 +186,7 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `trendDays` | `7` | 折线与预测使用的天数（1 – 14） |
 | `alertThresholds` | `[70, 90]` | 触发气泡提醒的已用百分比，自动升序去重 |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | 静音时段，跨午夜自动识别 |
-| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` |
+| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` |
 | `language` | `"auto"` | 界面语言：`auto`（跟随系统）/ `zh-CN` / `en-US` |
 
 任何非法值（超范围、类型不对、时间格式错误）都会回退成默认值，不用担心把配置改坏。
@@ -244,6 +247,9 @@ KimiQuota.ps1            Kimi 载荷解析
 CommandCodeQuota.ps1     Command Code 配额解析
 OpenRouterQuota.ps1      OpenRouter 密钥配额解析
 DeepSeekQuota.ps1        DeepSeek 余额解析
+ClaudeQuota.ps1          Claude Code 配额解析
+CursorQuota.ps1          Cursor 计费周期解析
+ZaiQuota.ps1             GLM / Z.AI Coding Plan 配额解析
 WidgetUpdates.ps1        版本比较与 GitHub Release 解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
 UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
@@ -281,6 +287,6 @@ docs/                    架构、供应商、排错文档与截图
 
 本项目以 [MIT 许可证](LICENSE) 发布。
 
-这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter、DeepSeek 均无关联，
+这是一个**非官方**工具，与 Grok / xAI、Kimi / Moonshot、OpenAI、Google、Command Code、OpenRouter、DeepSeek、Anthropic、Cursor、Z.AI / 智谱 均无关联，
 也未获得其背书。它只读取你本机已存在的登录凭证来显示配额，不绕过任何付费、限流或授权机制；
 请自行确认使用方式符合各服务的条款。

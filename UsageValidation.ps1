@@ -155,6 +155,13 @@ function Get-WidgetTrustedHosts {
         'auth.kimi.ai'
         'api.kimi.com'
         'api.kimi.ai'
+        'api.anthropic.com'
+        'platform.claude.com'
+        'console.anthropic.com'
+        'api2.cursor.sh'
+        'cursor.com'
+        'api.z.ai'
+        'open.bigmodel.cn'
     )
 }
 

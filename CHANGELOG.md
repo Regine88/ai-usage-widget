@@ -6,6 +6,17 @@
 > 说明：`0.6.0` 之前的版本号是本次开源时**回填标注**的，仓库历史上并未打过标签；
 > 每条记录都注明对应提交，便于逐条追溯。
 
+## [0.12.0] - 2026-09-17
+
+三个新供应商：Claude Code、Cursor、GLM / Z.AI。没有本机凭证的行不会出现。
+
+### Added
+
+- `ClaudeQuota.ps1`：解析 Claude Code OAuth `/api/oauth/usage` 的 5 小时 / 周窗口；凭证来自 `~/.claude/.credentials.json`，过期时原地刷新。
+- `CursorQuota.ps1`：从 `state.vscdb` 取出 `cursorAuth/accessToken`（不依赖 sqlite 库），请求当前计费周期用量。
+- `ZaiQuota.ps1`：GLM Coding Plan 的 `/api/monitor/usage/quota/limit`（原始 API key，不加 Bearer）。`~/.zai/auth.json` 走 `api.z.ai`，`~/.zhipu/auth.json` 或 `ZHIPU_API_KEY` 走 `open.bigmodel.cn`。
+- 设置窗口、右键「打开用量页」、语言包、HTTPS 主机白名单同步这三家。
+
 ## [0.11.1] - 2026-09-17
 
 让 PSScriptAnalyzer 的 Error 门禁真正能绿：修掉自动变量名冲突，并标明 DPAPI 包装不是明文密码。

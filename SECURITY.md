@@ -2,7 +2,7 @@
 
 ## 支持的版本
 
-只有最新发布的小版本会收到安全修复。当前维护版本：`0.11.1`。
+只有最新发布的小版本会收到安全修复。当前维护版本：`0.12.x`。
 
 ## 报告漏洞
 
@@ -20,7 +20,7 @@ AI Usage Widget 是一个纯本地工具：它读取各 AI 服务已经存在本
 
 | 数据 | 位置 | 说明 |
 | --- | --- | --- |
-| 供应商凭证 | `~/.grok/auth.json`、`~/.kimi-code/credentials/kimi-code.json`、`~/.codex/auth.json`、`~/.commandcode/auth.json`、`~/.openrouter/auth.json`、`~/.deepseek/auth.json`、Windows 凭据管理器 `gemini:antigravity`，以及对应的环境变量 | 由各自的 CLI 或工具写入，本程序只读取 |
+| 供应商凭证 | `~/.grok/auth.json`、`~/.kimi-code/credentials/kimi-code.json`、`~/.codex/auth.json`、`~/.commandcode/auth.json`、`~/.openrouter/auth.json`、`~/.deepseek/auth.json`、`~/.claude/.credentials.json`、`~/.zai/auth.json`、`~/.zhipu/auth.json`、Cursor `state.vscdb`、Windows 凭据管理器 `gemini:antigravity`，以及对应的环境变量 | 由各自的 CLI 或工具写入，本程序只读取（令牌过期时才会原地刷新） |
 | 受保护账号快照 | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | 使用当前用户 DPAPI 加密，文件名是账号哈希，不含明文 token |
 | 运行状态 | 程序目录 `ai-state.json` | 窗口位置、刷新间隔、置顶状态等界面设置 |
 | 用量历史 | 程序目录 `ai-history.jsonl` | 百分比与时间戳，不含任何凭证 |

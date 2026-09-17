@@ -2,7 +2,7 @@
 
 > **状态（2026-09-17）：** 已确认并执行。P0 九项任务全部完成，验收记录见 `docs/superpowers/reports/2026-09-17-ai-usage-widget-open-source-acceptance.md`。
 
-> **P1 / P2 进度（2026-09-17，0.11.0）：** 供应商仍缺 Claude / Cursor / Copilot / GLM；P2 浅色主题、紧凑布局、锁定位置、更新检查已完成。余下多列。
+> **P1 / P2 进度（2026-09-17，0.12.0）：** Claude Code、Cursor、GLM / Z.AI 已接入。仍缺 GitHub Copilot、通义、豆包。P2 浅色主题、紧凑布局、锁定位置、更新检查已完成。余下多列。
 
 **目标：** 把当前内部工具补齐为可公开、可贡献、可发布的开源项目，并按用户价值排序扩展功能。
 
