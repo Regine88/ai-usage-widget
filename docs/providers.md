@@ -20,6 +20,9 @@
   仓库里不出现邮箱，日志里也只有指纹。
 - **多账号**：右键"登记 Grok 账号"会把当前 `~/.grok/auth.json` 复制为受保护的账号快照；
   卡片为每个快照渲染一行，行名形如 `Grok-1f4a2c7e`。
+- **账号别名**（可选）：默认行名就是指纹。想换成短名字时，在程序目录放一个 `grok-aliases.json`，
+  形如 `{ "Grok-1f4a2c7e": "a" }`（键是行名里的指纹）；也可以在运行期设置 `$script:GrokAccountAliases`。
+  别名由真实账号标识推导而来，属于本机数据：该文件已被 `.gitignore` 排除，不要提交。
 - **令牌刷新**：过期时用 `https://auth.x.ai/oauth2/token` 刷新，并回写 `auth.json`；刷新失败显示"登录已过期，请重新登录"。
 - **数据映射**：`Get-GrokUsageSnapshot` 取 billing credits，`Get-GrokRowData` 组合出百分比、明细与重置时间。
 - **刷新代价**：每个账号一次请求，多账号时行数等于账号数。

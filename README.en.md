@@ -104,6 +104,11 @@ Grok and ChatGPT / Codex render one row per account:
 Registered accounts are stored as DPAPI-protected snapshots in `%LOCALAPPDATA%\AIUsageWidget\accounts\`,
 named after a short account hash and never containing the email address.
 
+Row names default to that short hash (for example `Grok-1f4a2c7e`). To use `a` / `b` style names instead,
+drop a `grok-aliases.json` file into the app directory with content like `{ "Grok-1f4a2c7e": "a" }`
+(the key is the fingerprint shown in the row name). Aliases stay local: the file is already covered by
+`.gitignore` and is never published with the repository.
+
 ### Run at startup
 
 Right-click the card and choose the startup item (click again to disable). It only drops a shortcut to
@@ -131,6 +136,7 @@ Right-click the card and choose the startup item (click again to disable). It on
 | UI state (position / top-most / interval) | `<app dir>\ai-state.json` | No |
 | Usage history | `<app dir>\ai-history.jsonl` | No, timestamps and percentages only |
 | Request events | `<app dir>\ai-request-events.jsonl` | No, provider / model / status / duration only |
+| Account aliases (optional) | `<app dir>\grok-aliases.json` | No, short hashes and local aliases only; covered by `.gitignore` |
 | Log | `<app dir>\ai-widget.log` | No, accounts appear as short hashes; rotated automatically |
 
 - Requests go only to each provider's own endpoints, always over HTTPS, and only after a trusted-host check.

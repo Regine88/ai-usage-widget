@@ -38,4 +38,4 @@
 ## 环境
 
 - Windows 桌面；PowerShell 7（`C:\Program Files\PowerShell\7\pwsh.exe`）与 Windows PowerShell 5.1 双版本
-- 项目目录：`C:\path\to\ai-usage-widget`
+- 项目目录：仓库根目录（本机绝对路径已脱敏）

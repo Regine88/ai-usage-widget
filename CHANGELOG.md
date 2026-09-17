@@ -19,17 +19,24 @@
 - 技术文档：`docs/architecture.md`、`docs/providers.md`（新增供应商七步改造点）、`docs/troubleshooting.md`。
 - 中英双语 README：`README.md`、`README.en.md`，附 `-Demo` 模式生成的无隐私截图。
 - GitHub Actions CI：在 `windows-latest` 上以 PowerShell 7 与 Windows PowerShell 5.1 双版本执行语法解析检查、`-Version` 校验与全部 `test-*.ps1`；PSScriptAnalyzer 以报告形式附加。
+- 可选账号别名：程序目录下的 `grok-aliases.json`（或运行期的 `$script:GrokAccountAliases`）可把账号指纹映射成 `a` / `b` 这类短名字。
 
 ### Changed
 
 - 启动日志带上版本号：`starting widget v0.6.0`。
 - 启动脚本 `Start-AiUsageWidget.vbs` 统一为 LF 行尾，之后不再出现整文件行尾差异。
+- Grok 行身份改为纯通用指纹：源码不再硬编码任何账号指纹，别名一律走本机配置。
+
+### Security
+
+- 测试与文档不再包含真实邮箱与本机绝对路径，仓库源码里不出现任何账号标识。
 
 ### Fixed
 
 - 版本常量与 `-Version` 开关同名，导致 `pwsh -File .\AiUsageWidget.ps1 -Version` 抛出
   `Cannot convert value "System.String" to type "System.Management.Automation.SwitchParameter"`：
   常量改名为 `$script:AppVersion`。
+- 未配置别名的账号行名出现重复前缀（`Grok Grok-1f4a2c7e`），现在直接显示指纹。
 
 ## [0.5.0] - 2026-09-17
 

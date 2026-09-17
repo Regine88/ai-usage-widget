@@ -1,5 +1,6 @@
 ﻿# Grok multi-account helpers for the usage widget.
-# Known account labels use short fingerprints; no email addresses are stored in source labels.
+# Accounts are identified by a short local fingerprint; source labels never contain email addresses.
+# Optional short aliases come from $script:GrokAccountAliases or a local grok-aliases.json file.
 
 if (-not (Get-Command Get-AccountFingerprint -ErrorAction SilentlyContinue)) {
     $validationHelper = Join-Path $PSScriptRoot 'UsageValidation.ps1'
@@ -8,6 +9,61 @@ if (-not (Get-Command Get-AccountFingerprint -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command Get-SecureSnapshotPath -ErrorAction SilentlyContinue)) {
     $snapshotHelper = Join-Path $PSScriptRoot 'SecureSnapshot.ps1'
     if (Test-Path -LiteralPath $snapshotHelper) { . $snapshotHelper }
+}
+
+# Local-only account aliases: fingerprint -> short label. Keep the table empty in the
+# repository; fill it at runtime, or drop a grok-aliases.json next to this script
+# (for example { "Grok-1f4a2c7e": "a" }). Aliases derive from real account identifiers,
+# so the alias file is git-ignored and never shipped.
+$script:GrokAccountAliases = @{}
+$script:GrokAliasFileName = 'grok-aliases.json'
+
+function Get-GrokAliasPath {
+    $dir = $script:WidgetDir
+    if (-not $dir) { $dir = $PSScriptRoot }
+    if (-not $dir) { return $null }
+    $name = $script:GrokAliasFileName
+    if (-not $name) { $name = 'grok-aliases.json' }
+    return (Join-Path $dir $name)
+}
+
+function Get-GrokAliasMap {
+    $map = @{}
+    if ($script:GrokAccountAliases) {
+        foreach ($key in @($script:GrokAccountAliases.Keys)) {
+            $value = [string]$script:GrokAccountAliases[$key]
+            if ($value) { $map[[string]$key] = $value }
+        }
+    }
+    $path = Get-GrokAliasPath
+    if ($path -and (Test-Path -LiteralPath $path)) {
+        try {
+            $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+            foreach ($property in $raw.PSObject.Properties) {
+                $value = [string]$property.Value
+                if ($value) { $map[[string]$property.Name] = $value }
+            }
+        } catch {
+            if (Get-Command Write-WidgetLog -ErrorAction SilentlyContinue) {
+                Write-WidgetLog ('grok alias file ignored: {0}' -f (Convert-SafeLogText $_.Exception.Message))
+            }
+        }
+    }
+    return $map
+}
+
+function Get-GrokAccountFingerprint {
+    param($Auth)
+    return (Get-AccountFingerprint -AccountId ([string]$Auth.Email) -Prefix 'Grok')
+}
+
+function Get-GrokAccountAlias {
+    param($Auth)
+    if (-not $Auth.Email) { return $null }
+    $map = Get-GrokAliasMap
+    $fingerprint = Get-GrokAccountFingerprint $Auth
+    if ($map.ContainsKey($fingerprint)) { return [string]$map[$fingerprint] }
+    return $null
 }
 
 function Get-GrokAccountId {
@@ -21,29 +77,24 @@ function Get-GrokAccountId {
 
 function Get-GrokAccountLabel {
     param($Auth)
-    $id = Get-GrokAccountId $Auth
-    if ($Auth.Email) {
-        $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.Email) -Prefix 'Grok'
-        switch ($fingerprint) {
-            'Grok-1f4a2c7e' { return 'a' }
-            'Grok-9c3b7d21' { return 'b' }
-            default { return $fingerprint }
-        }
-    }
-    return 'Grok'
+    if (-not $Auth.Email) { return 'Grok' }
+    $alias = Get-GrokAccountAlias $Auth
+    if ($alias) { return $alias }
+    return (Get-GrokAccountFingerprint $Auth)
 }
 
 function Get-GrokRowName {
     param($Auth)
-    $label = Get-GrokAccountLabel $Auth
-    if ($label -eq 'Grok') { return 'Grok' }
-    return ('Grok {0}' -f $label)
+    if (-not $Auth.Email) { return 'Grok' }
+    $alias = Get-GrokAccountAlias $Auth
+    if ($alias) { return ('Grok {0}' -f $alias) }
+    return (Get-GrokAccountFingerprint $Auth)
 }
 
 function Get-GrokRowId {
     param($Auth)
-    $label = Get-GrokAccountLabel $Auth
-    if ($label -eq 'a' -or $label -eq 'b') { return ('grok-{0}' -f $label) }
+    $alias = Get-GrokAccountAlias $Auth
+    if ($alias) { return ('grok-{0}' -f $alias) }
     return ('grok-{0}' -f (Get-AccountFingerprint -AccountId (Get-GrokAccountId $Auth) -Prefix 'acct'))
 }
 
@@ -146,14 +197,8 @@ function Get-GrokAccounts {
     }
     $list = @($byId.Values)
     return @($list | Sort-Object @{
-        Expression = {
-            switch (Get-GrokAccountLabel $_) {
-                'a' { 0 }
-                'b' { 1 }
-                default { 2 }
-            }
-        }
-    }, @{ Expression = { [string]$_.Email } })
+        Expression = { if (Get-GrokAccountAlias $_) { 0 } else { 1 } }
+    }, @{ Expression = { Get-GrokAccountLabel $_ } }, @{ Expression = { [string]$_.Email } })
 }
 
 function Sync-ActiveGrokSnapshot {
