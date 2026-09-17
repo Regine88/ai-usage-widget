@@ -121,6 +121,19 @@ try {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# ---------- 清单必须覆盖主程序 dot-source 的每个模块 ----------
+# 漏登记时安装 / 打包出来的版本会在启动时直接崩：dot-source 找不到文件。
+$entryText = Get-Content -LiteralPath (Join-Path $here 'AiUsageWidget.ps1') -Raw -Encoding utf8
+$sourced = @()
+foreach ($match in [regex]::Matches($entryText, '\. \(Join-Path \$script:WidgetDir ''([^'']+)''\)')) {
+    $sourced += $match.Groups[1].Value
+}
+Assert-Eq ($sourced.Count -ge 8) 'True' 'entry script dot-sources the modules'
+Assert-Eq (@($sourced | Where-Object { @($script:WidgetRuntimeFiles) -notcontains $_ }) -join ',') '' 'every dot-sourced module is in the runtime file list'
+Assert-Eq (@($script:WidgetRuntimeFiles).Count) (@($script:WidgetRuntimeFiles | Sort-Object -Unique).Count) 'runtime file list has no duplicates'
+Assert-Eq (@($script:WidgetRuntimeFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $here $_)) }) -join ',') '' 'every runtime file exists in the repo'
+Assert-Eq (@($script:WidgetRuntimeDirs | Where-Object { -not (Test-Path -LiteralPath (Join-Path $here $_)) }) -join ',') '' 'every runtime dir exists in the repo'
+
 if ($failed -gt 0) {
     Write-Host ("FAILED {0}" -f $failed)
     exit 1

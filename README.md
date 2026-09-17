@@ -120,7 +120,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.6.0
+# AI Usage Widget 0.7.0
 ```
 
 ### 多账号
@@ -175,6 +175,16 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 
 任何非法值（超范围、类型不对、时间格式错误）都会回退成默认值，不用担心把配置改坏。
 
+### 界面语言
+
+- `language` 支持 `auto`（跟随系统 UI 语言：中文系统用简体中文，其余用英文）、`zh-CN`、`en-US`；
+  设置窗口里的「界面语言」写入的就是这个字段，**重启卡片后生效**。
+- 文案集中在程序目录的 `strings/zh-CN.json` 与 `strings/en-US.json`，值里可以用 `{0}` 这类占位符，由代码传入。
+- 读不到语言包或 JSON 损坏时自动回退到内置兜底表，界面不会变空白；缺某个键时显示键名本身，便于发现漏翻。
+- 新增一门语言要改两处：把 `strings/en-US.json` 复制成 `strings/<语言>.json` 并翻译值，
+  再在 `WidgetStrings.ps1` 的 `$script:WidgetStringLanguages` 里登记语言代码。
+  语言代码是白名单——配置里的值永远不会被直接当成文件名使用。
+
 ## 数据与隐私
 
 | 数据 | 位置 | 是否含凭据 |
@@ -219,6 +229,13 @@ GeminiAntigravity.ps1    Gemini / Antigravity 配额
 KimiQuota.ps1            Kimi 载荷解析
 CommandCodeQuota.ps1     Command Code 配额解析
 ModelRequestRecorder.ps1 请求事件记录（仅元数据）
+UsageHistory.ps1         历史聚合、趋势、耗尽预测与 CSV 导出
+WidgetConfig.ps1         ai-config.json 的读写与校验
+WidgetStrings.ps1        界面文案的语言包加载与查询
+strings/                 语言包（zh-CN.json / en-US.json）
+WidgetInstaller.ps1      安装 / 升级 / 卸载实现
+install.ps1              安装入口脚本
+tools/                   Release 打包脚本
 Record-ModelRequest.ps1  外部写入请求事件的独立入口
 test-*.ps1               每个模块对应的离线测试
 Start-AiUsageWidget.vbs  无窗口启动器

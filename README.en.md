@@ -9,7 +9,7 @@ Pure PowerShell + WinForms, no third-party dependencies, no admin rights, and no
 
 English · [简体中文](README.md)
 
-![Widget screenshot](docs/images/demo-card.png)
+![Widget screenshot](docs/images/demo-card.en.png)
 
 > The screenshot is produced by `-Demo` mode: fixed sample data, no real credentials, no state file writes, no network access.
 
@@ -54,7 +54,7 @@ when a token needs refreshing.
 | Hover a row | Shows a tooltip with details, reset time and the exhaustion forecast |
 | Right-click, **Export usage CSV** | Writes the whole history to `ai-usage-<timestamp>.csv` in the app directory (UTF-8, opens in Excel) |
 
-![Context menu](docs/images/demo-menu.png)
+![Context menu](docs/images/demo-menu.en.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
 register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code),
@@ -123,7 +123,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.6.0
+# AI Usage Widget 0.7.0
 ```
 
 ### Multiple accounts
@@ -182,6 +182,17 @@ and never published with the repository.
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
 so a broken file can never break the widget.
 
+### Interface language
+
+- `language` accepts `auto` (follow the system UI language: Chinese systems use Simplified Chinese, everything else uses English),
+  `zh-CN` and `en-US`. The **Language** selector in the settings dialog writes this field, and changes take effect **after a restart**.
+- All strings live in `strings/zh-CN.json` and `strings/en-US.json` inside the program folder; values may use `{0}` placeholders filled in by the code.
+- If a pack is missing or its JSON is broken the widget falls back to a built-in table, so the UI never goes blank;
+  a missing key shows its own name, which makes untranslated strings easy to spot.
+- Adding a language takes two edits: copy `strings/en-US.json` to `strings/<language>.json` and translate the values,
+  then register the language code in `$script:WidgetStringLanguages` inside `WidgetStrings.ps1`.
+  Language codes are a whitelist, so a value from the config file is never used as a file name directly.
+
 ## Data and privacy
 
 | Data | Location | Contains credentials |
@@ -226,6 +237,13 @@ GeminiAntigravity.ps1    Gemini / Antigravity quota
 KimiQuota.ps1            Kimi payload parsing
 CommandCodeQuota.ps1     Command Code quota parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
+UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
+WidgetConfig.ps1         ai-config.json read/write and validation
+WidgetStrings.ps1        Language pack loading and string lookup
+strings/                 Language packs (zh-CN.json / en-US.json)
+WidgetInstaller.ps1      Install / upgrade / uninstall implementation
+install.ps1              Installer entry point
+tools/                   Release packaging script
 Record-ModelRequest.ps1  Standalone entry point for recording events
 test-*.ps1               Offline test suite per module
 Start-AiUsageWidget.vbs  Windowless launcher

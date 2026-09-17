@@ -8,7 +8,7 @@
 
 ## [0.7.0] - 2026-09-17
 
-用量趋势与集中设置：卡片内画出每行 7 天迷你折线，预测额度耗尽时间，并把所有可调项收进 `ai-config.json`。
+用量趋势、集中设置与中英双语界面：卡片内画出每行 7 天迷你折线，预测额度耗尽时间，把所有可调项收进 `ai-config.json`，界面文案全部改走语言包。
 
 ### Added
 
@@ -20,6 +20,7 @@
 - 右键菜单新增 **导出用量 CSV**：把全部历史导出为 Excel 可直接打开的 UTF-8 CSV（带 BOM）。
 - `install.ps1` + `WidgetInstaller.ps1` + `test-WidgetInstaller.ps1`：安装 / 升级 / 卸载。安装到 `%LOCALAPPDATA%\Programs\AIUsageWidget` 并创建开始菜单快捷方式；用户数据永不被覆盖，卸载默认保留，`-Purge` 才彻底删除。
 - `tools/package-release.ps1` 与 Release 工作流：推送 `v*` 标签后自动在双引擎跑全部测试，打包 zip、生成 SHA256 与 Scoop manifest 并发布 Release；本地可用同一脚本预演打包。
+- `WidgetStrings.ps1` + `strings/zh-CN.json` + `strings/en-US.json` + `test-WidgetStrings.ps1`：界面文案集中到语言包，`language` 支持 `auto` / `zh-CN` / `en-US`。语言代码走白名单解析（配置值不会被当成文件名），语言包缺失或 JSON 损坏时回退内置兜底表；测试还会扫描源码里的全部 `T 'key'` 调用，漏登记键名直接失败。
 
 ### Changed
 
@@ -27,6 +28,8 @@
 - 阈值提醒改为读取 `ai-config.json` 的 `alertThresholds`，并支持静音时段（自动识别跨午夜）。
 - `providers` 里关闭的供应商不再参与行定义、刷新与提醒。
 - 关闭趋势折线后进度条自动占满整行，不留空白。
+- 状态行、托盘提示、右键菜单、悬停提示、气泡提醒、CSV 导出弹窗、设置窗口与 CLI 输出全部改用语言包；`-Demo` 模式可直接对照两种语言的排版。
+- 未识别的抓取异常不再把原始异常文本贴到卡片上，统一显示可读短语；脱敏原文仍写进日志与悬停提示，方便排查。
 
 ### Fixed
 

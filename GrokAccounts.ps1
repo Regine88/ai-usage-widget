@@ -135,7 +135,7 @@ function Convert-GrokRawAuth {
             $best = [pscustomobject]@{ score = $score; entry = $v; keyName = $p.Name; expires = $exp }
         }
     }
-    if (-not $best) { throw ('auth.json 中没有可用的登录凭证: {0}' -f $Path) }
+    if (-not $best) { throw 'missing-credential' }
     $auth = [pscustomobject]@{
         Path         = $Path
         KeyName      = $best.keyName
@@ -155,7 +155,7 @@ function Convert-GrokRawAuth {
 function Read-GrokAuthFromFile {
     param([string]$Path)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
-        throw ('未找到 Grok 登录凭证: {0}' -f $Path)
+        throw 'missing-credential'
     }
     if ($Path -like '*.snapshot') {
         return (Convert-GrokRawAuth -Raw (Read-SecureSnapshot -Path $Path) -Path $Path)

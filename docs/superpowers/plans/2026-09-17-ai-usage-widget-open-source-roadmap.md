@@ -66,11 +66,11 @@
 
 ### P1（建议优先）
 
-1. **更多供应商**：Claude Code、Cursor、GitHub Copilot、OpenRouter、DeepSeek、GLM(z.ai)、通义 / 豆包。每个 ≈ 解析模块 + 测试 + 行数据 + 菜单项，先做实际在用的 1-3 个。
-2. **历史与趋势**：卡片内 7 天迷你折线（`ai-history.jsonl` 已在记录）、额度耗尽时间预测、CSV 导出。
-3. **设置面板**：`ai-config.json` 集中配置 + WinForms 设置窗口（供应商开关、刷新间隔、透明度、阈值、静音时段）。
-4. **国际化**：`strings/zh-CN.json`、`strings/en-US.json`，UI 与托盘文案切换。
-5. **分发**：`install.ps1`（安装 / 升级 / 卸载）+ GitHub Release 自动打包 zip + Scoop manifest。
+1. **更多供应商**（未开始）：Claude Code、Cursor、GitHub Copilot、OpenRouter、DeepSeek、GLM(z.ai)、通义 / 豆包。每个 ≈ 解析模块 + 测试 + 行数据 + 菜单项，先做实际在用的 1-3 个。本机探测：Claude Code 无 OAuth 凭证、Cursor 凭据存于 SQLite、GitHub Copilot `hosts.json` 缺失，因此优先考虑纯 API-key 的供应商。
+2. **历史与趋势**（已完成，0.7.0）：卡片内 7 天迷你折线（`ai-history.jsonl` 已在记录）、额度耗尽时间预测、CSV 导出。
+3. **设置面板**（已完成，0.7.0）：`ai-config.json` 集中配置 + WinForms 设置窗口（供应商开关、刷新间隔、透明度、阈值、静音时段、界面语言）。
+4. **国际化**（已完成，0.7.0）：`strings/zh-CN.json`、`strings/en-US.json`，UI、托盘、菜单、提示与 CLI 文案统一切换；`test-WidgetStrings.ps1` 扫描源码防止漏登记键名。
+5. **分发**（已完成，0.7.0）：`install.ps1`（安装 / 升级 / 卸载）+ GitHub Release 自动打包 zip + Scoop manifest。
 
 ### P2（体验增强）
 
@@ -105,6 +105,6 @@
 ## 六、决策结果（2026-09-17）
 
 1. 许可证：**MIT**（已落地 LICENSE）。
-2. 语言范围：**README 中英双语已完成**；UI 中英切换（strings/*.json）列入 P1。
+2. 语言范围：**README 中英双语已完成**；UI 中英切换（strings/*.json）已在 0.7.0 落地。
 3. 优先新增供应商：**待用户指定**，按 docs/providers.md 七步执行。
 4. 仓库可见性：仍为 private，**需在 GitHub 网页手动改为 public**（见验收记录中的仓库侧手动项）。

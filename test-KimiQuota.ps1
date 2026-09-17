@@ -2,6 +2,8 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here 'UsageValidation.ps1')
+. (Join-Path $here 'WidgetStrings.ps1')
+$script:WidgetStrings = Read-WidgetStrings -Language 'zh-CN' -Dir $here
 . (Join-Path $here 'KimiQuota.ps1')
 
 $failed = 0

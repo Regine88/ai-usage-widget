@@ -47,6 +47,8 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
+| `WidgetStrings.ps1` | 界面文案：语言代码白名单解析、语言包读取与兜底表、`T` / `Get-WidgetText` 取值（主进程与 worker 共用同一张表） |
+| `strings/*.json` | 语言包：纯键值 JSON，多种语言的键集必须一致，`_` 前缀的键在加载时忽略 |
 | `WidgetInstaller.ps1` | 安装 / 升级 / 卸载实现：运行文件清单、用户数据判定与开始菜单快捷方式；安装器与发布打包共用这份清单 |
 | `tools/package-release.ps1` | Release 打包：按清单组装 zip、生成 SHA256 与 Scoop manifest（本地与 CI 共用） |
 | `Record-ModelRequest.ps1` | 供外部工具调用的独立入口：追加一条请求事件 |
@@ -96,11 +98,25 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `401` / `Unauthorized` | 登录已过期，请重新登录 |
 | `403` / `Forbidden` | 无访问权限 |
 | `429` | 请求过于频繁 |
+| `missing-credential` / `no-credential` | 未登录 |
+
+未命中的异常统一显示「读取失败，请稍后重试」；脱敏后的原文只写进日志与悬停提示，不贴到卡片正文。
 
 ### 脱敏
 
 `Convert-SafeLogText` 是所有日志与错误文本的唯一出口：折叠换行、截断长度、丢弃疑似 token 的片段。
 账号在日志里只以 `Get-AccountFingerprint` 生成的短哈希出现，永不出现邮箱。
+
+### 界面语言
+
+全部界面文案集中在 `strings/<language>.json`，加载与取值都由 `WidgetStrings.ps1` 负责：
+
+- 配置里的 `language` 先过 `ConvertTo-WidgetLanguage` 的白名单（`zh*` → `zh-CN`，`en*` → `en-US`，`auto` 或未登记的值跟随系统 UI 语言），
+  解析结果才用来拼语言包路径——配置值永远不会被直接当成文件名。
+- 语言包读不到或 JSON 损坏时回退到内置兜底表，缺键时返回键名本身，界面不会因为语言包出问题而空白。
+- worker 通过 `$Cfg.WidgetStrings` 拿到同一张表，后台拼好的行文本与界面语言保持一致。
+- 新增语言的登记点是 `$script:WidgetStringLanguages`；新增文案要同时补两个语言包与兜底表，
+  `test-WidgetStrings.ps1` 会扫描源码里所有 `T 'key'` 调用，漏登记键名直接失败。
 
 ### 单实例
 

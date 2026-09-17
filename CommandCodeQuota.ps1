@@ -9,7 +9,7 @@ if (-not (Get-Command Convert-UsageRatioPercent -ErrorAction SilentlyContinue)) 
 
 function Convert-CCWindow {
     param($Win)
-    if (-not $Win) { throw 'Command Code 限额窗口为空' }
+    if (-not $Win) { throw 'bad-payload' }
     $used = [double]$Win.used
     $cap = [double]$Win.cap
     $pct = [Math]::Round((Convert-UsageRatioPercent $Win.used $Win.cap 'Command Code window'), 1)
@@ -52,7 +52,7 @@ function Convert-CommandCodeCredits {
         if ($null -ne $wl.fiveHour) { $five = Convert-CCWindow $wl.fiveHour }
         if ($null -ne $wl.weekly)   { $week = Convert-CCWindow $wl.weekly }
     }
-    if (-not $five -and -not $week) { throw '用量接口没有返回限额窗口' }
+    if (-not $five -and -not $week) { throw 'bad-payload' }
 
     $overall = $null
     if ($credits -and $null -ne $credits.usagePercent) {
@@ -60,7 +60,7 @@ function Convert-CommandCodeCredits {
     }
     if ($null -eq $overall -and $week) { $overall = $week.Percent }
     if ($null -eq $overall -and $five) { $overall = $five.Percent }
-    if ($null -eq $overall) { throw '用量接口没有返回有效总体百分比' }
+    if ($null -eq $overall) { throw 'bad-payload' }
     $overall = [Math]::Round($overall, 1)
 
     $periodEnd = $null
@@ -69,10 +69,10 @@ function Convert-CommandCodeCredits {
 
     $totalRemaining = $null
     if ($credits -and $null -ne $credits.totalRemaining) {
-        if (-not (Test-FiniteNumber $credits.totalRemaining)) { throw 'Command Code totalRemaining 无效' }
+        if (-not (Test-FiniteNumber $credits.totalRemaining)) { throw 'bad-payload' }
         $totalRemaining = [double]$credits.totalRemaining
     } elseif ($credits -and $null -ne $credits.monthlyCredits) {
-        if (-not (Test-FiniteNumber $credits.monthlyCredits)) { throw 'Command Code monthlyCredits 无效' }
+        if (-not (Test-FiniteNumber $credits.monthlyCredits)) { throw 'bad-payload' }
         $totalRemaining = [double]$credits.monthlyCredits
     }
 

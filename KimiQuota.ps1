@@ -15,9 +15,9 @@ function Get-KimiWindowLabel {
         default            { return $null }
     }
     if ($hours -le 0) { return $null }
-    if ($hours -ge 24) { return ('{0}天窗' -f [int][Math]::Round($hours / 24.0)) }
-    if ($hours -eq [int]$hours) { return ('{0}小时窗' -f [int]$hours) }
-    return ('{0:0.#}小时窗' -f $hours)
+    if ($hours -ge 24) { return (T 'row.windowDays' @([int][Math]::Round($hours / 24.0))) }
+    if ($hours -eq [int]$hours) { return (T 'row.windowHours' @([int]$hours)) }
+    return (T 'row.windowHoursFraction' @($hours))
 }
 
 function Resolve-KimiUsedLimit {

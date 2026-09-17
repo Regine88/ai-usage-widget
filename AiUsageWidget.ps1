@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.6.0'
+$script:AppVersion = '0.7.0'
 $script:DemoMode = $false
 
 if ($Version) {
@@ -112,6 +112,18 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'ModelRequestRecorder.ps1')
 . (Join-Path $script:WidgetDir 'UsageHistory.ps1')
 . (Join-Path $script:WidgetDir 'WidgetConfig.ps1')
+. (Join-Path $script:WidgetDir 'WidgetStrings.ps1')
+
+# 配置与语言包要在任何输出之前就绪：CLI 开关（-Install 等）也会用到同一套文案。
+try {
+    $script:Config = Read-WidgetConfig
+    $script:Language = ConvertTo-WidgetLanguage $script:Config.language
+    $script:WidgetStrings = Read-WidgetStrings -Language $script:Language -Dir $script:WidgetDir
+} catch {
+    $script:Config = Convert-WidgetConfig $null
+    $script:Language = ConvertTo-WidgetLanguage 'auto'
+    $script:WidgetStrings = Get-WidgetStringFallback
+}
 
 $script:Mutex = $null
 $script:LastOkAt = $null
@@ -274,23 +286,26 @@ function Format-PercentText {
 
 function Format-ResetText {
     param($End)
-    if (-not $End) { return '重置时间未知' }
+    if (-not $End) { return (T 'reset.unknown') }
     $local = $End.ToLocalTime()
     $span = $local - [datetime]::Now
-    if ($span.TotalSeconds -le 0) { return '即将重置' }
+    if ($span.TotalSeconds -le 0) { return (T 'reset.soon') }
     if ($span.TotalDays -ge 1) {
-        return ('重置还有 {0} 天 {1} 小时' -f [int][Math]::Floor($span.TotalDays), $span.Hours)
+        return (T 'reset.daysHours' @([int][Math]::Floor($span.TotalDays), $span.Hours))
     }
     if ($span.TotalHours -ge 1) {
-        return ('重置还有 {0} 小时 {1} 分钟' -f [int][Math]::Floor($span.TotalHours), $span.Minutes)
+        return (T 'reset.hoursMinutes' @([int][Math]::Floor($span.TotalHours), $span.Minutes))
     }
-    return ('重置还有 {0} 分钟' -f [Math]::Max(1, [int]$span.TotalMinutes))
+    return (T 'reset.minutes' @([Math]::Max(1, [int]$span.TotalMinutes)))
 }
 
 function Format-ResetTime {
     param($End)
     if (-not $End) { return $null }
-    return $End.ToLocalTime().ToString('M月d日 HH:mm')
+    # 日期格式跟随界面语言，而不是操作系统的区域设置：英文界面不该出现「9月 17 日」。
+    $culture = [Globalization.CultureInfo]::CurrentCulture
+    try { $culture = [Globalization.CultureInfo]::GetCultureInfo($script:Language) } catch { }
+    return $End.ToLocalTime().ToString((T 'reset.clockFormat'), $culture)
 }
 
 # Round-trippable reset stamp for the forecast; the row tooltip keeps the
@@ -318,16 +333,18 @@ function Get-HttpStatusCode {
 }
 
 function Format-FetchError {
-    param([string]$Message)
-    if (-not $Message) { return '读取失败' }
+    param([string]$Message, [switch]$Detail)
+    if (-not $Message) { return (T 'error.readFailed') }
     $safe = Convert-SafeLogText $Message 160
-    if ($safe -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return '请求超时' }
-    if ($safe -match 'SSL|certificate|信任关系|could not be established') { return '网络连接失败' }
-    if ($safe -match 'HTTP 401|\b401\b|Unauthorized') { return '登录已过期，请重新登录' }
-    if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return '无访问权限' }
-    if ($safe -match 'HTTP 429|\b429\b') { return '请求过于频繁' }
-    if ($safe.Length -gt 80) { return $safe.Substring(0, 80) }
-    return $safe
+    if ($safe -match 'timeout|超时|HttpClient\.Timeout|canceled due to') { return (T 'error.timeout') }
+    if ($safe -match 'SSL|certificate|信任关系|could not be established') { return (T 'error.network') }
+    if ($safe -match 'HTTP 401|\b401\b|Unauthorized|auth-expired|token-refresh') { return (T 'error.unauthorized') }
+    if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return (T 'error.forbidden') }
+    if ($safe -match 'HTTP 429|\b429\b') { return (T 'error.tooMany') }
+    if ($safe -match 'missing-credential|no-credential') { return (T 'error.noCredentials') }
+    # 未知错误用本地化兜底，但在气泡提示里附上脱敏原文，便于对着日志排查。
+    if ($Detail) { return ((T 'error.generic') + ' ' + $safe) }
+    return (T 'error.generic')
 }
 
 # HttpClient can ignore -TimeoutSec on STA/MTA edges. Run each request in a
@@ -801,23 +818,23 @@ function Get-CodexAccounts {
 function Add-CurrentAccount {
     $active = Read-CodexAuth $script:CodexAuthPath
     if (-not $active) {
-        Write-Host '未找到 ~/.codex/auth.json，请先运行 codex login'
+        Write-Host (T 'cli.codexAuthMissing')
         return
     }
     $snapPath = Write-SecureSnapshot -Provider codex -AccountId $active.AccountId -Value $active.Raw
-    Write-Host ("已登记账号 {0} -> {1}" -f (Get-AccountLabel $active), $snapPath)
+    Write-Host (T 'cli.registered' @((Get-AccountLabel $active), $snapPath))
     Write-WidgetLog ("snapshot account {0}" -f (Get-AccountLabel $active))
 }
 
 function Add-CurrentGrokAccount {
     if (-not (Test-Path -LiteralPath $script:GrokAuthPath)) {
-        Write-Host '未找到 ~/.grok/auth.json，请先运行 grok login'
+        Write-Host (T 'cli.grokAuthMissing')
         return
     }
     Sync-ActiveGrokSnapshot
     try {
         $active = Read-GrokAuthFromFile -Path $script:GrokAuthPath
-        Write-Host ("已登记 Grok 账号 {0}" -f (Get-GrokRowName $active))
+        Write-Host (T 'cli.registeredGrok' @((Get-GrokRowName $active)))
         Write-WidgetLog ("snapshot grok {0}" -f (Get-GrokRowName $active))
     } catch {
         Write-WidgetLog ("snapshot grok failed: {0}" -f $_.Exception.Message)
@@ -832,9 +849,9 @@ function Migrate-ProjectSnapshots {
             Where-Object { $_.Name -like 'chatgpt-auth-*.json' -or $_.Name -like 'grok-auth-*.json' }
     )
     if ($remaining.Count -gt 0) {
-        throw ('仍有未迁移的明文快照: {0}' -f (($remaining | ForEach-Object Name) -join ', '))
+        throw (T 'cli.migrateLeft' @((($remaining | ForEach-Object Name) -join ', ')))
     }
-    Write-Host '项目目录明文账号快照已迁移并清理'
+    Write-Host (T 'cli.migrateDone')
 }
 
 function Save-CodexAuth {
@@ -945,9 +962,9 @@ function Get-CodexWindowInfo {
     $label = $null
     if ($secs -gt 0) {
         $hours = $secs / 3600.0
-        if ($hours -ge 24) { $label = '{0}天窗' -f [int][Math]::Round($hours / 24.0) }
-        elseif ($hours -eq [int]$hours) { $label = '{0}小时窗' -f [int]$hours }
-        else { $label = '{0:0.#}小时窗' -f $hours }
+        if ($hours -ge 24) { $label = T 'row.windowDays' @([int][Math]::Round($hours / 24.0)) }
+        elseif ($hours -eq [int]$hours) { $label = T 'row.windowHours' @([int]$hours) }
+        else { $label = T 'row.windowHoursFraction' @($hours) }
     }
     [pscustomobject]@{
         Seconds = $secs
@@ -1063,17 +1080,17 @@ function Get-CommandCodeUsageSnapshot {
 function Get-CommandCodeRowData {
     $u = Get-CommandCodeUsageSnapshot
     $details = @()
-    if ($u.FiveHour) { $details += ('5小时 {0:0}%' -f $u.FiveHour.Percent) }
-    if ($u.Weekly)   { $details += ('周 {0:0}%'    -f $u.Weekly.Percent) }
+    if ($u.FiveHour) { $details += (T 'row.window5hPercent' @($u.FiveHour.Percent)) }
+    if ($u.Weekly)   { $details += (T 'row.windowWeekPercent' @($u.Weekly.Percent)) }
     $details += Format-ResetText $u.PeriodEnd
     if ($script:CommandCodeShowBalance -and $null -ne $u.TotalRemaining) {
-        $details += ('余额 {0:0.00}' -f $u.TotalRemaining)
+        $details += (T 'row.balanceUsd' @($u.TotalRemaining))
     }
     Write-WidgetLog ("usage commandcode {0} ok" -f $u.Percent)
     [pscustomobject]@{
         Percent = $u.Percent
         Detail  = ($details -join ' · ')
-        Tip     = ('{0} {1}' -f $script:CommandCodeDisplayName, (Format-PercentText $u.Percent))
+        Tip     = (T 'row.codexTip' @($script:CommandCodeDisplayName, (Format-PercentText $u.Percent)))
         Reset   = (Format-ResetTime $u.PeriodEnd)
         ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
@@ -1083,10 +1100,10 @@ function Get-CommandCodeRowData {
 
 function Get-DemoRowTable {
     return @(
-        [pscustomobject]@{ Id = 'demo-grok'; Kind = 'grok'; Name = 'Grok a'; OpenUrl = $script:GrokUsagePageUrl; Percent = 9.0; Detail = 'Build 9% · 重置还有 4 天 22 小时'; TrendPct = @(2, 3, 4, 5, 6, 7, 9) }
-        [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = '5小时窗 12% · 重置还有 4 天 4 小时'; TrendPct = @(18, 24, 30, 35, 39, 43, 46) }
-        [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = '5小时窗 31% · 重置还有 5 天 4 小时'; TrendPct = @(52, 58, 63, 67, 70, 72, 74) }
-        [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = '5小时 41% · 周 93% · 重置还有 3 天 6 小时'; TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
+        [pscustomobject]@{ Id = 'demo-grok'; Kind = 'grok'; Name = 'Grok a'; OpenUrl = $script:GrokUsagePageUrl; Percent = 9.0; Detail = ('Build 9% · ' + (T 'reset.daysHours' @(4, 22))); TrendPct = @(2, 3, 4, 5, 6, 7, 9) }
+        [pscustomobject]@{ Id = 'demo-kimi'; Kind = 'kimi'; Name = 'Kimi'; OpenUrl = $script:KimiUsagePageUrl; Percent = 46.0; Detail = ((T 'row.window5hPercent' @(12)) + ' · ' + (T 'reset.daysHours' @(4, 4))); TrendPct = @(18, 24, 30, 35, 39, 43, 46) }
+        [pscustomobject]@{ Id = 'demo-codex'; Kind = 'codex'; Name = 'ChatGPT-1f4a2c7e'; OpenUrl = $script:CodexUsagePageUrl; Percent = 74.0; Detail = ((T 'row.window5hPercent' @(31)) + ' · ' + (T 'reset.daysHours' @(5, 4))); TrendPct = @(52, 58, 63, 67, 70, 72, 74) }
+        [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = ((T 'row.window5hPercent' @(41)) + ' · ' + (T 'row.windowWeekPercent' @(93)) + ' · ' + (T 'reset.daysHours' @(3, 6))); TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
     )
 }
 
@@ -1236,15 +1253,15 @@ function New-Shortcut {
 function Install-Widget {
     Write-LauncherVbs
     Remove-LegacyStartupShortcuts
-    New-Shortcut -Path (Get-StartupShortcutPath) -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc '开机启动 AI 周用量卡片'
-    Write-Host "已写入开机启动。程序目录: $($script:WidgetDir)"
+    New-Shortcut -Path (Get-StartupShortcutPath) -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc (T 'shortcut.desc')
+    Write-Host (T 'startup.added' @($script:WidgetDir))
 }
 
 function Uninstall-Widget {
     $p = Get-StartupShortcutPath
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
     Remove-LegacyStartupShortcuts
-    Write-Host "已移除开机启动。程序仍在 $($script:WidgetDir)"
+    Write-Host (T 'startup.removed' @($script:WidgetDir))
 }
 
 function Ensure-SingleInstance {
@@ -1501,7 +1518,7 @@ function Rebuild-ProviderRows {
             Controls = $rowControls
         })
         if ($script:Ui.Tip) {
-            $initTip = ("{0}`n数据加载中…`n双击打开用量页面" -f $spec.Name)
+            $initTip = (T 'tip.loading' @($spec.Name))
             foreach ($c in @($lblName, $lblPct, $barBack, $barFill, $lblDetail)) {
                 try { $script:Ui.Tip.SetToolTip($c, $initTip) } catch { }
             }
@@ -1572,9 +1589,9 @@ function Get-RecentRequestLabel {
     if (-not $event -or -not $event.model) { return $null }
     $when = $null
     try { $when = [datetime]::Parse([string]$event.ts).ToLocalTime().ToString('HH:mm') } catch { }
-    $state = if ($event.status -eq 'failed') { '失败' } elseif ($event.status -eq 'started') { '进行中' } else { '完成' }
+    $state = if ($event.status -eq 'failed') { T 'row.requestFailed' } elseif ($event.status -eq 'started') { T 'row.requestRunning' } else { T 'row.requestDone' }
     $timeText = if ($when) { ' · ' + $when } else { '' }
-    return ('最近 {0} · {1}{2}' -f [string]$event.model, $state, $timeText)
+    return (T 'row.latestRequest' @([string]$event.model, $state, $timeText))
 }
 
 # Row data builders are pure (no UI access) so they can run in the
@@ -1589,7 +1606,7 @@ function Get-GrokRowData {
     }
     $details += Format-ResetText $u.PeriodEnd
     if ($u.PrepaidCents -gt 0) {
-        $details += ('额外 ${0:0.00}' -f ($u.PrepaidCents / 100.0))
+        $details += (T 'row.extra' @($u.PrepaidCents / 100.0))
     }
     $logId = if ($Id) { $Id } else { 'grok' }
     $tipName = if ($Name) { $Name } else { 'Grok' }
@@ -1597,7 +1614,7 @@ function Get-GrokRowData {
     [pscustomobject]@{
         Percent = $u.Percent
         Detail  = ($details -join ' · ')
-        Tip     = ('{0} {1}' -f $tipName, (Format-PercentText $u.Percent))
+        Tip     = (T 'row.grokTip' @($tipName, (Format-PercentText $u.Percent)))
         Reset   = (Format-ResetTime $u.PeriodEnd)
         ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
@@ -1606,14 +1623,14 @@ function Get-GrokRowData {
 function Get-GeminiRowData {
     $u = Get-GeminiUsageSnapshot
     $details = @()
-    if ($null -ne $u.Remain5h) { $details += ('5小时余 {0:0}%' -f $u.Remain5h) }
-    if ($null -ne $u.RemainWeekly) { $details += ('周余 {0:0}%' -f $u.RemainWeekly) }
+    if ($null -ne $u.Remain5h) { $details += (T 'row.remain5h' @($u.Remain5h)) }
+    if ($null -ne $u.RemainWeekly) { $details += (T 'row.remainWeek' @($u.RemainWeekly)) }
     $details += Format-ResetText $u.PeriodEnd
     Write-WidgetLog ("usage gemini remain={0} ok" -f $u.Remaining)
     [pscustomobject]@{
         Percent = $u.Remaining
         Detail  = ($details -join ' · ')
-        Tip     = ('Gemini 余量 {0}' -f (Format-PercentText $u.Remaining))
+        Tip     = (T 'row.geminiTip' @((Format-PercentText $u.Remaining)))
         Reset   = (Format-ResetTime $u.PeriodEnd)
         ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
@@ -1628,13 +1645,13 @@ function Get-KimiRowData {
     $details += Format-ResetText $u.PeriodEnd
     if ($u.ExtraCents -gt 0) {
         $symbol = if ($u.Currency -eq 'CNY') { '¥' } else { '$' }
-        $details += ('本月额外 {0}{1:0.00}' -f $symbol, ($u.ExtraCents / 100.0))
+        $details += (T 'row.monthlyExtra' @($symbol, ($u.ExtraCents / 100.0)))
     }
     Write-WidgetLog ("usage kimi {0} ok" -f $u.Percent)
     [pscustomobject]@{
         Percent = $u.Percent
         Detail  = ($details -join ' · ')
-        Tip     = ('Kimi {0}' -f (Format-PercentText $u.Percent))
+        Tip     = (T 'row.kimiTip' @((Format-PercentText $u.Percent)))
         Reset   = (Format-ResetTime $u.PeriodEnd)
         ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
@@ -1647,12 +1664,12 @@ function Get-CodexRowData {
     $details = @()
     if ($u.Burst -and $u.Burst.Label) { $details += ('{0} {1:0}%' -f $u.Burst.Label, $u.Burst.Percent) }
     $details += Format-ResetText $u.PeriodEnd
-    if ($null -ne $u.Credits) { $details += ('余额 ${0:0.00}' -f $u.Credits) }
+    if ($null -ne $u.Credits) { $details += (T 'row.balanceUsd' @($u.Credits)) }
     Write-WidgetLog ("usage {0} {1} ok" -f $Id, $u.Percent)
     [pscustomobject]@{
         Percent = $u.Percent
         Detail  = ($details -join ' · ')
-        Tip     = ('{0} {1}' -f $Name, (Format-PercentText $u.Percent))
+        Tip     = (T 'row.codexTip' @($Name, (Format-PercentText $u.Percent)))
         Reset   = (Format-ResetTime $u.PeriodEnd)
         ResetAt = (ConvertTo-ResetStamp $u.PeriodEnd)
     }
@@ -1750,7 +1767,7 @@ function Show-WidgetSettings {
     $languageIndex = [Math]::Max(0, [Array]::IndexOf($languages, [string]$current.language))
 
     $dialog = New-Object System.Windows.Forms.Form
-    $dialog.Text = 'AI 周用量 · 设置'
+    $dialog.Text = (T 'settings.title')
     $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
     $dialog.MaximizeBox = $false
@@ -1764,41 +1781,45 @@ function Show-WidgetSettings {
     $colLabel = Scale-Px 18
     $colValue = Scale-Px 124
 
-    $chkTrend = New-SettingCheckBox $dialog '趋势迷你折线' $colLabel (Scale-Px 16) ([bool]$current.showTrend)
-    $chkForecast = New-SettingCheckBox $dialog '耗尽预测' (Scale-Px 208) (Scale-Px 16) ([bool]$current.showForecast)
+    $chkTrend = New-SettingCheckBox $dialog (T 'settings.trend') $colLabel (Scale-Px 16) ([bool]$current.showTrend)
+    $chkForecast = New-SettingCheckBox $dialog (T 'settings.forecast') (Scale-Px 208) (Scale-Px 16) ([bool]$current.showForecast)
 
-    [void](New-SettingLabel $dialog '趋势天数' $colLabel (Scale-Px 48) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.trendDays') $colLabel (Scale-Px 48) $muted)
     $numDays = New-SettingNumber $dialog $colValue (Scale-Px 48) (Scale-Px 70) $current.trendDays 1 14 1
-    [void](New-SettingLabel $dialog '天' (Scale-Px 204) (Scale-Px 48) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.unitDays') (Scale-Px 204) (Scale-Px 48) $muted)
 
-    [void](New-SettingLabel $dialog '刷新间隔' $colLabel (Scale-Px 78) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.interval') $colLabel (Scale-Px 78) $muted)
     $numInterval = New-SettingNumber $dialog $colValue (Scale-Px 78) (Scale-Px 70) $current.intervalSeconds 15 86400 15
-    [void](New-SettingLabel $dialog '秒' (Scale-Px 204) (Scale-Px 78) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.intervalHint') (Scale-Px 204) (Scale-Px 78) $muted)
 
-    [void](New-SettingLabel $dialog '窗口不透明度' $colLabel (Scale-Px 108) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.opacity') $colLabel (Scale-Px 108) $muted)
     $numOpacity = New-SettingNumber $dialog $colValue (Scale-Px 108) (Scale-Px 70) $current.opacity 0.5 1.0 0.02 2
+    [void](New-SettingLabel $dialog (T 'settings.opacityHint') (Scale-Px 204) (Scale-Px 108) $muted)
 
-    [void](New-SettingLabel $dialog '提醒阈值' $colLabel (Scale-Px 138) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.thresholds') $colLabel (Scale-Px 138) $muted)
     $txtThresholds = New-SettingText $dialog $colValue (Scale-Px 138) (Scale-Px 90) (($current.alertThresholds) -join ',')
-    [void](New-SettingLabel $dialog '百分比，逗号分隔' (Scale-Px 224) (Scale-Px 138) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.thresholdsHint') (Scale-Px 224) (Scale-Px 138) $muted)
 
-    $chkQuiet = New-SettingCheckBox $dialog '静音时段' $colLabel (Scale-Px 170) ([bool]$current.quietHours.enabled)
+    $chkQuiet = New-SettingCheckBox $dialog (T 'settings.quietHours') $colLabel (Scale-Px 170) ([bool]$current.quietHours.enabled)
     $txtQuietStart = New-SettingText $dialog (Scale-Px 124) (Scale-Px 170) (Scale-Px 62) ([string]$current.quietHours.start)
-    [void](New-SettingLabel $dialog '至' (Scale-Px 190) (Scale-Px 170) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.quietTo') (Scale-Px 190) (Scale-Px 170) $muted)
     $txtQuietEnd = New-SettingText $dialog (Scale-Px 208) (Scale-Px 170) (Scale-Px 62) ([string]$current.quietHours.end)
 
-    [void](New-SettingLabel $dialog '启用供应商' $colLabel (Scale-Px 202) $muted)
+    [void](New-SettingLabel $dialog (T 'settings.providers') $colLabel (Scale-Px 202) $muted)
     $chkGrok = New-SettingCheckBox $dialog 'Grok' $colValue (Scale-Px 200) ([bool]$current.providers.grok)
     $chkGemini = New-SettingCheckBox $dialog 'Gemini' (Scale-Px 208) (Scale-Px 200) ([bool]$current.providers.gemini)
     $chkKimi = New-SettingCheckBox $dialog 'Kimi' $colValue (Scale-Px 226) ([bool]$current.providers.kimi)
     $chkCodex = New-SettingCheckBox $dialog 'ChatGPT' (Scale-Px 208) (Scale-Px 226) ([bool]$current.providers.codex)
     $chkCommandCode = New-SettingCheckBox $dialog 'Command Code' $colValue (Scale-Px 252) ([bool]$current.providers.commandcode)
 
-    [void](New-SettingLabel $dialog '界面语言' $colLabel (Scale-Px 288) $muted)
-    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 288) (Scale-Px 150) @('跟随系统', '简体中文', 'English') $languageIndex
+    [void](New-SettingLabel $dialog (T 'settings.language') $colLabel (Scale-Px 288) $muted)
+    $comboItems = @((T 'settings.languageAuto'), (T 'settings.languageZh'), (T 'settings.languageEn'))
+    $cmbLanguage = New-SettingCombo $dialog $colValue (Scale-Px 288) (Scale-Px 150) $comboItems $languageIndex
 
-    $btnSave = New-SettingButton $dialog '保存' (Scale-Px 176) (Scale-Px 344)
-    $btnCancel = New-SettingButton $dialog '取消' (Scale-Px 268) (Scale-Px 344)
+    $lblStatus = New-SettingLabel $dialog (T 'settings.restartHint') $colLabel (Scale-Px 316) $muted
+
+    $btnSave = New-SettingButton $dialog (T 'settings.save') (Scale-Px 176) (Scale-Px 344)
+    $btnCancel = New-SettingButton $dialog (T 'settings.cancel') (Scale-Px 268) (Scale-Px 344)
 
     $dialog.AcceptButton = $btnSave
     $dialog.CancelButton = $btnCancel
@@ -1830,10 +1851,12 @@ function Show-WidgetSettings {
             if (-not $script:DemoMode) { [void](Write-WidgetConfig -Config $script:Config) }
             Write-WidgetLog ('settings saved: interval={0}s opacity={1} trend={2} forecast={3} days={4} language={5}' -f $script:Config.intervalSeconds, $script:Config.opacity, $script:Config.showTrend, $script:Config.showForecast, $script:Config.trendDays, $script:Config.language)
             Apply-WidgetConfig
+            $dialog.Close()
         } catch {
             Write-WidgetLog ("settings save failed: $($_.Exception.Message)")
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 138, 128)
+            $lblStatus.Text = (T 'settings.saveFailed' @((Convert-SafeLogText $_.Exception.Message 80)))
         }
-        $dialog.Close()
     })
 
     [void]$dialog.ShowDialog($script:Ui.Form)
@@ -1865,7 +1888,7 @@ function New-WidgetForm {
     Hide-ConsoleWindow
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'AI 周用量'
+    $form.Text = (T 'app.title')
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $m = Get-UiMetrics $form
@@ -1899,37 +1922,37 @@ function New-WidgetForm {
     $lblStamp.Text = ''
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
-    $miRefresh = $menu.Items.Add('立即刷新')
-    $miInterval = New-Object System.Windows.Forms.ToolStripMenuItem '刷新间隔'
+    $miRefresh = $menu.Items.Add((T 'menu.refresh'))
+    $miInterval = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.interval')
     foreach ($sec in 60, 300, 900, 3600) {
-        $item = $miInterval.DropDownItems.Add(('{0} 分钟' -f ($sec / 60)))
+        $item = $miInterval.DropDownItems.Add((T 'menu.intervalMinutes' @($sec / 60)))
         $item.Tag = $sec
         $script:IntervalItems[$sec] = $item
     }
     [void]$menu.Items.Add($miInterval)
-    $miAddGrok = $menu.Items.Add('登记 Grok 账号')
-    $miAdd = $menu.Items.Add('登记 ChatGPT 账号')
-    $miOpen = New-Object System.Windows.Forms.ToolStripMenuItem '打开用量页'
+    $miAddGrok = $menu.Items.Add((T 'menu.registerGrok'))
+    $miAdd = $menu.Items.Add((T 'menu.registerChatgpt'))
+    $miOpen = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.openUsage')
     $miOpenGrok = $miOpen.DropDownItems.Add('Grok')
     $miOpenGemini = $miOpen.DropDownItems.Add('Gemini')
     $miOpenKimi = $miOpen.DropDownItems.Add('Kimi')
     $miOpenCodex = $miOpen.DropDownItems.Add('ChatGPT')
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     [void]$menu.Items.Add($miOpen)
-    $miExportCsv = $menu.Items.Add('导出用量 CSV')
-    $miSettings = $menu.Items.Add('设置…')
-    $miTop = $menu.Items.Add('浮在窗口上')
+    $miExportCsv = $menu.Items.Add((T 'menu.exportCsv'))
+    $miSettings = $menu.Items.Add((T 'menu.settings'))
+    $miTop = $menu.Items.Add((T 'menu.topMost'))
     $miTop.Checked = [bool]$script:State.topMost
     [void]$menu.Items.Add('-')
     $startupOn = Test-Path -LiteralPath (Get-StartupShortcutPath)
-    $miStart = $menu.Items.Add($(if ($startupOn) { '取消开机启动' } else { '开机启动' }))
+    $miStart = $menu.Items.Add($(if ($startupOn) { T 'menu.startupOff' } else { T 'menu.startupOn' }))
     [void]$menu.Items.Add('-')
-    $miQuit = $menu.Items.Add('退出')
+    $miQuit = $menu.Items.Add((T 'menu.quit'))
     $form.ContextMenuStrip = $menu
     $form.TopMost = [bool]$script:State.topMost
 
     $tray = New-Object System.Windows.Forms.NotifyIcon
-    $tray.Text = 'AI 周用量'
+    $tray.Text = (T 'app.trayTip')
     $tray.Visible = $true
     $tray.ContextMenuStrip = $menu
     try {
@@ -2003,12 +2026,12 @@ function New-WidgetForm {
         $path = Get-StartupShortcutPath
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
-            $miStart.Text = '开机启动'
+            $miStart.Text = (T 'menu.startupOn')
         } else {
             Write-LauncherVbs
             Remove-LegacyStartupShortcuts
-            New-Shortcut -Path $path -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc '开机启动 AI 周用量卡片'
-            $miStart.Text = '取消开机启动'
+            New-Shortcut -Path $path -Target $script:VbsPath -WorkDir $script:WidgetDir -Desc (T 'shortcut.desc')
+            $miStart.Text = (T 'menu.startupOff')
         }
     })
     $miQuit.Add_Click({ $form.Close() })
@@ -2116,13 +2139,13 @@ function Update-Widget {
     }
 
     if ($specs.Count -eq 0) {
-        $ui.Stamp.Text = '未找到登录凭证'
-        if ($ui.Tray) { $ui.Tray.Text = 'AI 周用量' }
+        $ui.Stamp.Text = (T 'status.noCredentials')
+        if ($ui.Tray) { $ui.Tray.Text = (T 'app.trayTip') }
         return
     }
     if ($script:DemoMode) {
         Apply-FetchResults (Get-DemoFetchResults $specs)
-        $ui.Stamp.Text = '演示模式 · 固定数据'
+        $ui.Stamp.Text = (T 'app.demoStamp')
         return
     }
 
@@ -2131,7 +2154,7 @@ function Update-Widget {
         Start-BackgroundFetch $specs
     } catch {
         $script:FetchRunning = $false
-        $ui.Stamp.Text = ('更新失败: {0}' -f $_.Exception.Message)
+        $ui.Stamp.Text = (T 'status.startFailed' @($_.Exception.Message))
         Write-WidgetLog ("start fetch failed: {0}" -f $_.Exception.Message)
     }
 }
@@ -2229,6 +2252,8 @@ function Start-BackgroundFetch {
         CommandCodeShowBalance   = $script:CommandCodeShowBalance
         CommandCodeDisplayName   = $script:CommandCodeDisplayName
         SecureSnapshotRoot       = $script:SecureSnapshotRoot
+        WidgetStrings            = $script:WidgetStrings
+        Language                 = $script:Language
     }
     $rows = @()
     foreach ($s in $Specs) {
@@ -2260,7 +2285,7 @@ function Start-BackgroundFetch {
         Handle    = $handle
         StartedAt = Get-Date
     }
-    $script:Ui.Stamp.Text = '更新中…'
+    $script:Ui.Stamp.Text = (T 'status.refreshing')
     $script:Ui.Poll.Start()
 }
 
@@ -2328,7 +2353,7 @@ function Receive-BackgroundFetch {
             Write-WidgetLog 'background fetch timed out, stopping'
             try { $job.Ps.Stop() } catch { }
             Clear-FetchJobs
-            if ($script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = '刷新超时，等待下次尝试' }
+            if ($script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = (T 'status.refreshTimeout') }
         }
         return
     }
@@ -2361,7 +2386,7 @@ function Receive-BackgroundFetch {
             Write-WidgetLog ("apply $($_.Exception.Message)`n$($_.ScriptStackTrace)")
         }
     } elseif ($script:Ui -and -not $script:Ui.Form.IsDisposed) {
-        $script:Ui.Stamp.Text = ('更新于 {0}' -f [datetime]::Now.ToString('HH:mm'))
+        $script:Ui.Stamp.Text = (T 'status.updated' @([datetime]::Now.ToString('HH:mm')))
     }
     try { $psOld.Dispose() } catch { }
     try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
@@ -2392,26 +2417,29 @@ function Format-ForecastText {
     param($Forecast)
     if (-not $Forecast) { return $null }
     if ($null -eq $Forecast.EtaHours) {
-        if ($null -ne $Forecast.SlopePerDay) { return '按最近趋势不会耗尽' }
+        if ($null -ne $Forecast.SlopePerDay) { return (T 'forecast.never') }
         return $null
     }
     $eta = [double]$Forecast.EtaHours
-    $span = if ($eta -ge 48) { '{0:0.#} 天' -f ($eta / 24.0) }
-            elseif ($eta -ge 1) { '{0:0.#} 小时' -f $eta }
-            else { '{0:0} 分钟' -f [Math]::Max(1, [int]($eta * 60)) }
-    if ($Forecast.ExhaustsBeforeReset) { return ('按最近趋势约 {0} 后耗尽，早于本次重置' -f $span) }
-    return ('按最近趋势约 {0} 后耗尽' -f $span)
+    $span = if ($eta -ge 48) { T 'forecast.days' @($eta / 24.0) }
+            elseif ($eta -ge 1) { T 'forecast.hours' @($eta) }
+            else { T 'forecast.minutes' @([Math]::Max(1, [int]($eta * 60))) }
+    if ($Forecast.ExhaustsBeforeReset) { return (T 'forecast.beforeReset' @($span)) }
+    return (T 'forecast.plain' @($span))
 }
 
 function Export-UsageHistoryInteractive {
     try {
         $stamp = [datetime]::Now.ToString('yyyyMMdd-HHmmss')
         $target = Join-Path $script:WidgetDir ('ai-usage-{0}.csv' -f $stamp)
-        if (-not (Export-UsageHistoryCsv -Path $target -SourcePath $script:HistoryPath)) { return }
+        if (-not (Export-UsageHistoryCsv -Path $target -SourcePath $script:HistoryPath)) {
+            [System.Windows.Forms.MessageBox]::Show((T 'csv.failed'), (T 'csv.title'), 'OK', 'Warning') | Out-Null
+            return
+        }
         Write-WidgetLog ("csv export {0}" -f $target)
         [System.Windows.Forms.MessageBox]::Show(
-            ('已导出到{0}{1}' -f [Environment]::NewLine, $target),
-            'AI 周用量', 'OK', 'Information') | Out-Null
+            (T 'csv.exported' @([Environment]::NewLine, $target)),
+            (T 'csv.title'), 'OK', 'Information') | Out-Null
     } catch {
         Write-WidgetLog ("csv export failed: $($_.Exception.Message)")
     }
@@ -2444,10 +2472,10 @@ function Send-UsageAlert {
     if ($script:Alerted.ContainsKey($Id)) { $prev = $script:Alerted[$Id] }
     if ($level -gt $prev) {
         $script:Alerted[$Id] = $level
-        $msg = '{0} 用量已达 {1}' -f $Row.Name, (Format-PercentText $usagePercent)
+        $msg = T 'alert.body' @($Row.Name, (Format-PercentText $usagePercent))
         Write-WidgetLog ("alert {0}: {1}" -f $Id, $msg)
         try {
-            $script:Ui.Tray.ShowBalloonTip(6000, 'AI 周用量', $msg, [System.Windows.Forms.ToolTipIcon]::Warning)
+            $script:Ui.Tray.ShowBalloonTip(6000, (T 'alert.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Warning)
         } catch { }
     } elseif ($level -eq 0 -and $prev -gt 0) {
         $script:Alerted[$Id] = 0
@@ -2483,7 +2511,7 @@ function Apply-FetchResults {
             $safeError = Convert-SafeLogText ([string]$r.Error) 240
             Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
             Set-RowError $row (Format-FetchError $safeError)
-            Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError $safeError))
+            Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail))
         } else {
             try {
                 $pct = Assert-UsagePercent $r.Percent 'provider result percent'
@@ -2492,7 +2520,7 @@ function Apply-FetchResults {
                 $safeError = Convert-SafeLogText $_.Exception.Message
                 Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
                 Set-RowError $row (Format-FetchError $safeError)
-                Set-RowTip $row @(('{0} — 读取失败' -f $row.Name), (Format-FetchError $safeError))
+                Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail))
                 continue
             }
             Register-ProviderSuccess $r.Id
@@ -2516,19 +2544,19 @@ function Apply-FetchResults {
             if ($script:LastPct.ContainsKey($r.Id)) { $delta = $pct - [double]$script:LastPct[$r.Id] }
             $script:LastPct[$r.Id] = $pct
 
-            $upd = '更新于 ' + [datetime]::Now.ToString('HH:mm')
+            $upd = T 'status.updated' @([datetime]::Now.ToString('HH:mm'))
             if ($null -ne $delta -and [Math]::Abs($delta) -ge 0.05) {
                 $sign = if ($delta -gt 0) { '+' } else { '' }
-                $upd += (' (较上次 {0}{1:0.0}%)' -f $sign, $delta)
+                $upd += T 'status.delta' @($sign, $delta)
             }
             Set-RowTip $row @(
-                ('{0} — {1}' -f $row.Name, (Format-PercentText $pct)),
+                (T 'tip.rowTitle' @($row.Name, (Format-PercentText $pct))),
                 [string]$r.Detail,
                 $recentRequest,
                 $forecastLine,
-                $(if ($r.Reset) { '重置时刻: ' + [string]$r.Reset }),
+                $(if ($r.Reset) { T 'tip.resetAt' @([string]$r.Reset) }),
                 $upd,
-                '双击打开用量页面'
+                (T 'tip.openUsage')
             )
 
             if ($null -eq $delta -or [Math]::Abs($delta) -ge 0.05) {
@@ -2538,9 +2566,9 @@ function Apply-FetchResults {
         }
     }
     if ($StillRunning) {
-        $ui.Stamp.Text = '更新中…'
+        $ui.Stamp.Text = (T 'status.refreshing')
     } else {
-        $ui.Stamp.Text = ('更新于 {0}' -f [datetime]::Now.ToString('HH:mm'))
+        $ui.Stamp.Text = (T 'status.updated' @([datetime]::Now.ToString('HH:mm')))
     }
     $tipParts = @()
     foreach ($row in $ui.Rows) {
@@ -2553,7 +2581,7 @@ function Apply-FetchResults {
         if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
         $ui.Tray.Text = $tip
     } elseif (-not $StillRunning) {
-        $ui.Tray.Text = 'AI 用量读取失败'
+        $ui.Tray.Text = (T 'error.readFailed')
     }
 }
 
@@ -2565,8 +2593,8 @@ if ($MigrateSecrets) { Migrate-ProjectSnapshots; return }
 
 try {
     Write-WidgetLog ('starting widget v{0}{1}' -f $script:AppVersion, $(if ($script:DemoMode) { ' (demo mode)' } else { '' }))
-    $script:Config = Read-WidgetConfig
     Write-WidgetLog ('config interval={0}s language={1} trend={2} forecast={3}' -f $script:Config.intervalSeconds, $script:Config.language, $script:Config.showTrend, $script:Config.showForecast)
+    Write-WidgetLog ('strings language={0} keys={1}' -f $script:Language, @($script:WidgetStrings.Keys).Count)
     Ensure-SingleInstance
     if (-not $script:DemoMode) {
         try { Remove-LegacyStartupShortcuts } catch { }

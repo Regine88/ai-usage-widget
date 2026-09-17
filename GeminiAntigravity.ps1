@@ -93,10 +93,10 @@ function Test-AntigravityCredExists {
 function Read-AntigravityCred {
     Ensure-AntigravityCredType
     $blob = [NativeAgCred]::ReadBlob($script:AntigravityCredTarget)
-    if (-not $blob -or $blob.Length -eq 0) { throw '未找到 Antigravity 登录，请先在 Antigravity 中登录 Google 账号' }
+    if (-not $blob -or $blob.Length -eq 0) { throw 'missing-credential' }
     $raw = [Text.Encoding]::UTF8.GetString($blob) | ConvertFrom-Json
     if (-not $raw.token -or -not $raw.token.refresh_token) {
-        throw 'Antigravity 凭据不完整，请重新登录'
+        throw 'auth-expired'
     }
     $exp = $null
     if ($raw.token.expiry) {
@@ -124,7 +124,7 @@ function Save-AntigravityCred {
 
 function Update-AntigravityToken {
     param($Auth)
-    if (-not $script:AntigravityClientSecret) { throw '缺少 ANTIGRAVITY_CLIENT_SECRET，无法刷新 Gemini 登录' }
+    if (-not $script:AntigravityClientSecret) { throw 'missing-secret' }
     $body = @{
         grant_type    = 'refresh_token'
         refresh_token = $Auth.RefreshToken
@@ -132,7 +132,7 @@ function Update-AntigravityToken {
         client_secret = $script:AntigravityClientSecret
     }
     $resp = Invoke-WidgetRest -Method Post -Uri $script:AntigravityTokenUrl -Body $body -ContentType 'application/x-www-form-urlencoded'
-    if (-not $resp.access_token) { throw '刷新 Gemini 登录失败，请打开 Antigravity 重新登录' }
+    if (-not $resp.access_token) { throw 'token-refresh' }
     $Auth.AccessToken = [string]$resp.access_token
     if ($resp.refresh_token) { $Auth.RefreshToken = [string]$resp.refresh_token }
     $expiresIn = Assert-PositiveFiniteNumber $resp.expires_in 'Gemini expires_in'
@@ -169,7 +169,7 @@ function Convert-GeminiQuota {
         $name = [string]$g.displayName
         if ($name -match 'Gemini') { $group = $g; break }
     }
-    if (-not $group) { throw '用量接口没有返回 Gemini 配额' }
+    if (-not $group) { throw 'bad-payload' }
     $remain5h = $null
     $remainWeek = $null
     $reset5h = $null
@@ -179,10 +179,10 @@ function Convert-GeminiQuota {
         $isFiveHour = $id -match '5h|five'
         $isWeekly = $id -match 'week'
         if (-not $isFiveHour -and -not $isWeekly) { continue }
-        if ($null -eq $b.remainingFraction -or -not (Test-FiniteNumber $b.remainingFraction)) { throw 'Gemini 配额窗口缺少 remainingFraction' }
+        if ($null -eq $b.remainingFraction -or -not (Test-FiniteNumber $b.remainingFraction)) { throw 'bad-payload' }
         $frac = [double]$b.remainingFraction
         if ($frac -gt 1.0) { $frac = $frac / 100.0 }
-        if ($frac -lt 0.0 -or $frac -gt 1.0) { throw 'Gemini remainingFraction 超出 0-1 范围' }
+        if ($frac -lt 0.0 -or $frac -gt 1.0) { throw 'bad-payload' }
         $pct = Assert-UsagePercent ([Math]::Round($frac * 100.0, 1)) 'Gemini remaining percent'
         $reset = $null
         if ($b.resetTime) {
@@ -196,7 +196,7 @@ function Convert-GeminiQuota {
             $resetWeek = $reset
         }
     }
-    if ($null -eq $remain5h -and $null -eq $remainWeek) { throw 'Gemini 配额缺少 5 小时/周窗口' }
+    if ($null -eq $remain5h -and $null -eq $remainWeek) { throw 'bad-payload' }
     $remaining = if ($null -ne $remain5h -and $null -ne $remainWeek) {
         [Math]::Min($remain5h, $remainWeek)
     } elseif ($null -ne $remain5h) { $remain5h } else { $remainWeek }

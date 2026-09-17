@@ -18,6 +18,7 @@ $script:WidgetRuntimeFiles = @(
     'ModelRequestRecorder.ps1'
     'UsageHistory.ps1'
     'WidgetConfig.ps1'
+    'WidgetStrings.ps1'
     'WidgetInstaller.ps1'
     'Record-ModelRequest.ps1'
     'GrokUsageWidget.ps1'
