@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, for example v0.7.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ github.event.inputs.tag }}' } else { '${{ github.ref_name }}' }
+          if ($tag -notmatch '^v[0-9]+[.][0-9]+[.][0-9]+$') { throw "unexpected tag: $tag" }
+          $version = $tag.Substring(1)
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "publishing $version"
+
+      - name: Version matches the entry script
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = '${{ steps.version.outputs.version }}'
+          $output = & pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
+          Write-Host $output
+          if ($output -notmatch [regex]::Escape($expected)) { throw "entry script does not report $expected" }
+
+      - name: Offline suites on both engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tests = Get-ChildItem -Path . -Filter 'test-*.ps1' -File | Sort-Object Name
+          if ($tests.Count -eq 0) { throw 'No test suites found' }
+          $failed = @()
+          foreach ($engine in @('pwsh', 'powershell')) {
+            foreach ($test in $tests) {
+              $output = & $engine -NoProfile -ExecutionPolicy Bypass -File $test.FullName 2>&1 | Out-String
+              if ($LASTEXITCODE -ne 0 -or $output -notmatch 'ALL PASSED') {
+                $failed += ($engine + ' ' + $test.Name)
+                Write-Host ('::error::' + $engine + ' ' + $test.Name + ' failed')
+              }
+            }
+          }
+          if ($failed.Count -gt 0) { throw ('failed suites: ' + ($failed -join ', ')) }
+          Write-Host ('{0} suite(s) passed on both engines' -f $tests.Count)
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ steps.version.outputs.version }}'
+          pwsh -NoProfile -File .\tools\package-release.ps1 -Version $version -OutDir dist
+          Get-ChildItem -Path dist -File | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = '${{ steps.version.outputs.tag }}'
+          $version = '${{ steps.version.outputs.version }}'
+          $assets = @(
+            (Join-Path 'dist' ('ai-usage-widget-' + $version + '.zip'))
+            (Join-Path 'dist' ('ai-usage-widget-' + $version + '.zip.sha256'))
+            (Join-Path 'dist' 'ai-usage-widget.json')
+          )
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+            Write-Host ("updated release " + $tag)
+          } else {
+            gh release create $tag --title ('AI Usage Widget ' + $version) --generate-notes @assets
+            Write-Host ("created release " + $tag)
+          }

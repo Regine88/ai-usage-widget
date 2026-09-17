@@ -25,3 +25,6 @@ ai-config.json
 ai-config.json.tmp
 # Local Grok account alias map (derived from real account identifiers)
 grok-aliases.json
+
+# Release build output
+/dist/

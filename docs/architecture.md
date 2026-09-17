@@ -47,6 +47,8 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、不透明度、阈值、静音时段、语言），非法值回退默认 |
+| `WidgetInstaller.ps1` | 安装 / 升级 / 卸载实现：运行文件清单、用户数据判定与开始菜单快捷方式；安装器与发布打包共用这份清单 |
+| `tools/package-release.ps1` | Release 打包：按清单组装 zip、生成 SHA256 与 Scoop manifest（本地与 CI 共用） |
 | `Record-ModelRequest.ps1` | 供外部工具调用的独立入口：追加一条请求事件 |
 | `Start-*.vbs` | 无窗口启动器；`Start-AiUsageWidget.vbs` 对应聚合卡片 |
 | `test-*.ps1` | 每个模块对应的离线测试套件，成功时打印 `ALL PASSED` |
@@ -122,6 +124,7 @@ worker 是一个**全新的 runspace**，它既没有主脚本的函数，也没
 | --- | --- | --- |
 | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | DPAPI 保护的账号快照，文件名为账号指纹 | 否 |
 | `<程序目录>\ai-state.json` | 窗口位置、置顶、刷新间隔 | 否（`.gitignore`） |
+| `<安装目录>\ai-install.json` | 安装元数据：版本、安装时间与文件清单（由安装器维护） | 否 |
 | `<程序目录>\ai-config.json` | 供应商开关、刷新间隔、不透明度、趋势与提醒设置 | 否（`.gitignore`） |
 | `<程序目录>\ai-history.jsonl` | 用量百分比时间序列（超过 1MB 自动保留最后 2000 行） | 否 |
 | `<程序目录>\ai-request-events.jsonl` | 请求事件元数据 | 否 |

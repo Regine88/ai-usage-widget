@@ -90,6 +90,35 @@ Just want to see the UI? No account is needed:
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Demo
 ```
 
+### Install locally
+
+```powershell
+# Install from a clone (run again to upgrade)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+
+# Status / uninstall (keeps user data) / full removal
+.\install.ps1 -Status
+.\install.ps1 -Uninstall
+.\install.ps1 -Uninstall -Purge
+```
+
+The installer copies the runtime files to `%LOCALAPPDATA%\Programs\AIUsageWidget` and adds a
+Start menu shortcut. User data such as `ai-config.json` and `ai-history.jsonl` is never
+overwritten, and uninstalling keeps it by default. Prefer no installer? Just double-click
+`Start-AiUsageWidget.vbs`.
+
+You can also install from a Release archive:
+
+```powershell
+.\install.ps1 -Zip .\ai-usage-widget-0.7.0.zip
+```
+
+Scoop users can install the manifest attached to every Release:
+
+```powershell
+scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/download/ai-usage-widget.json
+```
+
 ### Check the version
 
 ```powershell
@@ -162,6 +191,7 @@ so a broken file can never break the widget.
 | Usage history | `<app dir>\ai-history.jsonl` | No, timestamps and percentages only |
 | Request events | `<app dir>\ai-request-events.jsonl` | No, provider / model / status / duration only |
 | Account aliases (optional) | `<app dir>\grok-aliases.json` | No, short hashes and local aliases only; covered by `.gitignore` |
+| Install metadata (optional) | `<install dir>\ai-install.json` | No, version, install time and file list only |
 | Log | `<app dir>\ai-widget.log` | No, accounts appear as short hashes; rotated automatically |
 
 - Requests go only to each provider's own endpoints, always over HTTPS, and only after a trusted-host check.

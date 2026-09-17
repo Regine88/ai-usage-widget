@@ -85,10 +85,11 @@ Grok 与 ChatGPT / Codex 是多账号模式：`auth.json` 存在后，还需要�
 ## 想彻底卸载
 
 1. 托盘图标右键 → 退出。
-2. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
-3. 删除程序目录（含 `ai-state.json`、`ai-history.jsonl`、`ai-request-events.jsonl`、`ai-widget.log`）。
+2. 用安装器卸载：`.install.ps1 -Uninstall`（保留用户数据）或 `.install.ps1 -Uninstall -Purge`（连用户数据与账户快照一起删除）。
+3. 手动卸载时：删除程序目录（含 `ai-state.json`、`ai-history.jsonl`、`ai-request-events.jsonl`、`ai-widget.log`）。
 4. 删除受保护的账号快照：`Remove-Item "$env:LOCALAPPDATA\AIUsageWidget" -Recurse`。
-5. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode` 是各供应商 CLI 的数据，本程序不会写入，按需自行保留。
+5. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
+6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode` 是各供应商 CLI 的数据，本程序不会写入，按需自行保留。
 
 ## 报告问题前请准备
 

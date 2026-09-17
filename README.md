@@ -88,6 +88,34 @@ wscript.exe .\Start-AiUsageWidget.vbs
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Demo
 ```
 
+### 安装到本机
+
+```powershell
+# 从 clone 好的仓库安装（重复执行即为升级）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+
+# 查看状态 / 卸载（保留用户数据）/ 彻底卸载
+.\install.ps1 -Status
+.\install.ps1 -Uninstall
+.\install.ps1 -Uninstall -Purge
+```
+
+安装器会把运行文件复制到 `%LOCALAPPDATA%\Programs\AIUsageWidget`，并创建开始菜单快捷方式；
+`ai-config.json`、`ai-history.jsonl` 等用户数据永远不会被覆盖，卸载默认也保留。
+不想安装时，直接双击 `Start-AiUsageWidget.vbs` 即可免安装运行。
+
+也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
+
+```powershell
+.\install.ps1 -Zip .\ai-usage-widget-0.7.0.zip
+```
+
+Scoop 用户可以直接安装每个 Release 附带的 manifest：
+
+```powershell
+scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/download/ai-usage-widget.json
+```
+
 ### 先确认版本
 
 ```powershell
@@ -157,6 +185,7 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | 请求事件 | `<程序目录>\ai-request-events.jsonl` | 否，只有供应商 / 模型 / 状态 / 耗时 |
 | 日志 | `<程序目录>\ai-widget.log` | 否，账号只以短哈希出现，自动轮转 |
 | 账号别名（可选） | `<程序目录>\grok-aliases.json` | 否，只有短哈希与本地别名，已被 `.gitignore` 排除 |
+| 安装元数据（可选） | `<安装目录>\ai-install.json` | 否，只有版本号、安装时间与文件清单 |
 
 - 只在需要时访问各供应商自己的接口，请求固定使用 HTTPS，并在请求前做受信任主机白名单校验。
 - 没有遥测、没有埋点、没有自动更新回传，程序不会把任何数据发送给本项目维护者。

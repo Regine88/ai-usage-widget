@@ -66,6 +66,14 @@ CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上做同样的事（�
 - PR 描述里写清**实际执行的验证命令与结果**，不要只写"应该没问题"。
 - 涉及界面改动时，用 `-Demo` 模式截图附在 PR 里。
 
+## 发布流程
+
+1. 更新 `CHANGELOG.md` 与 `AiUsageWidget.ps1` 里的 `$script:AppVersion`，提交并推送 `main`。
+2. 打标签并推送：`git tag v0.7.0`、`git push origin v0.7.0`。
+3. `Release` 工作流会在 `windows-latest` 上重跑双引擎测试，然后打包 zip、生成 SHA256 与 Scoop manifest，
+   并发布到 GitHub Release；重复运行会覆盖同名资产。
+4. 本地预演打包：`pwsh -NoProfile -File .\tools\package-release.ps1 -Version 0.7.0`，产物在 `dist/`（已被 `.gitignore` 排除）。
+
 ## 安全红线
 
 - **绝不提交**凭据、快照、日志与含个人信息的文件：`*auth*.json`、`ai-state.json`、`ai-*.jsonl`、`*.log`、`.commandcode/`。`.gitignore` 已覆盖这些路径，请不要绕过。

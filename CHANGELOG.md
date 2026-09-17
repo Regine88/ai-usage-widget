@@ -18,6 +18,8 @@
 - 卡片内 7 天迷你折线：颜色跟随该行当前用量（绿 / 黄 / 橙 / 红），数据点不足两个时沿用上一帧。
 - 悬停提示新增耗尽预测行，例如「按最近趋势约 9 小时后耗尽，早于本次重置」。
 - 右键菜单新增 **导出用量 CSV**：把全部历史导出为 Excel 可直接打开的 UTF-8 CSV（带 BOM）。
+- `install.ps1` + `WidgetInstaller.ps1` + `test-WidgetInstaller.ps1`：安装 / 升级 / 卸载。安装到 `%LOCALAPPDATA%\Programs\AIUsageWidget` 并创建开始菜单快捷方式；用户数据永不被覆盖，卸载默认保留，`-Purge` 才彻底删除。
+- `tools/package-release.ps1` 与 Release 工作流：推送 `v*` 标签后自动在双引擎跑全部测试，打包 zip、生成 SHA256 与 Scoop manifest 并发布 Release；本地可用同一脚本预演打包。
 
 ### Changed
 
