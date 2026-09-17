@@ -41,7 +41,8 @@ foreach ($exe in @('pwsh', $ps51)) {
 }
 ```
 
-CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上做同样的事，另外附带语法解析检查与 PSScriptAnalyzer 报告。
+CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上做同样的事（语法解析由 `test-Syntax.ps1` 承担，两个版本各跑一次），
+另外附带 PSScriptAnalyzer 报告作业。
 
 ## 代码约定
 

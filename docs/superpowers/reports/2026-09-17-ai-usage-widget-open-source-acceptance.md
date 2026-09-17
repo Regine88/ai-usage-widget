@@ -4,15 +4,15 @@
 
 ## 结论
 
-P0 九项任务全部完成，双 PowerShell 版本 16 次测试执行全部 `ALL PASSED`，语法解析零错误，
-仓库已具备对外开源所需的许可证、文档、协作模板与 CI。仓库可见性、描述与首个 Release 属于 GitHub 侧手动操作，见文末清单。
+P0 九项任务全部完成，双 PowerShell 版本 18 次测试执行全部 `ALL PASSED`，语法解析零错误，
+仓库已具备对外开源所需的许可证、文档、协作模板与 CI。仓库可见性、描述、topics、首个 Release 与私密漏洞上报均已在 GitHub 侧完成，见文末清单。
 
 ## 交付物
 
 | 任务 | 交付物 | 状态 |
 | --- | --- | --- |
 | 1 许可证与仓库元数据 | `LICENSE`（MIT，Copyright (c) 2026 Regine88）、`.gitattributes`（统一 LF）、`.editorconfig` | 完成 |
-| 2 CI 工作流 | `.github/workflows/ci.yml`：windows-latest 上 PowerShell 7 与 Windows PowerShell 5.1 双矩阵，语法解析检查、`-Version` 校验、全部 `test-*.ps1`；独立 PSScriptAnalyzer 报告作业（不阻断） | 完成 |
+| 2 CI 工作流 | `.github/workflows/ci.yml`：windows-latest 上 PowerShell 7 与 Windows PowerShell 5.1 双矩阵，`-Version` 校验与全部 `test-*.ps1`（`test-Syntax.ps1` 负责语法解析）；独立 PSScriptAnalyzer 报告作业（不阻断） | 完成 |
 | 3 协作文档 | `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`（Contributor Covenant 2.1）、`SECURITY.md`、`.github/ISSUE_TEMPLATE/{bug_report,feature_request,config}.yml`、`.github/PULL_REQUEST_TEMPLATE.md` | 完成 |
 | 4 技术文档 | `docs/architecture.md`、`docs/providers.md`（新增供应商七步）、`docs/troubleshooting.md` | 完成 |
 | 5 版本号与 `-Version` | `$script:AppVersion = '0.6.0'`；`-Version` 输出 `AI Usage Widget 0.6.0`；启动日志带版本号 | 完成 |
@@ -31,6 +31,9 @@ P0 九项任务全部完成，双 PowerShell 版本 16 次测试执行全部 `AL
 - 修复：常量改名为 `$script:AppVersion`；`-Version` 与 `-Demo` 的分支逻辑不变。
 - 附带修复：`Write-LauncherVbs` 原先用 `Set-Content` 写启动器，会追加一个平台相关换行，
   导致受版本控制的 `Start-AiUsageWidget.vbs` 长期显示为已修改；改为 `[IO.File]::WriteAllText` 逐字节写入。
+- 附带修复：CI 工作流此前无法解析（`shell: ${{ matrix.shell }}`，`shell:` 不接受 `matrix` 上下文），
+  push 后 0 秒失败且不产生 job；现在步骤固定使用 `pwsh`，目标引擎改为在步骤内以子进程调用，
+  语法解析也由 `test-Syntax.ps1` 在本地与 CI 复用。
 
 ## 验证证据
 
@@ -41,6 +44,7 @@ pwsh7  test-GrokAccounts.ps1              PASS
 pwsh7  test-KimiQuota.ps1                 PASS
 pwsh7  test-ModelRequestRecorder.ps1      PASS
 pwsh7  test-SecureSnapshot.ps1            PASS
+pwsh7  test-Syntax.ps1                    PASS
 pwsh7  test-UsageValidation.ps1           PASS
 pwsh7  test-WidgetSecurity.ps1            PASS
 ps51   test-CommandCodeQuota.ps1          PASS
@@ -49,6 +53,7 @@ ps51   test-GrokAccounts.ps1              PASS
 ps51   test-KimiQuota.ps1                 PASS
 ps51   test-ModelRequestRecorder.ps1      PASS
 ps51   test-SecureSnapshot.ps1            PASS
+ps51   test-Syntax.ps1                    PASS
 ps51   test-UsageValidation.ps1           PASS
 ps51   test-WidgetSecurity.ps1            PASS
 failures = 0
@@ -56,7 +61,7 @@ failures = 0
 AI Usage Widget 0.6.0        (pwsh 7)
 AI Usage Widget 0.6.0        (Windows PowerShell 5.1)
 
-syntax errors = 0            (递归解析全部 *.ps1)
+syntax errors = 0            (test-Syntax.ps1 递归解析全部 *.ps1 / *.psm1)
 yaml exit = 0                (.github 下 4 个 YAML 全部通过解析)
 ```
 
@@ -69,14 +74,16 @@ yaml exit = 0                (.github 下 4 个 YAML 全部通过解析)
 - 截图由演示模式生成，不含任何真实账号、邮箱或令牌。
 - 新增文档中的路径均为通用路径，不含本机用户名或真实账号标识。
 
-## 仓库侧手动项（GitHub 网页操作）
+## 仓库侧项目（已通过 gh CLI 完成）
 
-1. 仓库描述：`Windows 桌面 AI 用量卡片：Grok / Kimi / ChatGPT / Gemini / Command Code 每周用量一览`。
-2. Topics：`powershell`、`winforms`、`windows`、`desktop-widget`、`ai-usage`、`quota`、`grok`、`kimi`、`codex`、`command-code`。
-3. 可见性：Settings → General → Danger Zone → Change visibility → Public（当前为 private）。
-4. 首个 Release：打标签 `v0.6.0`（标题 `v0.6.0 - 开源基线`），正文可直接取 `CHANGELOG.md` 的 0.6.0 段落。
-5. 可选：Settings → Security → 开启 Private vulnerability reporting（`SECURITY.md` 已指向 Security Advisories 链接）。
-6. 可选：Settings → Actions → General → Workflow permissions 保持 `Read repository contents`（CI 只读即可）。
+| 项目 | 结果 |
+| --- | --- |
+| 描述 | `Windows 桌面小组件：一屏查看 Grok / ChatGPT / Codex / Kimi / Gemini / Command Code 的用量与配额（PowerShell + WinForms，无外部依赖）` |
+| Topics | `powershell`、`winforms`、`windows`、`desktop-widget`、`ai-usage`、`quota`、`grok`、`kimi`、`codex`、`chatgpt`、`command-code`、`dpi-aware` |
+| 可见性 | Public |
+| 首个 Release | `v0.6.0`（标题 `v0.6.0 - 开源基线`），正文取自 `CHANGELOG.md` 的 0.6.0 段落，附两张 `-Demo` 截图 |
+| 私密漏洞上报 | 已开启（`SECURITY.md` 指向 Security Advisories） |
+| 工作流权限 | 保持 `Read repository contents` |
 
 ## 后续（P1，待用户确认供应商顺序）
 

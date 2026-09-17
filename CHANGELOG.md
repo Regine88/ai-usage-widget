@@ -18,7 +18,8 @@
 - 协作文档：`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`、Issue 表单与 PR 模板。
 - 技术文档：`docs/architecture.md`、`docs/providers.md`（新增供应商七步改造点）、`docs/troubleshooting.md`。
 - 中英双语 README：`README.md`、`README.en.md`，附 `-Demo` 模式生成的无隐私截图。
-- GitHub Actions CI：在 `windows-latest` 上以 PowerShell 7 与 Windows PowerShell 5.1 双版本执行语法解析检查、`-Version` 校验与全部 `test-*.ps1`；PSScriptAnalyzer 以报告形式附加。
+- GitHub Actions CI：在 `windows-latest` 上以 PowerShell 7 与 Windows PowerShell 5.1 双版本执行 `-Version` 校验与全部 `test-*.ps1`（其中 `test-Syntax.ps1` 递归解析全部 `.ps1` / `.psm1`）；PSScriptAnalyzer 以报告形式附加。
+- `test-Syntax.ps1`：把原先只存在于 CI 的语法解析收进离线套件，本地双版本跑测试即可覆盖。
 - 可选账号别名：程序目录下的 `grok-aliases.json`（或运行期的 `$script:GrokAccountAliases`）可把账号指纹映射成 `a` / `b` 这类短名字。
 
 ### Changed
@@ -37,6 +38,8 @@
   `Cannot convert value "System.String" to type "System.Management.Automation.SwitchParameter"`：
   常量改名为 `$script:AppVersion`。
 - 未配置别名的账号行名出现重复前缀（`Grok Grok-1f4a2c7e`），现在直接显示指纹。
+- CI 工作流此前从未真正运行：`shell: ${{ matrix.shell }}` 无法解析（`shell:` 不接受 `matrix` 上下文），
+  每次 push 都是 0 秒失败且不产生 job。现在步骤固定用 `pwsh`，再以子进程调用目标引擎执行校验与测试。
 
 ## [0.5.0] - 2026-09-17
 
