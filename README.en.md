@@ -52,6 +52,8 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 - **One to three columns** - lay the card out as 2 or 3 columns so a long provider list stops growing downward; the column count lives in the settings dialog and in `ai-config.json`.
 - **Daily summary** - optionally raise one tray balloon per day at a fixed time, listing every row as it stands; never fires twice on the same day.
 - **History reports** - right-click, **Export history**: raw sample CSV, per-day rollup CSV, a monthly Markdown report and a self-contained HTML report; defaults to the most recent month with data and says so instead of writing an empty file.
+- **Multi-month comparison** - the same submenu offers **comparison Markdown / HTML**: the last 3 months as a provider-by-month table, each row carrying that month's sample count, day count and start / end / min / max, plus a month-over-month change column in percentage points. The grid always covers every provider seen in the range, so a provider without samples in a month still gets a row full of `-`. The HTML is self-contained.
+- **Trend window** - right-click, **Trend chart...** (or start with `-TrendWindow`) to draw a per-provider daily usage line over the last 7 / 14 / 30 days; line colours follow each provider's card colour and the legend shows its latest percentage. The window is read-only and writes nothing.
 - **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, columns, theme, opacity, thresholds, per-provider thresholds, quiet hours, daily summary), applied live on save.
 - **Graceful degradation** - one slow provider only affects its own row and backs off exponentially (30s up to 15min).
 - **Local first** - account snapshots are protected with Windows DPAPI, logs are redacted, accounts appear only as short hashes.
@@ -69,14 +71,17 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 | Double-click the tray icon | Show or hide the card |
 | Right-click the card | Opens the menu (see below) |
 | Hover a row | Shows a tooltip with details, reset time and the exhaustion forecast |
-| Right-click, **Export history** | Four entries: raw sample CSV (the whole history, `ai-usage-<timestamp>.csv`), per-day rollup CSV, monthly Markdown report, monthly HTML report; defaults to the most recent month with data |
+| Right-click, **Export history** | Six entries: raw sample CSV (the whole history, `ai-usage-<timestamp>.csv`), per-day rollup CSV, monthly Markdown report, monthly HTML report, comparison Markdown, comparison HTML; single-month reports default to the most recent month with data, the comparison to the last 3 months |
+| Right-click, **Trend chart...** | Opens the trend window, 7 days by default, switchable to 14 / 30 days |
 
 ![Context menu](docs/images/demo-menu.en.png)
 
 The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
 register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot),
-export history (raw sample CSV / per-day rollup CSV / monthly Markdown report / monthly HTML report),
-settings, about, always on top, run at startup, quit.
+export history (raw sample CSV / per-day rollup CSV / monthly Markdown report / monthly HTML report / comparison Markdown / comparison HTML),
+trend chart, settings, about, always on top, run at startup, quit.
+
+![Trend window](docs/images/demo-trend.png)
 
 ## Quick start
 
@@ -128,7 +133,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.14.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.15.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -141,7 +146,7 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.14.0
+# AI Usage Widget 0.15.0
 ```
 
 ### Multiple accounts
@@ -272,6 +277,7 @@ WidgetUpdates.ps1         Version comparison and GitHub release parsing
 ModelRequestRecorder.ps1 Request event recording (metadata only)
 UsageHistory.ps1         History aggregation, trends, exhaustion forecast, CSV export
 UsageReport.ps1          Monthly reports: per-day / monthly rollups rendered as CSV / Markdown / HTML
+WidgetTrend.ps1          Trend-chart helpers: daily series clipping, point projection and axis ticks
 WidgetConfig.ps1         ai-config.json read/write and validation
 WidgetPalette.ps1        Dark / light palette (single source of UI colours)
 WidgetLayout.ps1         Card row metrics (full / compact)
@@ -303,7 +309,8 @@ docs/                    Architecture, provider, troubleshooting docs and screen
 
 Issues and pull requests are welcome: new providers, more themes and layout modes (mini), and packaging
 are all on the roadmap. The compact layout and position lock shipped in 0.11.0, the multi-column layout
-and the daily summary shipped in 0.13.0, history reports and release-package verification shipped in 0.14.0. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
+and the daily summary shipped in 0.13.0, history reports and release-package verification shipped in 0.14.0,
+and the multi-month comparison plus the trend window shipped in 0.15.0. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first - it covers the
 testing requirement (both PowerShell versions) and the security ground rules (never commit credentials,
 logs or files containing personal data).
 

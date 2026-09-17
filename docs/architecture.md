@@ -55,6 +55,7 @@ wscript.exe  Start-AiUsageWidget.vbs
 | `ModelRequestRecorder.ps1` | 请求事件记录与查询（仅元数据），以及脱敏工具 |
 | `UsageHistory.ps1` | 历史聚合与趋势：从 `ai-history.jsonl` 生成每日序列、最小二乘斜率、耗尽预测、sparkline 路径与 CSV 导出 |
 | `UsageReport.ps1` | 历史报表纯函数：月份归一与边界、按天汇总、月度汇总（复用趋势斜率）、CSV / Markdown / 自包含 HTML 渲染与文件名生成 |
+| `WidgetTrend.ps1` | 趋势图纯函数：窗口天数归一、按天裁剪的每日序列、数据点坐标换算、坐标轴刻度与日期标签、最新百分比；不引用 WinForms，也不调用文案助手 |
 | `WidgetConfig.ps1` | `ai-config.json` 的读写与校验（供应商开关、刷新间隔、主题、布局、锁定位置、不透明度、阈值、静音时段、语言），非法值回退默认 |
 | `WidgetPalette.ps1` | 深色 / 浅色调色板：`ConvertTo-WidgetTheme` 白名单解析、`Get-WidgetPalette` 返回 13 键颜色表，界面颜色的唯一来源 |
 | `WidgetLayout.ps1` | 卡片尺寸纯函数：`Get-WidgetLayoutMetrics`（full / compact）与 `Get-WidgetFormHeight`，不引用 WinForms |
@@ -181,6 +182,24 @@ wscript.exe  Start-AiUsageWidget.vbs
 `ConvertTo-UsageReportMarkdown`、`ConvertTo-UsageReportHtml`（自包含，样式内联、不引用任何外部资源）。
 菜单的「导出历史」默认取最近一个有数据的月份，输出到程序目录的 `ai-usage-report-<YYYY-MM>.<ext>`；
 没有任何历史记录时只提示 `report.empty`，不会生成空文件。
+
+### 多月对比与趋势图
+
+`Get-UsageReportComparisonMonths` 从历史里挑出最近 N 个有采样的月份（默认 3），
+`Get-UsageHistoryMonthComparison` 复用月度汇总再补一条「与上月月末的百分点差」，
+行集固定为「区间内出现过的供应商 × 选中月份」：某个月没有采样的供应商同样占一行，
+各数值单元格是 `-` 而不是 0；渲染走 `ConvertTo-UsageReportComparisonMarkdown` /
+`ConvertTo-UsageReportComparisonHtml`，文件名是 `ai-usage-comparison-<最早月>_<最新月>.<ext>`。
+单月报表的那套函数与文件名保持原样，两条路径互不影响。
+
+趋势图的数据侧在 `WidgetTrend.ps1`：`Get-UsageTrendChartModel` 把历史按供应商拆成「天数 → 百分比」的点列，
+只保留窗口内真正有采样的点，因此采样不足窗口的供应商不会被补零点。
+`Show-WidgetTrend`（主脚本）只负责画线和切换 7 / 14 / 30 天，颜色取自调色板里该行卡片使用的用量色。
+窗口整体只读：既不写 `ai-history.jsonl`，也不动凭证与状态文件；读取失败只影响窗口自身的提示。
+
+> 命名坑：脚本顶层的 `$script:TrendWindow` 与 `-TrendWindow` 开关参数**是同一个变量**，
+> 用它保存窗口对象会把开关覆盖掉。所以窗口引用放在 `$script:TrendForm`，
+> `$script:TrendWindowRequested` 只保存开关的布尔值。
 
 ## worker 边界（新增供应商最容易踩的地方）
 
