@@ -121,6 +121,28 @@ try {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# ---------- 运行文件清单的相对路径 ----------
+# 回归：相对路径曾经用「路径长度相减」计算。Resolve-Path 给出 8.3 短名（例如 TEMP
+# 变成 RUNNER~1）而 Get-ChildItem 给出长名时，两者长度不同，相减会把真实文件名
+# 砍掉一段（strings\zh-CN.json 变成 rce\strings\zh-CN.json），安装出来的版本会缺
+# 文件，CI 在 windows-latest 上因此长期失败。这里覆盖盘符根、多级子目录、带波浪号
+# 的目录名，并要求每个相对路径都能拼回真实文件。
+Assert-Eq (Get-WidgetPathStem 'C:\tmp\a\') 'C:\tmp\a' 'stem drops the trailing separator'
+Assert-Eq (Get-WidgetPathStem 'C:\') 'C:\' 'stem keeps a drive root'
+Assert-Eq (Get-WidgetPathStem '/tmp/a/') '/tmp/a' 'stem drops a trailing forward slash'
+
+$relRoot = Join-Path $env:TEMP ('widget-rel-' + [guid]::NewGuid().ToString('N') + '-source')
+$relDir = Join-Path (Join-Path $relRoot 'strings') '~extra'
+New-Item -ItemType Directory -Path $relDir -Force | Out-Null
+try {
+    [IO.File]::WriteAllText((Join-Path $relRoot 'AiUsageWidget.ps1'), ('$script:AppVersion = ''9.9.12''' + [Environment]::NewLine), $utf8)
+    [IO.File]::WriteAllText((Join-Path $relDir 'zh-CN.json'), '{ "hello": "world" }', $utf8)
+    $relList = @(Get-WidgetRuntimeFileList $relRoot)
+    Assert-Eq ($relList -contains 'strings\~extra\zh-CN.json') 'True' 'nested file keeps its relative path'
+    Assert-Eq (@($relList | Where-Object { -not (Test-Path -LiteralPath (Join-Path $relRoot $_)) }) -join ',') '' 'every listed file resolves from the source dir'
+} finally {
+    Remove-Item -LiteralPath $relRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 # ---------- 清单必须覆盖主程序 dot-source 的每个模块 ----------
 # 漏登记时安装 / 打包出来的版本会在启动时直接崩：dot-source 找不到文件。
 $entryText = Get-Content -LiteralPath (Join-Path $here 'AiUsageWidget.ps1') -Raw -Encoding utf8

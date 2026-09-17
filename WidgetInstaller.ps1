@@ -44,6 +44,16 @@ $script:WidgetDataFiles = @(
 
 $script:WidgetInstallManifestName = 'ai-install.json'
 
+# 目录路径的规范前缀（去掉结尾分隔符，保留盘符根）。用去掉前缀的方式求相对路径，
+# 而不是假设 Resolve-Path 与 Get-ChildItem 返回同一种路径写法：在 TEMP 被写成 8.3
+# 短名（如 RUNNER~1）的机器上，两种写法的长度不同，按长度截取会砍掉真实文件名。
+function Get-WidgetPathStem {
+    param([string]$Path)
+    $stem = ([string]$Path).TrimEnd([char]92, [char]47)
+    if ($stem.EndsWith(':')) { $stem += [char]92 }
+    return $stem
+}
+
 function Get-WidgetRuntimeFileList {
     param([Parameter(Mandatory)][string]$Dir)
     $list = New-Object System.Collections.ArrayList
@@ -51,12 +61,16 @@ function Get-WidgetRuntimeFileList {
         foreach ($rel in $script:WidgetRuntimeFiles) {
             if (Test-Path -LiteralPath (Join-Path $Dir $rel) -PathType Leaf) { [void]$list.Add($rel) }
         }
+        $stem = Get-WidgetPathStem $Dir
         foreach ($sub in $script:WidgetRuntimeDirs) {
             $subDir = Join-Path $Dir $sub
             if (-not (Test-Path -LiteralPath $subDir -PathType Container)) { continue }
-            $prefix = $Dir.TrimEnd([char]92, [char]47)
             foreach ($file in (Get-ChildItem -LiteralPath $subDir -Recurse -File)) {
-                $rel = $file.FullName.Substring($prefix.Length).TrimStart([char]92, [char]47)
+                $full = [string]$file.FullName
+                if (-not $full.StartsWith($stem, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw ('运行文件在安装目录之外: ' + $full)
+                }
+                $rel = $full.Substring($stem.Length).TrimStart([char]92, [char]47)
                 [void]$list.Add($rel)
             }
         }
@@ -169,11 +183,12 @@ function Install-AiUsageWidget {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     }
     $destFull = (Resolve-Path -LiteralPath $Destination).Path
+    $sourceStem = Get-WidgetPathStem $sourceFull
 
     $copied = New-Object System.Collections.ArrayList
     $skipped = New-Object System.Collections.ArrayList
     foreach ($rel in $files) {
-        $from = Join-Path $sourceFull $rel
+        $from = Join-Path $sourceStem $rel
         $to = Join-Path $destFull $rel
         $samePath = [string]::Equals([IO.Path]::GetFullPath($from), [IO.Path]::GetFullPath($to), [StringComparison]::OrdinalIgnoreCase)
         if ($samePath) { [void]$skipped.Add($rel); continue }

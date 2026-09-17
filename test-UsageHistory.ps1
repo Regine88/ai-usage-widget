@@ -19,7 +19,9 @@ function Assert-Eq {
 $good = ConvertTo-UsageHistoryRecord '{"ts":"2026-09-17T10:58:58.4649505+08:00","id":"commandcode","pct":43.1}'
 Assert-Eq $good.Id 'commandcode' 'record id'
 Assert-Eq $good.Pct 43.1 'record percent'
-Assert-Eq $good.Ts.Hour 10 'record local hour'
+# 时间戳带 +08:00 偏移：.Hour 的数值会随机器时区变化（CI runner 是 UTC），
+# 所以断言绝对时刻而不是本地小时；Kind 在 PS5.1 与 PS7 上取值不同，不作断言。
+Assert-Eq ([datetimeoffset]$good.Ts).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss') '2026-09-17T02:58:58' 'record keeps the original instant'
 Assert-Eq (ConvertTo-UsageHistoryRecord '{ not json') '' 'broken json ignored'
 Assert-Eq (ConvertTo-UsageHistoryRecord '') '' 'empty line ignored'
 Assert-Eq (ConvertTo-UsageHistoryRecord '{"id":"kimi","pct":10}') '' 'missing ts ignored'
@@ -89,7 +91,8 @@ try {
     Assert-Eq $forecast.ExhaustsBeforeReset 'False' 'no reset time means no early warning'
     Assert-Eq $forecast.ResetHours '' 'no reset time recorded'
 
-    $withReset = Get-UsageForecast $rising 28.0 ($now.AddHours(480).ToString('o')) $now
+    $resetIso = [datetimeoffset]$now.AddHours(480)
+    $withReset = Get-UsageForecast $rising 28.0 $resetIso.ToString('o') $now
     Assert-Eq $withReset.ResetHours 480 'reset hours parsed from iso string'
     Assert-Eq $withReset.ExhaustsBeforeReset 'True' 'slow creep that still exhausts wins'
 
