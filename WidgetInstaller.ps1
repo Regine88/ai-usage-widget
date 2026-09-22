@@ -118,10 +118,15 @@ function Get-WidgetDataFileList {
     param([Parameter(Mandatory)][string]$Dir)
     $list = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $Dir -PathType Container) {
-        $root = (Resolve-Path -LiteralPath $Dir).Path.TrimEnd([char]92, [char]47)
-        foreach ($file in (Get-ChildItem -LiteralPath $root -Recurse -File)) {
-            $relative = $file.FullName.Substring($root.Length).TrimStart([char]92, [char]47)
-            if (Test-WidgetDataFileName $relative) { [void]$list.Add($relative) }
+        foreach ($file in (Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue)) {
+            if (Test-WidgetDataFileName $file.Name) { [void]$list.Add($file.Name) }
+        }
+        $historyDir = Join-Path $Dir 'history'
+        if (Test-Path -LiteralPath $historyDir -PathType Container) {
+            foreach ($file in (Get-ChildItem -LiteralPath $historyDir -File -Filter '*.jsonl' -ErrorAction SilentlyContinue)) {
+                $relative = Join-Path 'history' $file.Name
+                if (Test-WidgetDataFileName $relative) { [void]$list.Add($relative) }
+            }
         }
     }
     return [object[]]$list.ToArray()
