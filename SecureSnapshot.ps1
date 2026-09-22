@@ -55,7 +55,9 @@ function Set-SecureSnapshotAcl {
     param([Parameter(Mandatory)][string]$Path)
     $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
     $acl.SetAccessRuleProtection($true, $false)
-    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    foreach ($rule in @($acl.Access)) {
+        if ($null -ne $rule) { [void]$acl.RemoveAccessRule($rule) }
+    }
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $inherit = [Security.AccessControl.InheritanceFlags]::None
     $propagate = [Security.AccessControl.PropagationFlags]::None
@@ -129,6 +131,40 @@ function Write-SecureSnapshotLocked {
     }
 }
 
+function Write-JsonFileAtomic {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$Value,
+        [int]$Depth = 20
+    )
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    $tmp = '{0}.{1}.tmp' -f $Path, ([guid]::NewGuid().ToString('n'))
+    try {
+        [IO.File]::WriteAllText($tmp, ($json.TrimEnd([char]13, [char]10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-SecureSnapshotFile -Source $tmp -Destination $Path
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Update-JsonFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][scriptblock]$Update,
+        [int]$Depth = 20
+    )
+    return (Invoke-SecureSnapshotFileLock -Path $Path -Action {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            throw ('凭据文件不存在: ' + $Path)
+        }
+        $current = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+        $updated = & $Update $current
+        if ($null -eq $updated) { throw '凭据更新没有返回新值' }
+        Write-JsonFileAtomic -Path $Path -Value $updated -Depth $Depth
+        return $updated
+    })
+}
+
 function Write-SecureSnapshot {
     param(
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Provider,
@@ -179,6 +215,27 @@ function Get-SecureSnapshotFiles {
     if (-not (Test-Path -LiteralPath $rootPath)) { return @() }
     $safeProvider = $Provider.Trim().ToLowerInvariant() -replace '[^a-z0-9_-]', '_'
     return @(Get-ChildItem -LiteralPath $rootPath -Filter ($safeProvider + '-*.snapshot') -File -ErrorAction SilentlyContinue)
+}
+
+function Get-MergedProviderAccounts {
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Provider,
+        $Active,
+        [Parameter(Mandatory)][scriptblock]$ReadPath,
+        [string]$Root
+    )
+    $byId = [ordered]@{}
+    if ($Active -and $Active.AccountId) {
+        $byId[[string]$Active.AccountId] = $Active
+    }
+    foreach ($file in @(Get-SecureSnapshotFiles -Provider $Provider -Root $Root)) {
+        $snap = $null
+        try { $snap = & $ReadPath $file.FullName } catch { $snap = $null }
+        if (-not $snap -or -not $snap.AccountId) { continue }
+        $key = [string]$snap.AccountId
+        if (-not $byId.Contains($key)) { $byId[$key] = $snap }
+    }
+    return @($byId.Values)
 }
 
 function Remove-SecureSnapshot {

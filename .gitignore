@@ -30,3 +30,13 @@ grok-aliases.json
 
 # GitHub Pages build output
 /_site/
+
+# Accidental environment-expanded caches and local tool scratch
+/%SystemDrive%/
+/.comet-verify-tmp/
+
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<

@@ -24,6 +24,9 @@ Assert-Eq $defaults.theme 'dark' 'default theme'
 Assert-Eq $defaults.opacity 0.96 'default opacity'
 Assert-Eq $defaults.showTrend 'True' 'default show trend'
 Assert-Eq $defaults.trendDays 7 'default trend days'
+Assert-Eq $defaults.historyRetentionDays 90 'default history retention days'
+Assert-Eq $defaults.historyMaxBytes 10485760 'default history capacity'
+Assert-Eq $defaults.historySampleMinutes 15 'default scheduled history interval'
 Assert-Eq ($defaults.alertThresholds -join ',') '70,90' 'default thresholds'
 Assert-Eq $defaults.quietHours.enabled 'False' 'default quiet off'
 Assert-Eq $defaults.quietHours.start '22:00' 'default quiet start'
@@ -35,12 +38,16 @@ Assert-Eq $defaults.providers.codex 'True' 'default codex enabled'
 Assert-Eq $defaults.providers.commandcode 'True' 'default commandcode enabled'
 Assert-Eq $defaults.providers.openrouter 'True' 'default openrouter enabled'
 Assert-Eq $defaults.providers.deepseek 'True' 'default deepseek enabled'
+Assert-Eq $defaults.providers.cline 'True' 'default cline enabled'
 Assert-Eq $defaults.providers.claude 'True' 'default claude enabled'
 Assert-Eq $defaults.providers.cursor 'True' 'default cursor enabled'
 Assert-Eq $defaults.providers.glm 'True' 'default glm enabled'
 Assert-Eq $defaults.lockPosition 'False' 'default position unlocked'
 Assert-Eq $defaults.layout 'full' 'default layout is full'
 Assert-Eq ($defaults.providerAlertThresholds.Count) 0 'default has no per-provider thresholds'
+Assert-Eq ($defaults.accountAliases.Count) 0 'default has no account aliases'
+Assert-Eq ($defaults.hiddenAccounts.Count) 0 'default has no hidden accounts'
+Assert-Eq ($defaults.accountOrder.Count) 0 'default has no account order'
 
 # ---------- 数值校验 ----------
 Assert-Eq (ConvertTo-ConfigInt -Value 600 -Default 300 -Min 15 -Max 86400) 600 'int passthrough'
@@ -116,7 +123,27 @@ Assert-Eq $partial.opacity 0.75 'partial keeps opacity'
 Assert-Eq $partial.providers.grok 'False' 'partial disables grok'
 Assert-Eq $partial.providers.kimi 'True' 'partial keeps other providers'
 Assert-Eq $partial.trendDays 7 'partial keeps trend default'
+Assert-Eq $partial.historyRetentionDays 90 'partial keeps history retention default'
 Assert-Eq $partial.quietHours.start '22:00' 'partial keeps quiet default'
+
+$accountConfig = Convert-WidgetConfig ([pscustomobject]@{
+    accountAliases = @{ 'codex-a' = 'Work'; 'grok-b' = 'Home' }
+    hiddenAccounts = @('kimi-c', 'kimi-c')
+    accountOrder = @('grok-b', 'codex-a')
+})
+Assert-Eq $accountConfig.accountAliases['codex-a'] 'Work' 'account alias map is read'
+Assert-Eq ($accountConfig.hiddenAccounts -join ',') 'kimi-c' 'hidden accounts are de-duplicated'
+Assert-Eq ($accountConfig.accountOrder -join ',') 'grok-b,codex-a' 'account order is read'
+$preferenceRows = @(
+    [pscustomobject]@{ Id = 'codex-a'; Kind = 'codex'; Name = 'Codex A'; Auth = $null }
+    [pscustomobject]@{ Id = 'grok-b'; Kind = 'grok'; Name = 'Grok B'; Auth = $null }
+    [pscustomobject]@{ Id = 'kimi-c'; Kind = 'kimi'; Name = 'Kimi C'; Auth = $null }
+)
+$preferred = @(Apply-WidgetAccountPreferences -Rows $preferenceRows -Config $accountConfig)
+Assert-Eq $preferred.Count 2 'hidden account is removed from the card'
+Assert-Eq $preferred[0].Id 'grok-b' 'account order puts configured rows first'
+Assert-Eq $preferred[0].Name 'Home' 'alias overrides the display name'
+Assert-Eq $preferred[1].Name 'Work' 'second alias is applied'
 
 $broken = Convert-WidgetConfig ([pscustomobject]@{
     intervalSeconds = 'soon'
@@ -134,12 +161,18 @@ Assert-Eq $broken.providers.grok 'True' 'broken providers fall back'
 $clamped = Convert-WidgetConfig ([pscustomobject]@{
     intervalSeconds = 1
     trendDays       = 99
+    historyRetentionDays = 1
+    historyMaxBytes = 1
+    historySampleMinutes = 0
     opacity         = 5
     alertThresholds = @(100, 100, 1)
     quietHours      = @{ enabled = 'on'; start = '23:30'; end = '06:15' }
 })
 Assert-Eq $clamped.intervalSeconds 15 'clamped interval'
 Assert-Eq $clamped.trendDays 14 'clamped trend days'
+Assert-Eq $clamped.historyRetentionDays 7 'history retention days clamp to seven'
+Assert-Eq $clamped.historyMaxBytes 1048576 'history capacity clamps to one megabyte'
+Assert-Eq $clamped.historySampleMinutes 1 'history sample interval clamps to one minute'
 Assert-Eq $clamped.opacity 1 'clamped opacity'
 Assert-Eq ($clamped.alertThresholds -join ',') '1,100' 'clamped thresholds dedupe'
 Assert-Eq $clamped.quietHours.enabled 'True' 'quiet enabled parsed'
@@ -265,6 +298,8 @@ try {
 Assert-Eq $loaded.theme 'light' 'round trip theme'
     Assert-Eq $loaded.showTrend 'False' 'round trip show trend'
     Assert-Eq $loaded.trendDays 3 'round trip trend days'
+    Assert-Eq $loaded.historyRetentionDays 90 'round trip history retention default'
+    Assert-Eq $loaded.historySampleMinutes 15 'round trip history sample default'
     Assert-Eq ($loaded.alertThresholds -join ',') '60,85' 'round trip thresholds'
     Assert-Eq $loaded.quietHours.enabled 'True' 'round trip quiet enabled'
     Assert-Eq $loaded.quietHours.end '06:30' 'round trip quiet end'

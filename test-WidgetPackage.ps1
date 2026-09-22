@@ -58,7 +58,7 @@ $goodManifest = [pscustomobject]@{
     hash        = 'ABCDEF'
     extract_dir = 'ai-usage-widget-0.14.0'
     checkver    = @{ github = 'https://github.com/Regine88/ai-usage-widget' }
-    persist     = @('ai-config.json', 'ai-state.json', 'ai-history.jsonl')
+    persist     = @('ai-config.json', 'ai-state.json', 'ai-history.jsonl', 'history')
 }
 $problems = @(Get-WidgetPackageManifestProblems -Manifest $goodManifest -Version '0.14.0' -Hash 'ABCDEF' -ZipName 'ai-usage-widget-0.14.0.zip' -Repo 'Regine88/ai-usage-widget')
 Assert-Eq $problems.Count 0 'a matching manifest has no problems'
@@ -70,7 +70,7 @@ Assert-Eq (@($problems -like '*hash*').Count) 1 'a wrong hash is reported'
 Assert-Eq (@($problems -like '*version*').Count) 1 'a wrong version is reported'
 $noPersist = $goodManifest.PSObject.Copy()
 $noPersist.persist = @('ai-config.json')
-Assert-Eq (@(Get-WidgetPackageManifestProblems -Manifest $noPersist -Version '0.14.0' -Hash 'ABCDEF' -ZipName 'ai-usage-widget-0.14.0.zip' -Repo 'Regine88/ai-usage-widget').Count) 2 'missing persist entries are reported'
+Assert-Eq (@(Get-WidgetPackageManifestProblems -Manifest $noPersist -Version '0.14.0' -Hash 'ABCDEF' -ZipName 'ai-usage-widget-0.14.0.zip' -Repo 'Regine88/ai-usage-widget').Count) 3 'missing persist entries are reported'
 Assert-Eq (Get-WidgetPackageManifestProblems -Manifest $null -Version '0.14.0' -Hash 'x' -ZipName 'y' -Repo 'z') 'manifest is missing' 'a missing manifest is reported'
 
 # ---------- 真实压缩包往返 ----------

@@ -7,16 +7,30 @@
 | 供应商 | 行 Kind | 凭证来源 | 配额接口 | 行数 |
 | --- | --- | --- | --- | --- |
 | Grok | `grok` | `~/.grok/auth.json`（或 `$env:GROK_HOME`） | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | 每个已登记账号一行 |
-| Gemini / Antigravity | `gemini` | Windows 凭据管理器 `gemini:antigravity` | `https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` | 1 |
-| Kimi | `kimi` | `~/.kimi-code/credentials/kimi-code.json`（或 `$env:KIMI_CODE_HOME`） | `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1` | 1 |
+| Gemini / Antigravity | `gemini` | Windows 凭据管理器 `gemini:antigravity` | `https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` | 每个登记账号一行 |
+| Kimi | `kimi` | `~/.kimi-code/credentials/kimi-code.json`（或 `$env:KIMI_CODE_HOME`） | `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1` | 每个登记账号一行 |
 | ChatGPT / Codex | `codex` | `~/.codex/auth.json`（或 `$env:CODEX_HOME`） | `https://chatgpt.com/backend-api/wham/usage` | 每个账号一行 |
-| Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits`（5 小时 / 周） | 1 |
+| Command Code | `commandcode` | `~/.commandcode/auth.json`（或 `$env:COMMAND_CODE_HOME`） | `https://api.commandcode.ai` 的 `/alpha/billing/credits`（5 小时 / 周） | 每个登记账号一行 |
 | OpenRouter | `openrouter` | `~/.openrouter/auth.json`（或 `$env:OPENROUTER_HOME`）、`$env:OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1/key` | 每个密钥一行 |
 | DeepSeek | `deepseek` | `~/.deepseek/auth.json`（或 `$env:DEEPSEEK_HOME`）、`$env:DEEPSEEK_API_KEY` | `https://api.deepseek.com/user/balance` | 1 |
-| Claude Code | `claude` | `~/.claude/.credentials.json`（或 `$env:CLAUDE_HOME`） | `https://api.anthropic.com/api/oauth/usage` | 1 |
-| Cursor | `cursor` | `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（或 `$env:CURSOR_STATE_DB`） | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | 1 |
-| GLM / Z.AI / 智谱 BigModel | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json` / `~/.bigmodel/auth.json`、ZCode 的 `~/.zcode/v2/config.json`、`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（中国站 `https://open.bigmodel.cn/api/monitor/usage/quota/limit`） | 1 |
-| GitHub Copilot | `copilot` | `~/.config/github-copilot/hosts.json` / `apps.json`、`~/.local/share/opencode/auth.json`（或 `$env:COPILOT_CONFIG_DIR` / `$env:GH_COPILOT_HOSTS`） | `https://api.github.com/copilot_internal/user` | 1 |
+| Cline | `cline` | `~/.cline/data/settings/providers.json` | `https://api.cline.bot/api/v1/users/me/plan/usage-limits` | 每个登记账号一行 |
+| Claude Code | `claude` | `~/.claude/.credentials.json`（或 `$env:CLAUDE_HOME`） | `https://api.anthropic.com/api/oauth/usage` | 每个登记账号一行 |
+| Cursor | `cursor` | `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（或 `$env:CURSOR_STATE_DB`） | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | 每个登记账号一行 |
+| GLM / Z.AI / 智谱 BigModel | `glm` | `~/.zai/auth.json` / `~/.zhipu/auth.json` / `~/.bigmodel/auth.json`、ZCode 的 `~/.zcode/v2/config.json`、`$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` | `https://api.z.ai/api/monitor/usage/quota/limit`（中国站 `https://open.bigmodel.cn/api/monitor/usage/quota/limit`） | 每个登记密钥一行 |
+| GitHub Copilot | `copilot` | `~/.config/github-copilot/hosts.json` / `apps.json`、`~/.local/share/opencode/auth.json`（或 `$env:COPILOT_CONFIG_DIR` / `$env:GH_COPILOT_HOSTS`） | `https://api.github.com/copilot_internal/user` | 每个登记账号一行 |
+
+## 凭证身份与写回
+
+多账号刷新不再直接覆盖锁外读到的整份凭证。活动账号写回前会在相同文件锁内重新读取当前登录，
+并用稳定账号 ID 或匹配的 refresh token 核对身份；身份已经切换时保留当前登录，把刷新结果写入
+原账号的 DPAPI 快照。只修改 token 与过期时间字段，因此供应商新增的未知 JSON 字段会保留。
+
+身份优先字段分别是：Grok 邮箱、Gemini 邮箱 / 项目 ID、Kimi 用户或账号 ID、Codex `account_id`、
+Cline `accountId`、Claude account UUID / 邮箱。没有稳定字段时使用 refresh token 短指纹；此时 token
+轮换前后的连续性只在能匹配旧 refresh token 时成立，无法证明时宁可保留成独立账号，也不强行归并。
+
+文件类凭证使用共享锁和原子替换。Gemini 的 Windows 凭据管理器无法与不参与本程序锁协议的外部
+Antigravity 进程组成同一事务，只能在写回前做同样的身份复核；检查到写入之间仍保留第三方竞争窗口。
 
 ## 各供应商细节
 
@@ -29,13 +43,15 @@
 - **账号别名**（可选）：默认行名就是指纹。想换成短名字时，在程序目录放一个 `grok-aliases.json`，
   形如 `{ "Grok-1f4a2c7e": "a" }`（键是行名里的指纹）；也可以在运行期设置 `$script:GrokAccountAliases`。
   别名由真实账号标识推导而来，属于本机数据：该文件已被 `.gitignore` 排除，不要提交。
-- **令牌刷新**：过期时用 `https://auth.x.ai/oauth2/token` 刷新，并回写 `auth.json`；刷新失败显示"登录已过期，请重新登录"。
+- **令牌刷新**：过期时用 `https://auth.x.ai/oauth2/token` 刷新；当前登录仍是原账号时原子回写 `auth.json`，
+  已切换账号时只更新原账号快照。刷新失败显示"登录已过期，请重新登录"。
 - **数据映射**：`Get-GrokUsageSnapshot` 取 billing credits，`Get-GrokRowData` 组合出百分比、明细与重置时间。
 - **刷新代价**：每个账号一次请求，多账号时行数等于账号数。
 
 ### Gemini / Antigravity
 
-- **凭证**：直接复用 Antigravity 写在 Windows 凭据管理器里的条目，target 为 `gemini:antigravity`；本程序只读写这一条。
+- **凭证**：直接复用 Antigravity 写在 Windows 凭据管理器里的条目，target 为 `gemini:antigravity`。
+- **多账号**：右键「登记 Gemini 账号」把当前凭据写成 DPAPI 快照。切换 Antigravity 账号后再登记，卡片每个账号一行。刷新快照账号的令牌只写回该快照，不覆盖凭据管理器里的当前登录。账号身份优先用邮箱或 id_token 里的邮箱。
 - **刷新**：token 过期时用 `https://oauth2.googleapis.com/token` 刷新，需要 `ANTIGRAVITY_CLIENT_SECRET` 环境变量；
   缺少该变量时不会崩，只是提示无法刷新登录。
 - **数据映射**：`Convert-GeminiQuota` 把 `retrieveUserQuotaSummary` 的返回转成百分比与重置时间。
@@ -53,7 +69,7 @@
 ### ChatGPT / Codex
 
 - **凭证**：`~/.codex/auth.json`；`Get-CodexAccounts` 枚举本机已保存的账号快照。
-- **刷新**：使用 `https://auth.openai.com/oauth/token` 刷新后回写 `auth.json`。
+- **刷新**：使用 `https://auth.openai.com/oauth/token` 刷新；写回前核对 `account_id`，切换后的当前登录不会被旧账号覆盖。
 - **窗口**：`Get-CodexWindowInfo` 从 `wham/usage` 的返回里同时取 5 小时窗口与周窗口，
   两者都放进明细文本，例如 `5h 32% · 周 68%`。
 - **多账号**：右键"登记 ChatGPT 账号"新增一个账号快照；同一时刻登录的账号由 `Sync-ActiveCodexSnapshot` 保持最新。
@@ -88,11 +104,27 @@
 - **无刷新流程**：密钥在网页端创建，没有 OAuth 刷新流程；`401` 直接显示「登录已过期，请重新登录」，不重试。
 - **降级**：`balance_infos` 缺失或无法解析时该行显示「暂无用量数据」，不影响其他行。
 
+### Cline
+
+- **凭证**：`~/.cline/data/settings/providers.json` 中 `providers.cline.settings.auth`（必要时回退到 `cline-pass`），
+  包含 Cline CLI 的 OAuth access token、refresh token 与过期时间。登录过 `cline` CLI 后无需额外配置。
+- **多账号**：当前 CLI 登录态作为活动账号；右键「登记 Cline 账号」会按 `accountId` 写入 DPAPI 保护的快照。
+  切换到另一个 Cline 账号后再次登记，卡片按账号短哈希显示多行，每行只使用自己的 token。
+- **请求**：`GET https://api.cline.bot/api/v1/users/me/plan/usage-limits`，`Authorization: Bearer workos:<access token>`。
+  这是 Cline Dashboard 使用的同一用量接口。
+- **窗口**：`data.limits[]` 的 `five_hour` / `weekly` / `monthly`，`percentUsed` 直接是已用百分比；卡片主数值取三者中的紧窗口，
+  明细同时列出 5 小时、周、月与该窗口对应的重置时间。
+- **刷新**：access token 过期前 5 分钟调用 `POST /api/v1/auth/refresh`，
+  JSON body 为 `{ "refreshToken": "...", "grantType": "refresh_token" }`；成功后核对 `accountId`，
+  只更新该账号的目标字段并原子写回，切换后的其他账号不会被覆盖。
+- **降级**：凭证文件缺失、没有可读 OAuth token 或额度载荷缺 `limits` 时该行不显示或显示暂无数据，不影响其他行。
+
 ### Claude Code
 
 - **凭证**：`~/.claude/.credentials.json`（可用 `$env:CLAUDE_HOME` 改目录）里的 `claudeAiOauth` 或 `oauth`。只认 OAuth，不认 `ANTHROPIC_API_KEY`（API key 账户没有订阅配额窗口）。
 - **窗口**：`GET https://api.anthropic.com/api/oauth/usage`，请求头带 `anthropic-beta: oauth-2025-04-20`。`five_hour` / `seven_day` 的 `utilization` 已是已用百分比；卡片主数值取两者中较大的那个。
-- **刷新**：access token 过期前 2 分钟用 refresh token 打 `platform.claude.com/v1/oauth/token`，失败再试 `console.anthropic.com`；刷新成功后写回原凭证文件。
+- **刷新**：access token 过期前 2 分钟用 refresh token 打 `platform.claude.com/v1/oauth/token`，
+  失败再试 `console.anthropic.com`；刷新成功后核对账号并局部更新原凭证或对应快照。
 - **降级**：没有 `.credentials.json` 时这一行不出现。载荷缺窗口或百分比非法时该行报错，不影响其他行。
 
 ### Cursor

@@ -117,7 +117,7 @@ function Get-WidgetPackageManifestProblems {
     }
     if ($Repo -and ([string]$Manifest.checkver.github -notlike ('*' + $Repo + '*'))) { $problems += 'manifest checkver does not point at the repo' }
     $persist = @($Manifest.persist)
-    foreach ($expected in @('ai-config.json', 'ai-history.jsonl', 'ai-state.json')) {
+    foreach ($expected in @('ai-config.json', 'ai-history.jsonl', 'ai-state.json', 'history')) {
         if ($persist -notcontains $expected) { $problems += ('manifest persist is missing ' + $expected) }
     }
     return @($problems)

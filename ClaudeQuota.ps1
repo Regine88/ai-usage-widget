@@ -56,6 +56,24 @@ function Convert-ClaudeUsage {
     }
 }
 
+function Get-ClaudeAccountId {
+    param($Raw, $Oauth)
+    foreach ($obj in @($Oauth, $Raw)) {
+        if (-not $obj) { continue }
+        foreach ($name in @('accountUuid', 'account_uuid', 'accountId', 'account_id', 'email')) {
+            $prop = $obj.PSObject.Properties[$name]
+            if ($prop -and [string]$prop.Value) { return ([string]$prop.Value).Trim().ToLowerInvariant() }
+        }
+    }
+    $refresh = $null
+    if ($Oauth) {
+        $refresh = [string]$Oauth.refreshToken
+        if (-not $refresh) { $refresh = [string]$Oauth.refresh_token }
+    }
+    if ($refresh) { return ('refresh:' + (Get-AccountFingerprint -AccountId $refresh -Prefix 'tok')) }
+    return $null
+}
+
 function Convert-ClaudeRawAuth {
     param($Raw)
     if (-not $Raw) { throw 'missing-credential' }
@@ -78,10 +96,12 @@ function Convert-ClaudeRawAuth {
     } elseif ($rawExpiry) {
         try { $expiresAt = Convert-ApiTime $rawExpiry } catch { }
     }
-    return [pscustomobject]@{
+    $authObject = [pscustomobject]@{
         AccessToken  = $access.Trim()
         RefreshToken = if ($refresh) { $refresh.Trim() } else { $null }
         ExpiresAt    = $expiresAt
+        AccountId    = (Get-ClaudeAccountId -Raw $Raw -Oauth $oauth)
         Raw          = $Raw
     }
+    return (Set-CredentialVersion -Auth $authObject -AccessToken $authObject.AccessToken -RefreshToken $authObject.RefreshToken -AccountId $authObject.AccountId)
 }

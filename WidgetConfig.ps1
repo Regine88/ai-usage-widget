@@ -18,14 +18,20 @@ function Get-WidgetConfigDefaults {
         showTrend       = $true
         showForecast    = $true
         trendDays       = 7
+        historyRetentionDays = 90
+        historyMaxBytes = 10485760
+        historySampleMinutes = 15
         alertThresholds = @(70, 90)
         quietHours      = @{ enabled = $false; start = '22:00'; end = '07:00' }
         lockPosition    = $false
         layout          = 'full'
         columns         = 1
         dailySummary    = @{ enabled = $false; time = '09:00' }
+        accountAliases  = @{}
+        hiddenAccounts  = @()
+        accountOrder    = @()
         providerAlertThresholds = @{}
-        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true; claude = $true; cursor = $true; glm = $true;
+        providers       = @{ grok = $true; gemini = $true; kimi = $true; codex = $true; commandcode = $true; openrouter = $true; deepseek = $true; cline = $true; claude = $true; cursor = $true; glm = $true;
                             copilot = $true }
     }
 }
@@ -124,6 +130,58 @@ function ConvertTo-ProviderAlertThresholds {
         if ($parsed.Count -gt 0) { $result[$kind] = $parsed }
     }
     return $result
+}
+
+function ConvertTo-ConfigStringMap {
+    param($Value)
+    $result = @{}
+    if ($null -eq $Value) { return $result }
+    foreach ($name in @(Get-ConfigPropertyNames $Value)) {
+        $key = ([string]$name).Trim()
+        $text = ([string](Get-ConfigPropertyValue $Value $name)).Trim()
+        if ($key -and $text) { $result[$key] = $text }
+    }
+    return $result
+}
+
+function ConvertTo-ConfigStringList {
+    param($Value)
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Value)) {
+        $text = ([string]$item).Trim()
+        if ($text -and -not $result.Contains($text)) { [void]$result.Add($text) }
+    }
+    return @($result.ToArray())
+}
+
+function Apply-WidgetAccountPreferences {
+    param($Rows, $Config)
+    $aliases = if ($Config -and $Config.accountAliases) { $Config.accountAliases } else { @{} }
+    $hidden = @(if ($Config -and $Config.hiddenAccounts) { $Config.hiddenAccounts } else { @() })
+    $order = @(if ($Config -and $Config.accountOrder) { $Config.accountOrder } else { @() })
+    $result = @()
+    foreach ($row in @($Rows)) {
+        if (-not $row) { continue }
+        $id = [string]$row.Id
+        if ($hidden -contains $id) { continue }
+        $alias = $null
+        $centralAlias = $false
+        if ($aliases.ContainsKey($id)) { $alias = [string]$aliases[$id]; $centralAlias = $true }
+        if (-not $alias -and $row.Kind -eq 'grok' -and $row.Auth -and (Get-Command Get-GrokAccountAlias -ErrorAction SilentlyContinue)) {
+            $alias = Get-GrokAccountAlias $row.Auth
+        }
+        $name = $row.Name
+        if ($alias) {
+            if ($row.Kind -eq 'grok' -and -not $centralAlias) { $name = 'Grok ' + $alias } else { $name = $alias }
+        }
+        $index = [array]::IndexOf($order, $id)
+        if ($index -lt 0) { $index = 1000000 + $result.Count }
+        $result += [pscustomobject]@{ Row = $row; Name = $name; Order = $index }
+    }
+    return @($result | Sort-Object Order, @{ Expression = { $_.Name } } | ForEach-Object {
+        $_.Row.Name = $_.Name
+        $_.Row
+    })
 }
 
 # 设置窗口把按供应商阈值编辑成「kind=70,90」的多行文本；解析失败的单行忽略，不影响保存。
@@ -237,10 +295,16 @@ function Convert-WidgetConfig {
     $config.showTrend = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'showTrend') $defaults.showTrend
     $config.showForecast = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'showForecast') $defaults.showForecast
     $config.trendDays = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'trendDays') $defaults.trendDays 1 14
+    $config.historyRetentionDays = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'historyRetentionDays') $defaults.historyRetentionDays 7 3650
+    $config.historyMaxBytes = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'historyMaxBytes') $defaults.historyMaxBytes 1048576 1073741824
+    $config.historySampleMinutes = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'historySampleMinutes') $defaults.historySampleMinutes 1 1440
     $config.alertThresholds = ConvertTo-ConfigThresholds (Get-ConfigPropertyValue $Raw 'alertThresholds') $defaults.alertThresholds
     $config.lockPosition = ConvertTo-ConfigBool (Get-ConfigPropertyValue $Raw 'lockPosition') $defaults.lockPosition
     $config.layout = ConvertTo-ConfigLayout (Get-ConfigPropertyValue $Raw 'layout') $defaults.layout
     $config.columns = ConvertTo-ConfigInt (Get-ConfigPropertyValue $Raw 'columns') $defaults.columns 1 3
+    $config.accountAliases = ConvertTo-ConfigStringMap (Get-ConfigPropertyValue $Raw 'accountAliases')
+    $config.hiddenAccounts = ConvertTo-ConfigStringList (Get-ConfigPropertyValue $Raw 'hiddenAccounts')
+    $config.accountOrder = ConvertTo-ConfigStringList (Get-ConfigPropertyValue $Raw 'accountOrder')
     $config.providerAlertThresholds = ConvertTo-ProviderAlertThresholds (Get-ConfigPropertyValue $Raw 'providerAlertThresholds')
 
     $rawSummary = Get-ConfigPropertyValue $Raw 'dailySummary'

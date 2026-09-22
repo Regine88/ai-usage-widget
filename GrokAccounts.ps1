@@ -93,8 +93,6 @@ function Get-GrokRowName {
 
 function Get-GrokRowId {
     param($Auth)
-    $alias = Get-GrokAccountAlias $Auth
-    if ($alias) { return ('grok-{0}' -f $alias) }
     return ('grok-{0}' -f (Get-AccountFingerprint -AccountId (Get-GrokAccountId $Auth) -Prefix 'acct'))
 }
 
@@ -149,7 +147,7 @@ function Convert-GrokRawAuth {
         AccountId    = $null
     }
     $auth.AccountId = Get-GrokAccountId $auth
-    return $auth
+    return (Set-CredentialVersion -Auth $auth -AccessToken $auth.Token -RefreshToken $auth.RefreshToken -AccountId $auth.AccountId)
 }
 
 function Read-GrokAuthFromFile {

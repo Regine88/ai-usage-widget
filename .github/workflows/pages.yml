@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'AiUsageWidget.ps1'
       - 'site/**'
       - 'docs/images/**'
       - 'tools/build-site.ps1'

@@ -11,12 +11,14 @@ $script:WidgetRuntimeFiles = @(
     'AiUsageWidget.ps1'
     'UsageValidation.ps1'
     'SecureSnapshot.ps1'
+    'WidgetProviders.ps1'
     'GrokAccounts.ps1'
     'GeminiAntigravity.ps1'
     'KimiQuota.ps1'
     'CommandCodeQuota.ps1'
     'OpenRouterQuota.ps1'
     'DeepSeekQuota.ps1'
+    'ClineQuota.ps1'
     'ClaudeQuota.ps1'
     'CursorQuota.ps1'
     'ZaiQuota.ps1'
@@ -53,6 +55,9 @@ $script:WidgetDataFiles = @(
     'ai-widget.log'
     'grok-aliases.json'
     'ai-usage-*.csv'
+    'ai-usage-*.md'
+    'ai-usage-*.html'
+    'history\*.jsonl'
 )
 
 $script:WidgetInstallManifestName = 'ai-install.json'
@@ -113,8 +118,10 @@ function Get-WidgetDataFileList {
     param([Parameter(Mandatory)][string]$Dir)
     $list = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $Dir -PathType Container) {
-        foreach ($file in (Get-ChildItem -LiteralPath $Dir -File)) {
-            if (Test-WidgetDataFileName $file.Name) { [void]$list.Add($file.Name) }
+        $root = (Resolve-Path -LiteralPath $Dir).Path.TrimEnd([char]92, [char]47)
+        foreach ($file in (Get-ChildItem -LiteralPath $root -Recurse -File)) {
+            $relative = $file.FullName.Substring($root.Length).TrimStart([char]92, [char]47)
+            if (Test-WidgetDataFileName $relative) { [void]$list.Add($relative) }
         }
     }
     return [object[]]$list.ToArray()

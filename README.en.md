@@ -22,18 +22,19 @@ The light theme uses the same layout (switch in the settings dialog, or run with
 | Provider | What the card shows | Accounts | Credential source |
 | --- | --- | --- | --- |
 | **Grok** | Weekly usage per product (Build / Chat / ...) and reset time | Multi-account, one row each | `~/.grok/auth.json` |
-| **Kimi** | 5-hour and weekly window usage | Single account | `~/.kimi-code/credentials/kimi-code.json` |
+| **Kimi** | 5-hour and weekly window usage | Multi-account, one row each | `~/.kimi-code/credentials/kimi-code.json` |
 | **ChatGPT / Codex** | 5-hour and weekly window usage | Multi-account, one row each | `~/.codex/auth.json` |
-| **Gemini / Antigravity** | Quota percentage and reset time | Single account | Windows Credential Manager `gemini:antigravity` |
-| **Command Code** | 5-hour and weekly window usage, optional balance | Single account | `~/.commandcode/auth.json` |
+| **Gemini / Antigravity** | Quota percentage and reset time | Multi-account, one row each | Windows Credential Manager `gemini:antigravity` |
+| **Command Code** | 5-hour and weekly window usage, optional balance | Multi-account, one row each | `~/.commandcode/auth.json` |
 | **OpenRouter** | Spent credits and the key's spend limit (says so when unlimited) | One row per key | `~/.openrouter/auth.json` or `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | Account balance with the topped-up / granted breakdown (no percentage) | Single account | `~/.deepseek/auth.json` or `$env:DEEPSEEK_API_KEY` |
-| **Claude Code** | 5-hour and weekly window usage | Single account | `~/.claude/.credentials.json` (OAuth, not an API key) |
-| **Cursor** | Current billing-cycle used percent and remaining pool | Single account | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
-| **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Single account | `~/.zai/auth.json`, `~/.zhipu/auth.json`, `~/.bigmodel/auth.json` (or ZCode's `~/.zcode/v2/config.json`), or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
-| **GitHub Copilot** | Used share of the premium requests and the quota reset date | Single account | `~/.config/github-copilot/hosts.json` / `apps.json` (OpenCode `auth.json` works too) |
+| **Cline** | Cline Dashboard 5-hour / weekly / monthly quota and the next reset | Multi-account, one row each | `~/.cline/data/settings/providers.json` (CLI OAuth) |
+| **Claude Code** | 5-hour and weekly window usage | Multi-account, one row each | `~/.claude/.credentials.json` (OAuth, not an API key) |
+| **Cursor** | Current billing-cycle used percent and remaining pool | Multi-account, one row each | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
+| **GLM / Z.AI** | Coding Plan 5-hour and weekly windows | Multi-account, one row per registered key | `~/.zai/auth.json`, `~/.zhipu/auth.json`, `~/.bigmodel/auth.json` (or ZCode's `~/.zcode/v2/config.json`), or `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
+| **GitHub Copilot** | Used share of the premium requests and the quota reset date | Multi-account, one row each | `~/.config/github-copilot/hosts.json` / `apps.json` (OpenCode `auth.json` works too) |
 
-If you already signed in to the matching CLI or extension (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Antigravity, GitHub Copilot for VS Code, ZCode)
+If you already signed in to the matching CLI or extension (Grok CLI, `kimi`, Codex CLI, Command Code CLI, Cline CLI, Antigravity, GitHub Copilot for VS Code, ZCode)
 there is nothing else to configure: the widget reuses those credentials read-only and only writes back
 when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the widget reads
 `~/.openrouter/auth.json` (or `$env:OPENROUTER_API_KEY`) for one row per key, and
@@ -41,7 +42,7 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 
 ## Features
 
-- **Everything in one card** - a rounded, always-on card; Grok and ChatGPT expand to one row per account.
+- **Everything in one card** - a rounded, always-on card; each registered account gets its own row.
 - **Dark / light themes** - switch in the settings dialog or per run with `-Theme dark|light`; every colour comes from a single palette, and window opacity is adjustable (0.5 - 1.0).
 - **Out of the way** - draggable, snap-to-edge, optional always-on-top, position and settings remembered.
 - **Tray icon** - double-click to show or hide; closing the window exits and releases the single-instance mutex.
@@ -51,7 +52,8 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 - **Exhaustion forecast** - the tooltip estimates when the quota runs out and whether that happens before the next reset.
 - **One to three columns** - lay the card out as 2 or 3 columns so a long provider list stops growing downward; the column count lives in the settings dialog and in `ai-config.json`.
 - **Daily summary** - optionally raise one tray balloon per day at a fixed time, listing every row as it stands; never fires twice on the same day.
-- **History reports** - right-click, **Export history**: raw sample CSV, per-day rollup CSV, a monthly Markdown report and a self-contained HTML report; defaults to the most recent month with data and says so instead of writing an empty file.
+- **History reports** - right-click, **Export history**: raw sample CSV, per-day rollup CSV, a monthly Markdown report and a self-contained HTML report; history uses schema v2 monthly archives, defaults to 90-day retention, and raw export merges and de-duplicates across months.
+- **Bounded parallel refresh** - up to three provider jobs run in parallel, one provider never runs concurrently with itself, completed jobs apply immediately, and failed rows keep their last successful value with typed backoff.
 - **Multi-month comparison** - the same submenu offers **comparison Markdown / HTML**: the last 3 months as a provider-by-month table, each row carrying that month's sample count, day count and start / end / min / max, plus a month-over-month change column in percentage points. The grid always covers every provider seen in the range, so a provider without samples in a month still gets a row full of `-`. The HTML is self-contained.
 - **Trend window** - right-click, **Trend chart...** (or start with `-TrendWindow`) to draw a per-provider daily usage line over the last 7 / 14 / 30 days; line colours follow each provider's card colour and the legend shows its latest percentage. The window is read-only and writes nothing.
 - **Central settings** - the settings dialog writes `ai-config.json` (providers, interval, columns, theme, opacity, thresholds, per-provider thresholds, quiet hours, daily summary), applied live on save.
@@ -76,8 +78,7 @@ when a token needs refreshing. OpenRouter and DeepSeek are API-key only: the wid
 
 ![Context menu](docs/images/demo-menu.en.png)
 
-The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register Grok account,
-register ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot),
+The menu contains: refresh now, refresh interval (1 / 5 / 15 / 60 minutes), register the current Grok / Gemini / Kimi / Claude / Command Code / Cursor / GLM / Copilot / Cline / ChatGPT account, open usage page (Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Cline / Claude / Cursor / GLM / Copilot),
 export history (raw sample CSV / per-day rollup CSV / monthly Markdown report / monthly HTML report / comparison Markdown / comparison HTML),
 trend chart, settings, about, always on top, run at startup, quit.
 
@@ -133,7 +134,7 @@ overwritten, and uninstalling keeps it by default. Prefer no installer? Just dou
 You can also install from a Release archive:
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.15.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.16.0.zip
 ```
 
 Scoop users can install the manifest attached to every Release:
@@ -146,16 +147,20 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.15.0
+# AI Usage Widget 0.16.0
 ```
 
 ### Multiple accounts
 
-Grok and ChatGPT / Codex render one row per account:
+Grok, Gemini, Kimi, ChatGPT / Codex, Command Code, Cline, Claude, Cursor, GLM and Copilot render one row per account. A refresh stores the current login. Register before switching if the previous account should stay:
 
-1. Sign in with the matching CLI for the first account.
-2. Right-click the card and pick **register Grok account** / **register ChatGPT account**.
-3. Switch to another account and repeat; a new row appears automatically.
+1. Sign in with the matching app for the first account.
+2. Right-click the card and choose that provider's **register account** item.
+3. Switch accounts in the original app and register again. A new row appears.
+
+Each registered account reads usage with its own token. Refreshing a token writes back only that account's snapshot; the credential file or Credential Manager is updated only for the login that is current.
+
+The Cline web login and the Cline CLI login are separate sessions. Switching accounts in the browser does not change the CLI token. To add another Cline account, run `cline auth cline` for the target account, then choose **register Cline account**. If the CLI still exposes the same `accountId`, the widget shows a balloon saying it is already registered instead of creating a duplicate row.
 
 Registered accounts are stored as DPAPI-protected snapshots in `%LOCALAPPDATA%\AIUsageWidget\accounts\`,
 named after a short account hash and never containing the email address.
@@ -181,6 +186,13 @@ Right-click the card and choose the startup item (click again to disable). It on
 | `-Uninstall` | Remove the startup shortcut and exit |
 | `-AddAccount` | Register the current `~/.codex/auth.json` as an account |
 | `-AddGrokAccount` | Register the current `~/.grok/auth.json` as an account |
+| `-AddGeminiAccount` | Register the current Antigravity login as a Gemini account |
+| `-AddKimiAccount` | Register the current Kimi login as an account |
+| `-AddClaudeAccount` | Register the current Claude Code login as an account |
+| `-AddCommandCodeAccount` | Register the current Command Code login as an account |
+| `-AddCursorAccount` | Register the current Cursor login as an account |
+| `-AddGlmAccount` | Register the current GLM / Zhipu key as an account |
+| `-AddCopilotAccount` | Register the current GitHub Copilot login as an account |
 | `-MigrateSecrets` | Move legacy in-project snapshots into the DPAPI store |
 | `-IntervalSeconds <n>` | Refresh interval in seconds (minimum 15, default 300, overridden by the menu choice) |
 | `-Theme <dark\|light>` | Force the dark or light palette for this run only; `ai-config.json` is left untouched |
@@ -203,10 +215,16 @@ and never published with the repository.
 | `showTrend` | `true` | Draw the 7-day sparkline next to each progress bar |
 | `showForecast` | `true` | Include the exhaustion forecast in the tooltip |
 | `trendDays` | `7` | Days used by the sparkline and the forecast (1 - 14) |
+| `historyRetentionDays` | `90` | Monthly history retention in days (7 - 3650) |
+| `historyMaxBytes` | `10485760` | Total archive capacity (1 MB - 1 GB); old months are removed first and the history is marked incomplete if the limit still cannot be met |
+| `historySampleMinutes` | `15` | Minimum interval for a scheduled effective sample when no value changed (1 - 1440 minutes) |
 | `alertThresholds` | `[70, 90]` | Used-percent values that trigger a tray balloon, sorted and de-duplicated |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | Quiet hours; ranges crossing midnight are handled |
 | `dailySummary` | `{ "enabled": false, "time": "09:00" }` | Daily summary balloon; fires once per day at that clock time, the date is kept in `ai-state.json` |
-| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` / `copilot` |
+| `accountAliases` | `{}` | Stable row ID to display alias |
+| `hiddenAccounts` | `[]` | Stable row IDs hidden from the card; snapshots remain stored |
+| `accountOrder` | `[]` | Stable row ID display order; unlisted accounts follow |
+| `providers` | all `true` | Per-provider switches: `grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `cline` / `claude` / `cursor` / `glm` / `copilot` |
 | `language` | `"auto"` | UI language: `auto` (follow the system) / `zh-CN` / `en-US` |
 
 Invalid values (out of range, wrong type, malformed clock time) fall back to the defaults,
@@ -229,7 +247,7 @@ so a broken file can never break the widget.
 | --- | --- | --- |
 | Account snapshots (DPAPI) | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | Encrypted; file names are hashes |
 | UI state (position / top-most / interval) | `<app dir>\ai-state.json` | No |
-| Usage history | `<app dir>\ai-history.jsonl` | No, timestamps and percentages only |
+| Usage history | `<app dir>\ai-history.jsonl` and `<app dir>\history\ai-history-YYYY-MM.jsonl` | No; schema v2 records time, account, metric type, window, cycle and value |
 | Request events | `<app dir>\ai-request-events.jsonl` | No, provider / model / status / duration only |
 | Account aliases (optional) | `<app dir>\grok-aliases.json` | No, short hashes and local aliases only; covered by `.gitignore` |
 | Install metadata (optional) | `<install dir>\ai-install.json` | No, version, install time and file list only |

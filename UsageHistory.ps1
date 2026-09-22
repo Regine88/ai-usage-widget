@@ -2,7 +2,11 @@
 # sparkline geometry and an exhaustion forecast. Everything except the file
 # helpers is pure so the maths can be covered by an offline test.
 #
-# Sample format (written by Write-UsageHistory): {"ts":"ISO-8601","id":"...","pct":number}
+# Legacy format: {"ts":"ISO-8601","id":"...","pct":number}
+# Schema v2 adds provider/account/metric metadata and is stored in monthly files.
+
+$script:UsageHistorySchemaVersion = 2
+$script:UsageHistoryArchivePrefix = 'ai-history-'
 
 # PowerShell 7.6 throws "Argument types do not match" for @($genericList), so
 # normalize everything through one helper before treating it as a series.
@@ -26,28 +30,99 @@ function ConvertTo-UsageHistoryRecord {
     try { $raw = $text | ConvertFrom-Json } catch { return $null }
     if ($null -eq $raw) { return $null }
 
-    $id = $null
-    try { if ($raw.id) { $id = [string]$raw.id } } catch { }
-    if (-not $id) { return $null }
-
     $ts = $null
     try { if ($raw.ts) { $ts = Convert-ApiTime ([string]$raw.ts) } } catch { }
     if (-not $ts) { return $null }
 
-    if (-not (Test-FiniteNumber $raw.pct)) { return $null }
-    $pct = [double]$raw.pct
+    $id = $null
+    try { if ($raw.id) { $id = [string]$raw.id } } catch { }
 
-    return @{ Ts = [datetime]$ts; Id = $id; Pct = $pct }
+    $schemaVersion = 1
+    if (Test-FiniteNumber $raw.schemaVersion) { $schemaVersion = [int]$raw.schemaVersion }
+    if ($schemaVersion -ge 2) {
+        $provider = [string]$raw.provider
+        $accountId = [string]$raw.accountId
+        if (-not $id -and $provider -and $accountId) { $id = $provider + '-' + $accountId }
+        if (-not $id) { return $null }
+
+        $metricType = ([string]$raw.metricType).Trim().ToLowerInvariant()
+        if ($metricType -notin @('percent', 'balance', 'unlimited', 'unknown')) { $metricType = 'unknown' }
+        $pct = $null
+        if ($metricType -in @('percent', 'unlimited')) {
+            if (-not (Test-FiniteNumber $raw.pct)) { return $null }
+            $pct = [double]$raw.pct
+        }
+
+        return @{
+            Ts            = [datetime]$ts
+            Id            = $id
+            Pct           = $pct
+            Provider      = $provider
+            AccountId     = $accountId
+            MetricType    = $metricType
+            Window        = [string]$raw.window
+            Cycle         = [string]$raw.cycle
+            ResetAt       = [string]$raw.resetAt
+            Value         = $(if (Test-FiniteNumber $raw.value) { [double]$raw.value } else { $null })
+            Unit          = [string]$raw.unit
+            Used          = $(if (Test-FiniteNumber $raw.used) { [double]$raw.used } else { $null })
+            Limit         = $(if (Test-FiniteNumber $raw.limit) { [double]$raw.limit } else { $null })
+            SampleState   = [string]$raw.sampleState
+            SchemaVersion = 2
+            Legacy        = $false
+        }
+    }
+
+    if (-not $id -or -not (Test-FiniteNumber $raw.pct)) { return $null }
+    return @{
+        Ts            = [datetime]$ts
+        Id            = $id
+        Pct           = [double]$raw.pct
+        Provider      = 'legacy'
+        AccountId     = 'legacy:' + $id
+        MetricType    = 'percent'
+        Window        = ''
+        Cycle         = ''
+        ResetAt       = ''
+        Value         = [double]$raw.pct
+        Unit          = 'percent'
+        Used          = $null
+        Limit         = $null
+        SampleState   = 'legacy'
+        SchemaVersion = 1
+        Legacy        = $true
+    }
 }
 
-function Read-UsageHistory {
-    param([string]$Path, [int]$Limit = 0)
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return @() }
+function Get-UsageHistoryArchiveDir {
+    param([Parameter(Mandatory)][string]$Path)
+    return (Join-Path (Split-Path -Parent $Path) 'history')
+}
+
+function Get-UsageHistoryArchivePath {
+    param([Parameter(Mandatory)][string]$Path, [datetime]$Timestamp = (Get-Date))
+    return (Join-Path (Get-UsageHistoryArchiveDir $Path) ($script:UsageHistoryArchivePrefix + $Timestamp.ToString('yyyy-MM') + '.jsonl'))
+}
+
+function Get-UsageHistorySourceFile {
+    param([Parameter(Mandatory)][string]$Path)
+    $files = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $Path -PathType Leaf) { [void]$files.Add($Path) }
+    if ([IO.Path]::GetFileName($Path) -ne 'ai-history.jsonl') { return @($files.ToArray()) }
+    $archiveDir = Get-UsageHistoryArchiveDir $Path
+    if (Test-Path -LiteralPath $archiveDir -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $archiveDir -Filter ($script:UsageHistoryArchivePrefix + '*.jsonl') -File | Sort-Object Name)) {
+            [void]$files.Add($file.FullName)
+        }
+    }
+    return @($files.ToArray())
+}
+
+function Read-UsageHistoryFile {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
     $lines = @()
-    try {
-        if ($Limit -gt 0) { $lines = @(Get-Content -LiteralPath $Path -Tail $Limit -Encoding utf8) }
-        else { $lines = @(Get-Content -LiteralPath $Path -Encoding utf8) }
-    } catch { return @() }
+    try { $lines = @(Get-Content -LiteralPath $Path -Encoding utf8) } catch { return @() }
 
     $records = New-Object System.Collections.Generic.List[object]
     foreach ($line in $lines) {
@@ -57,10 +132,46 @@ function Read-UsageHistory {
     return (ConvertTo-UsageHistoryArray $records)
 }
 
+function Get-UsageHistoryRecordKey {
+    param($Record)
+    if (-not $Record) { return '' }
+    $ts = ''
+    try { $ts = ([datetime]$Record.Ts).ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture) } catch { return '' }
+    return (@(
+        $ts
+        [string]$Record.Id
+        [string]$Record.Provider
+        [string]$Record.MetricType
+        [string]$Record.Window
+        [string]$Record.ResetAt
+    ) -join '|')
+}
+
+function Read-UsageHistory {
+    param([string]$Path, [int]$Limit = 0, [datetime]$Since)
+    if (-not $Path) { return @() }
+    $records = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($file in @(Get-UsageHistorySourceFile -Path $Path)) {
+        foreach ($record in @(Read-UsageHistoryFile -Path $file)) {
+            if ($Since -and [datetime]$record.Ts -lt $Since) { continue }
+            $key = Get-UsageHistoryRecordKey $record
+            if (-not $key -or $seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            [void]$records.Add($record)
+        }
+    }
+    $sorted = @($records | Sort-Object -Property @{ Expression = { $_.Ts } }, @{ Expression = { $_.Id } })
+    if ($Limit -gt 0 -and $sorted.Count -gt $Limit) {
+        $sorted = @($sorted[($sorted.Count - $Limit)..($sorted.Count - 1)])
+    }
+    return (ConvertTo-UsageHistoryArray $sorted)
+}
+
 # One point per local day - the last sample of that day - so the sparkline
 # shows where each day ended instead of every poll.
 function Get-UsageHistoryDaySeries {
-    param($Records, [string]$Id, [int]$Days = 7, [string]$Kind, [datetime]$Now = (Get-Date))
+    param($Records, [string]$Id, [int]$Days = 7, [string]$Kind, [datetime]$Now = (Get-Date), [string]$ResetAt = '')
     if (-not $Id -or $Days -lt 1) { return @() }
     $firstDay = $Now.Date.AddDays(-($Days - 1))
     $lastDay = $Now.Date.AddDays(1)
@@ -69,22 +180,45 @@ function Get-UsageHistoryDaySeries {
     foreach ($record in @(ConvertTo-UsageHistoryArray $Records)) {
         if (-not $record) { continue }
         if ([string]$record.Id -ne $Id) { continue }
+        if ([string]$record.MetricType -and [string]$record.MetricType -ne 'percent') { continue }
+        if ($ResetAt -and [string]$record.ResetAt -ne [string]$ResetAt) { continue }
         $ts = $record.Ts
         if (-not ($ts -is [datetime])) { continue }
         if ($ts -lt $firstDay -or $ts -ge $lastDay) { continue }
-        # File order is time order, so later samples overwrite earlier ones.
-        $byDay[$ts.Date] = [double]$record.Pct
+        $previous = $byDay[$ts.Date]
+        if (-not $previous -or $ts -ge [datetime]$previous.Ts) {
+            $byDay[$ts.Date] = @{ Ts = $ts; Pct = [double]$record.Pct; Normalized = ([int]$record.SchemaVersion -ge 2) }
+        }
     }
 
     $series = @()
     foreach ($day in @($byDay.Keys | Sort-Object)) {
-        $pct = [double]$byDay[$day]
-        if ($Kind) {
+        $point = $byDay[$day]
+        $pct = [double]$point.Pct
+        if ($Kind -and -not [bool]$point.Normalized) {
             try { $pct = Convert-DisplayPercentToUsagePercent $pct $Kind } catch { continue }
         }
         $series += @{ Day = $day; Pct = $pct }
     }
     return $series
+}
+
+function Get-UsageHistorySampleSeries {
+    param($Records, [string]$Id, [datetime]$Since, [string]$Kind, [string]$ResetAt = '')
+    $series = @()
+    foreach ($record in @(ConvertTo-UsageHistoryArray $Records)) {
+        if (-not $record -or [string]$record.Id -ne $Id) { continue }
+        if ([string]$record.MetricType -and [string]$record.MetricType -ne 'percent') { continue }
+        if ($ResetAt -and [string]$record.ResetAt -ne [string]$ResetAt) { continue }
+        $ts = $record.Ts
+        if (-not ($ts -is [datetime]) -or $ts -lt $Since) { continue }
+        $pct = [double]$record.Pct
+        if ($Kind -and [int]$record.SchemaVersion -lt 2) {
+            try { $pct = Convert-DisplayPercentToUsagePercent $pct $Kind } catch { continue }
+        }
+        $series += @{ Day = $ts; Pct = $pct }
+    }
+    return @($series | Sort-Object -Property @{ Expression = { $_.Day } })
 }
 
 # Least-squares slope in percent per day. $null when there is nothing to fit
@@ -120,7 +254,9 @@ function Get-UsageForecast {
         ExhaustsBeforeReset = $false
     }
 
-    $slope = Get-UsageTrendSlope $Series
+    $points = @(ConvertTo-UsageHistoryArray $Series)
+    if ($points.Count -lt 3) { return $forecast }
+    $slope = Get-UsageTrendSlope $points
     if ($null -eq $slope) { return $forecast }
     $forecast.SlopePerDay = [double]$slope
     if ($slope -lt $script:UsageFlowFlatSlope) { return $forecast }
@@ -170,6 +306,212 @@ function New-SparklinePath {
     return $result
 }
 
+function Invoke-UsageHistoryFileLock {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$Action)
+    if (Get-Command Invoke-SecureSnapshotFileLock -ErrorAction SilentlyContinue) {
+        return (Invoke-SecureSnapshotFileLock -Path $Path -Action $Action)
+    }
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Path.ToLowerInvariant())
+        $name = ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-', '')
+    } finally { $hash.Dispose() }
+    $mutex = New-Object Threading.Mutex($false, ('Local\AIUsageHistory-' + $name))
+    $locked = $false
+    try {
+        try { $locked = $mutex.WaitOne(10000) } catch [Threading.AbandonedMutexException] { $locked = $true }
+        if (-not $locked) { throw '历史文件正在被其他进程写入' }
+        return (& $Action)
+    } finally {
+        if ($locked) { try { $mutex.ReleaseMutex() | Out-Null } catch { } }
+        $mutex.Dispose()
+    }
+}
+
+function ConvertTo-UsageHistoryLine {
+    param($Record)
+    if (-not $Record) { return $null }
+    $canonical = [ordered]@{
+        schemaVersion = $script:UsageHistorySchemaVersion
+        ts            = ([datetime]$Record.Ts).ToString('o')
+        id            = [string]$Record.Id
+        provider      = [string]$Record.Provider
+        accountId     = [string]$Record.AccountId
+        metricType    = [string]$Record.MetricType
+        window        = [string]$Record.Window
+        cycle         = [string]$Record.Cycle
+        resetAt       = [string]$Record.ResetAt
+        value         = $Record.Value
+        unit          = [string]$Record.Unit
+        used          = $Record.Used
+        limit         = $Record.Limit
+        sampleState   = [string]$Record.SampleState
+    }
+    if ($null -ne $Record.Pct) { $canonical.pct = $Record.Pct }
+    return ($canonical | ConvertTo-Json -Depth 6 -Compress)
+}
+
+function Add-UsageHistoryLine {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Line)
+    Add-UsageHistoryLines -Path $Path -Lines @($Line) | Out-Null
+}
+
+function Add-UsageHistoryLines {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Lines)
+    $items = @($Lines | Where-Object { $_ })
+    if ($items.Count -eq 0) { return 0 }
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    $text = (($items | ForEach-Object { ([string]$_).TrimEnd([char]13, [char]10) }) -join [Environment]::NewLine) + [Environment]::NewLine
+    Invoke-UsageHistoryFileLock -Path $Path -Action {
+        [IO.File]::AppendAllText($Path, $text, [Text.UTF8Encoding]::new($false))
+    } | Out-Null
+    return $items.Count
+}
+
+function Import-UsageHistoryLegacy {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    $legacy = @(Read-UsageHistoryFile -Path $Path)
+    if ($legacy.Count -eq 0) { return 0 }
+    $copied = 0
+    foreach ($group in @($legacy | Group-Object { $_.Ts.ToString('yyyy-MM') })) {
+        $month = [datetime]::ParseExact($group.Name + '-01', 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+        $archive = Get-UsageHistoryArchivePath -Path $Path -Timestamp $month
+        $existing = @(Read-UsageHistoryFile -Path $archive)
+        $keys = @{}
+        foreach ($record in $existing) { $keys[(Get-UsageHistoryRecordKey $record)] = $true }
+        $newLines = @()
+        foreach ($record in @($group.Group)) {
+            $key = Get-UsageHistoryRecordKey $record
+            if (-not $key -or $keys.ContainsKey($key)) { continue }
+            $newLines += (ConvertTo-UsageHistoryLine $record)
+            $keys[$key] = $true
+        }
+        if ($newLines.Count -gt 0) { $copied += (Add-UsageHistoryLines -Path $archive -Lines $newLines) }
+    }
+    return $copied
+}
+
+function Invoke-UsageHistoryRetention {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [int]$RetentionDays = 90,
+        [long]$MaxBytes = 10485760,
+        [datetime]$Now = (Get-Date)
+    )
+    $archiveDir = Get-UsageHistoryArchiveDir $Path
+    if (-not (Test-Path -LiteralPath $archiveDir -PathType Container)) {
+        return @{ Removed = @(); Bytes = 0; Incomplete = $false }
+    }
+    $files = @(Get-ChildItem -LiteralPath $archiveDir -Filter ($script:UsageHistoryArchivePrefix + '*.jsonl') -File | Sort-Object Name)
+    $removed = @()
+    if ($RetentionDays -gt 0) {
+        $cutoff = $Now.Date.AddDays(-$RetentionDays)
+        foreach ($file in $files) {
+            $monthText = $file.BaseName.Substring($script:UsageHistoryArchivePrefix.Length)
+            $month = $null
+            try { $month = [datetime]::ParseExact($monthText + '-01', 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } catch { continue }
+            if ($month.AddMonths(1) -le $cutoff) {
+                Remove-Item -LiteralPath $file.FullName -Force
+                $removed += $file.Name
+            }
+        }
+        $files = @($files | Where-Object { -not ($removed -contains $_.Name) })
+    }
+
+    $total = 0L
+    foreach ($file in $files) { $total += [long]$file.Length }
+    $incomplete = $false
+    if ($MaxBytes -gt 0 -and $total -gt $MaxBytes) {
+        $currentMonth = $Now.ToString('yyyy-MM')
+        foreach ($file in $files) {
+            if ($total -le $MaxBytes) { break }
+            $monthText = $file.BaseName.Substring($script:UsageHistoryArchivePrefix.Length)
+            if ($monthText -eq $currentMonth) { continue }
+            $size = [long]$file.Length
+            Remove-Item -LiteralPath $file.FullName -Force
+            $removed += $file.Name
+            $total -= $size
+        }
+        $incomplete = $total -gt $MaxBytes
+    }
+    return @{ Removed = @($removed); Bytes = $total; Incomplete = $incomplete }
+}
+
+function Write-UsageHistoryRecord {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Id,
+        [string]$Provider,
+        [string]$AccountId,
+        [string]$MetricType = 'percent',
+        [AllowNull()]$Percent,
+        [AllowNull()]$Value,
+        [string]$Unit,
+        [string]$Window,
+        [string]$Cycle,
+        [string]$ResetAt,
+        [AllowNull()]$Used,
+        [AllowNull()]$Limit,
+        [string]$SampleState = 'changed',
+        [datetime]$Timestamp = (Get-Date),
+        [int]$RetentionDays = 90,
+        [long]$MaxBytes = 10485760
+    )
+    if (-not $Id) { throw 'history id is required' }
+    [void](Import-UsageHistoryLegacy -Path $Path)
+    $metric = ([string]$MetricType).Trim().ToLowerInvariant()
+    if ($metric -notin @('percent', 'balance', 'unlimited', 'unknown')) { $metric = 'unknown' }
+    if ($metric -in @('percent', 'unlimited') -and -not (Test-FiniteNumber $Percent)) { throw 'percent history sample is missing percent' }
+    $record = [ordered]@{
+        schemaVersion = $script:UsageHistorySchemaVersion
+        ts            = $Timestamp.ToString('o')
+        id            = $Id
+        provider      = [string]$Provider
+        accountId     = [string]$AccountId
+        metricType    = $metric
+        window        = [string]$Window
+        cycle         = [string]$Cycle
+        resetAt       = [string]$ResetAt
+        value         = $(if (Test-FiniteNumber $Value) { [double]$Value } else { $null })
+        unit          = [string]$Unit
+        used          = $(if (Test-FiniteNumber $Used) { [double]$Used } else { $null })
+        limit         = $(if (Test-FiniteNumber $Limit) { [double]$Limit } else { $null })
+        sampleState   = [string]$SampleState
+    }
+    if ($metric -in @('percent', 'unlimited')) { $record.pct = [double]$Percent }
+    $archive = Get-UsageHistoryArchivePath -Path $Path -Timestamp $Timestamp
+    Add-UsageHistoryLine -Path $archive -Line (ConvertTo-UsageHistoryLine $record)
+    [void](Invoke-UsageHistoryRetention -Path $Path -RetentionDays $RetentionDays -MaxBytes $MaxBytes -Now $Timestamp)
+    return $archive
+}
+
+function Get-UsageHistoryInventory {
+    param([Parameter(Mandatory)][string]$Path, [long]$MaxBytes = 0)
+    $archiveDir = Get-UsageHistoryArchiveDir $Path
+    $files = @()
+    if (Test-Path -LiteralPath $archiveDir -PathType Container) {
+        $files = @(Get-ChildItem -LiteralPath $archiveDir -Filter ($script:UsageHistoryArchivePrefix + '*.jsonl') -File | Sort-Object Name)
+    }
+    $bytes = 0L
+    foreach ($file in $files) { $bytes += [long]$file.Length }
+    $oldest = $null
+    $newest = $null
+    if ($files.Count -gt 0) {
+        $oldest = $files[0].BaseName.Substring($script:UsageHistoryArchivePrefix.Length)
+        $newest = $files[$files.Count - 1].BaseName.Substring($script:UsageHistoryArchivePrefix.Length)
+    }
+    return @{
+        FileCount = $files.Count
+        Bytes     = $bytes
+        Oldest    = $oldest
+        Newest    = $newest
+        Incomplete = ($MaxBytes -gt 0 -and $bytes -gt $MaxBytes)
+        Files     = @($files | ForEach-Object FullName)
+    }
+}
+
 function ConvertTo-UsageHistoryField {
     param($Value)
     $text = [string]$Value
@@ -180,17 +522,33 @@ function ConvertTo-UsageHistoryField {
 function ConvertTo-UsageHistoryCsv {
     param($Records)
     $builder = New-Object System.Text.StringBuilder
-    [void]$builder.Append("time,id,percent`r`n")
+    [void]$builder.Append("time,id,provider,accountId,metricType,window,cycle,resetAt,value,unit,used,limit,sampleState,percent`r`n")
     foreach ($record in @(ConvertTo-UsageHistoryArray $Records)) {
         if (-not $record) { continue }
         $time = ''
         try { $time = ([datetime]$record.Ts).ToString('yyyy-MM-dd HH:mm:ss') } catch { }
-        $id = ConvertTo-UsageHistoryField ([string]$record.Id)
-        $pct = ''
-        if ($null -ne $record.Pct) {
-            try { $pct = ([double]$record.Pct).ToString('0.##', [Globalization.CultureInfo]::InvariantCulture) } catch { }
+        $number = {
+            param($value)
+            if ($null -eq $value) { return '' }
+            try { return ([double]$value).ToString('0.######', [Globalization.CultureInfo]::InvariantCulture) } catch { return '' }
         }
-        [void]$builder.Append(('{0},{1},{2}' -f $time, $id, $pct))
+        $fields = @(
+            (ConvertTo-UsageHistoryField $time)
+            (ConvertTo-UsageHistoryField ([string]$record.Id))
+            (ConvertTo-UsageHistoryField ([string]$record.Provider))
+            (ConvertTo-UsageHistoryField ([string]$record.AccountId))
+            (ConvertTo-UsageHistoryField ([string]$record.MetricType))
+            (ConvertTo-UsageHistoryField ([string]$record.Window))
+            (ConvertTo-UsageHistoryField ([string]$record.Cycle))
+            (ConvertTo-UsageHistoryField ([string]$record.ResetAt))
+            (& $number $record.Value)
+            (ConvertTo-UsageHistoryField ([string]$record.Unit))
+            (& $number $record.Used)
+            (& $number $record.Limit)
+            (ConvertTo-UsageHistoryField ([string]$record.SampleState))
+            (& $number $record.Pct)
+        )
+        [void]$builder.Append(($fields -join ','))
         [void]$builder.Append("`r`n")
     }
     return $builder.ToString()

@@ -10,11 +10,10 @@ param(
 
 $target = Join-Path $PSScriptRoot 'AiUsageWidget.ps1'
 if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw "主 Widget 不存在: $target" }
-if ($AddAccount) { throw 'Kimi 目前只有当前登录账号，不支持多账户登记' }
 $forward = @()
 if ($Install) { $forward += '-Install' }
 if ($Uninstall) { $forward += '-Uninstall' }
-if ($AddAccount) { $forward += '-AddAccount' }
+if ($AddAccount) { $forward += '-AddKimiAccount' }
 if ($MigrateSecrets) { $forward += '-MigrateSecrets' }
 if ($PSBoundParameters.ContainsKey('IntervalSeconds')) { $forward += @('-IntervalSeconds', [string]$IntervalSeconds) }
 & $target @forward

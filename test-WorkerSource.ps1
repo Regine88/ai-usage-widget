@@ -87,6 +87,35 @@ foreach ($kind in $kinds) {
 }
 Assert-True ($missingKinds.Count -eq 0) ('every row kind is dispatched by the worker: ' + (($missingKinds | Select-Object -First 5) -join ', '))
 
+# --- 静态供应商注册表必须覆盖全部行类型，并指向真实 worker 函数 ---
+$registry = @(Get-WidgetProviderRegistry)
+$registryKinds = @($registry | ForEach-Object Kind | Sort-Object)
+Assert-True ($registry.Count -ge 12) ('provider registry covers the provider set ({0})' -f $registry.Count)
+Assert-True (($registryKinds -join ',') -eq ((@($kinds) | Sort-Object) -join ',')) 'provider registry and row kinds stay in sync'
+Assert-True (@($registry | ForEach-Object Kind | Sort-Object -Unique).Count -eq $registry.Count) 'provider registry kinds are unique'
+$missingRegistryFns = @($registry | Where-Object { $fnNames -notcontains $_.RowFunction } | ForEach-Object RowFunction)
+Assert-True ($missingRegistryFns.Count -eq 0) ('provider registry row functions are exported to the worker: ' + ($missingRegistryFns -join ', '))
+
+# --- 错误分类和退避是纯函数，认证失败比瞬时网络错误等待更久 ---
+Assert-True ((Get-FetchFailureCategory -Message '401 Unauthorized') -eq 'auth') '401 classifies as auth'
+Assert-True ((Get-FetchFailureCategory -Message '429 Too Many Requests') -eq 'rate-limit') '429 classifies as rate limit'
+Assert-True ((Get-FetchFailureCategory -Message 'request timeout') -eq 'timeout') 'timeout classifies separately'
+Assert-True ((Get-FetchFailureCategory -Message 'bad-payload') -eq 'parse') 'bad payload classifies as parse'
+Assert-True ((Get-ProviderBackoffSeconds -Category 'rate-limit' -FailureCount 1) -eq 60) 'rate limit backoff starts at 60 seconds'
+Assert-True ((Get-ProviderBackoffSeconds -Category 'auth' -FailureCount 1) -eq 300) 'auth backoff starts at five minutes'
+
+$syntheticRows = @()
+foreach ($kind in @('grok', 'gemini', 'kimi', 'codex', 'cline')) {
+    foreach ($n in 1..4) { $syntheticRows += [pscustomobject]@{ Kind = $kind; Id = ($kind + '-' + $n) } }
+}
+$chunks = @(Split-WidgetProviderRows -Rows $syntheticRows -MaxWorkers 3)
+Assert-True ($chunks.Count -le 3) 'scheduler uses at most three worker chunks'
+Assert-True (($chunks | ForEach-Object { @($_).Count } | Measure-Object -Sum).Sum -eq $syntheticRows.Count) 'scheduler keeps every account row'
+foreach ($kind in @('grok', 'gemini', 'kimi', 'codex', 'cline')) {
+    $ownerCount = @($chunks | Where-Object { @($_ | Where-Object Kind -eq $kind).Count -gt 0 }).Count
+    Assert-True ($ownerCount -eq 1) ('scheduler keeps provider rows in one worker: ' + $kind)
+}
+
 # --- 调用图：worker 里调用到的每个命令，要么由 worker 自己定义，要么在全新 runspace 里存在 ---
 $workerDefined = @{}
 foreach ($fn in $workerAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {

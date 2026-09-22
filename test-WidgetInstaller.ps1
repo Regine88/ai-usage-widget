@@ -19,6 +19,7 @@ function Assert-Eq {
 Assert-Eq (Test-WidgetDataFileName 'ai-config.json') 'True' 'config file is user data'
 Assert-Eq (Test-WidgetDataFileName 'ai-state.json') 'True' 'state file is user data'
 Assert-Eq (Test-WidgetDataFileName 'ai-history.jsonl') 'True' 'history file is user data'
+Assert-Eq (Test-WidgetDataFileName 'history\ai-history-2026-09.jsonl') 'True' 'monthly history archive is user data'
 Assert-Eq (Test-WidgetDataFileName 'ai-widget.log') 'True' 'log file is user data'
 Assert-Eq (Test-WidgetDataFileName 'ai-usage-20260917-120000.csv') 'True' 'csv export is user data'
 Assert-Eq (Test-WidgetDataFileName 'AiUsageWidget.ps1') 'False' 'runtime file is not user data'
@@ -70,11 +71,13 @@ try {
 
     # ---------- 升级 ----------
     [IO.File]::WriteAllText((Join-Path $dest 'ai-history.jsonl'), 'keep me', $utf8)
+    New-Item -ItemType Directory -Path (Join-Path $dest 'history') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $dest 'history\ai-history-2026-09.jsonl'), 'keep archive', $utf8)
     [IO.File]::WriteAllText((Join-Path $source 'AiUsageWidget.ps1'), ('$script:AppVersion = ''9.9.10''' + [Environment]::NewLine), $utf8)
     $upgrade = Install-AiUsageWidget -Source $source -Destination $dest -Version '9.9.10'
     Assert-Eq ([IO.File]::ReadAllText((Join-Path $dest 'ai-history.jsonl'))) 'keep me' 'upgrade keeps user data'
     Assert-Eq (Get-WidgetSourceVersion $dest) '9.9.10' 'upgrade replaces code'
-    Assert-Eq ((@($upgrade.Data) -join ',') ) 'ai-history.jsonl' 'upgrade reports retained data'
+    Assert-Eq ((@($upgrade.Data) -join ',') ) 'ai-history.jsonl,history\ai-history-2026-09.jsonl' 'upgrade reports retained data'
 
     # ---------- 快捷方式 ----------
     $lnk = Join-Path $root 'test-shortcut.lnk'
@@ -91,8 +94,9 @@ try {
     Assert-Eq (Test-Path -LiteralPath (Join-Path $dest 'strings')) 'False' 'uninstall removes the emptied strings dir'
     Assert-Eq (Test-Path -LiteralPath (Join-Path $dest 'ai-install.json')) 'False' 'uninstall removes the manifest'
     Assert-Eq (Test-Path -LiteralPath (Join-Path $dest 'ai-history.jsonl')) 'True' 'uninstall keeps user data'
+    Assert-Eq (Test-Path -LiteralPath (Join-Path $dest 'history\ai-history-2026-09.jsonl')) 'True' 'uninstall keeps monthly history archives'
     Assert-Eq ((@($uninstall.Removed).Count) -gt 0) 'True' 'uninstall reports removed files'
-    Assert-Eq ((@($uninstall.Retained) -join ',')) 'ai-history.jsonl' 'uninstall reports retained data'
+    Assert-Eq ((@($uninstall.Retained) -join ',')) 'ai-history.jsonl,history\ai-history-2026-09.jsonl' 'uninstall reports retained data'
     Assert-Eq (Test-Path -LiteralPath $dest) 'True' 'uninstall keeps the dir while user data remains'
 
     $emptyDest = Join-Path $root 'empty-dest'

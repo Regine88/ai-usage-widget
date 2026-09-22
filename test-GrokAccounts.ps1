@@ -50,8 +50,9 @@ Assert-Eq (Get-GrokRowName $alice) 'Grok a' 'row name a'
 Assert-Eq (Get-GrokRowName $bob) 'Grok b' 'row name b'
 Assert-Eq (Get-GrokRowName $empty) 'Grok' 'row name fallback'
 
-Assert-Eq (Get-GrokRowId $alice) 'grok-a' 'row id a'
-Assert-Eq (Get-GrokRowId $bob) 'grok-b' 'row id b'
+Assert-Eq ((Get-GrokRowId $alice) -like 'grok-acct-????????') 'True' 'row id a ignores the display alias'
+Assert-Eq ((Get-GrokRowId $bob) -like 'grok-acct-????????') 'True' 'row id b ignores the display alias'
+Assert-Eq ((Get-GrokRowId $alice) -ne (Get-GrokRowId $bob)) 'True' 'different aliases keep different stable row ids'
 
 Assert-Eq (Get-GrokSnapshotFileName $aliceEmail) ('grok-auth-{0}.json' -f $aliceEmail) 'snapshot name follows account id'
 Assert-Eq (Get-GrokSnapshotFileName 'a<b>|c') 'grok-auth-a_b__c.json' 'snapshot sanitizes filename'

@@ -122,6 +122,68 @@ function Get-AccountFingerprint {
     return ('{0}-{1}' -f $Prefix, $hash.Substring(0, 8))
 }
 
+function Assert-CredentialAccountId {
+    param(
+        [AllowNull()][string]$Expected,
+        [AllowNull()][string]$Actual
+    )
+    if (-not $Expected) { throw 'credential-account-missing' }
+    if (-not $Actual -or [string]$Actual -ne [string]$Expected) {
+        throw 'credential-account-changed'
+    }
+}
+
+function Set-CredentialVersion {
+    param(
+        $Auth,
+        [AllowNull()][string]$AccessToken,
+        [AllowNull()][string]$RefreshToken,
+        [AllowNull()][string]$AccountId
+    )
+    if (-not $Auth) { return $Auth }
+    foreach ($item in @(
+            @{ Name = 'OriginalAccessToken'; Value = $AccessToken }
+            @{ Name = 'OriginalRefreshToken'; Value = $RefreshToken }
+            @{ Name = 'BaseAccountId'; Value = $AccountId }
+        )) {
+        Add-Member -InputObject $Auth -NotePropertyName $item.Name -NotePropertyValue $item.Value -Force
+    }
+    return $Auth
+}
+
+function Assert-CredentialIdentity {
+    param(
+        [AllowNull()][string]$ExpectedAccountId,
+        [AllowNull()][string]$ActualAccountId,
+        [AllowNull()][string]$ExpectedRefreshToken,
+        [AllowNull()][string]$ActualRefreshToken,
+        [AllowNull()][string]$ExpectedAccessToken,
+        [AllowNull()][string]$ActualAccessToken
+    )
+    if (-not $ExpectedAccountId) { throw 'credential-account-missing' }
+    if (-not $ActualAccountId -or [string]$ActualAccountId -ne [string]$ExpectedAccountId) {
+        throw 'credential-account-changed'
+    }
+    if ($ExpectedRefreshToken -and [string]$ActualRefreshToken -ne [string]$ExpectedRefreshToken) {
+        throw 'credential-stale'
+    }
+    if (-not $ExpectedRefreshToken -and $ExpectedAccessToken -and [string]$ActualAccessToken -ne [string]$ExpectedAccessToken) {
+        throw 'credential-stale'
+    }
+}
+
+function Test-CredentialAccountChanged {
+    param($ErrorRecord)
+    if (-not $ErrorRecord) { return $false }
+    return ([string]$ErrorRecord.Exception.Message -eq 'credential-account-changed')
+}
+
+function Test-CredentialStale {
+    param($ErrorRecord)
+    if (-not $ErrorRecord) { return $false }
+    return ([string]$ErrorRecord.Exception.Message -eq 'credential-stale')
+}
+
 function Convert-SafeLogText {
     param(
         [AllowNull()][AllowEmptyString()][string]$Text,
@@ -148,6 +210,7 @@ function Get-WidgetTrustedHosts {
         'api.commandcode.ai'
         'openrouter.ai'
         'api.deepseek.com'
+        'api.cline.bot'
         'oauth2.googleapis.com'
         'cloudcode-pa.googleapis.com'
         'api.github.com'

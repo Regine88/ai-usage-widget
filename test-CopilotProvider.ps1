@@ -42,7 +42,7 @@ function Invoke-WidgetRest {
 function Write-WidgetLog { param([string]$Message) $script:logLines += $Message }
 
 $definitions = @()
-foreach ($name in @('Read-CopilotTokenFromFile', 'Get-CopilotToken', 'Test-CopilotCredExists', 'Get-CopilotAuthHeaders', 'Get-CopilotUsageSnapshot', 'Get-CopilotRowData')) {
+foreach ($name in @('Get-CopilotAuthToken', 'Read-CopilotTokenFromFile', 'Get-CopilotToken', 'Test-CopilotCredExists', 'Get-CopilotAuthHeaders', 'Get-CopilotUsageSnapshot', 'Get-CopilotRowData')) {
     $definitions += (Get-ScriptFunctionDefinition $entry $name)
 }
 $definitions += "`$script:CopilotHostsPath = (Join-Path `$env:TEMP 'no-such-copilot-hosts.json')"

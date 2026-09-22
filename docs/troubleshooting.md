@@ -38,6 +38,7 @@ Get-Content -LiteralPath .\ai-widget.log -Tail 40
 | Command Code | Command Code CLI 登录 | `~/.commandcode/auth.json` |
 | Gemini / Antigravity | 登录 Antigravity | 凭据管理器条目 `gemini:antigravity` |
 | OpenRouter | 在网页端创建 API Key | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
+| Cline | `cline` CLI 登录 | `~/.cline/data/settings/providers.json` |
 
 Grok 与 ChatGPT / Codex 是多账号模式：`auth.json` 存在后，还需要在右键菜单里"登记 Grok 账号" / "登记 ChatGPT 账号"，
 卡片才会为每个已登记账号渲染一行。
@@ -84,6 +85,15 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
 - 余额为 `0` 仍然显示 `¥0.00`（或对应币种），这是真实余额而不是读取失败。
 - 卡片显示的是**总余额**（充值 + 赠额），明细行分别列出两者，便于核对。
 
+## Cline 一行没有数据
+
+- 先运行 `cline auth` 登录；程序读取 `~/.cline/data/settings/providers.json`，不再读取浏览器 Cookie。
+- 多账号时，必须先在终端运行 `cline auth cline` 登录目标账号，再右键卡片选择「登记 Cline 账号」；只切换 Cline 网页账号不会改变 CLI token。账号快照保存在 `%LOCALAPPDATA%\AIUsageWidget\accounts\`。
+- 如果登记后没有新行，通常是 CLI 的 `accountId` 没变。程序会弹出“当前仍是已登记账号”提示；先确认 `cline auth cline` 已完成，再重新登记。
+- 余额接口为 `https://api.cline.bot/api/v1/users/me/plan/usage-limits`。若 CLI 登录正常但这里显示登录过期，先升级 Cline CLI 并重新执行一次 `cline auth`。
+- access token 过期前会自动调用 `/api/v1/auth/refresh` 并原地写回 `providers.json`；若刷新失败，卡片会提示重新登录。
+- 页面地址是 `https://app.cline.bot/dashboard/usage`，双击 Cline 行可直接打开。
+
 ## Kimi 一行没有数据
 
 - 区域文件 `~/.kimi-code/region` 含 `global` 时走 `kimi.ai` 域名，否则走 `kimi.com`；域名与账号区域不匹配会取不到数据。
@@ -116,7 +126,7 @@ GitHub 对未认证请求按 IP 限制每小时 60 次，检查更新与下载 R
 3. 手动卸载时：删除程序目录（含 `ai-state.json`、`ai-history.jsonl`、`ai-request-events.jsonl`、`ai-widget.log`）。
 4. 删除受保护的账号快照：`Remove-Item "$env:LOCALAPPDATA\AIUsageWidget" -Recurse`。
 5. 右键菜单里若有"取消开机启动"，先点它（或手动删除启动文件夹里的 `AI 周用量.lnk`）。
-6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek`、`~/.claude`、`~/.zai`、`~/.zhipu` 以及 Cursor 的 `%APPDATA%\Cursor` 是各供应商自己的数据，本程序不会写入（Claude 令牌过期时会原地刷新），按需自行保留。
+6. `~/.grok`、`~/.kimi-code`、`~/.codex`、`~/.commandcode`、`~/.openrouter`、`~/.deepseek`、`~/.cline`、`~/.claude`、`~/.zai`、`~/.zhipu` 以及 Cursor 的 `%APPDATA%\Cursor` 是各供应商自己的数据，本程序默认不会写入（Claude / Cline 令牌过期时才会原地刷新），按需自行保留。
 
 ## 想改列数 / 卡片变得很宽
 
@@ -155,7 +165,8 @@ Copilot 行只在**本机存在凭证**时才出现，按顺序尝试下面三�
 
 按顺序检查这五条：
 
-1. 弹出的是「还没有历史数据可导出」：`ai-history.jsonl` 一条记录都没有，先让卡片正常运行一段时间；
+1. 弹出的是「还没有历史数据可导出」：旧版 `ai-history.jsonl` 与 `history\ai-history-YYYY-MM.jsonl`
+   一条记录都没有，先让卡片正常运行一段时间；
 2. 导出的是**最近一个有数据的月份**，不是全部历史，文件在程序目录，形如 `ai-usage-report-2026-09.csv` / `.md` / `.html`；
    「多月对比」两项默认取**最近 3 个有数据的月份**，文件名形如 `ai-usage-comparison-2026-07_2026-09.md`；
 3. 选中月份没有采样时会提示「该月没有历史采样」，换回有数据的月份即可；
@@ -163,13 +174,14 @@ Copilot 行只在**本机存在凭证**时才出现，按顺序尝试下面三�
 5. 提示「导出失败，请查看日志」：`ai-widget.log` 里有 `report export failed` 一行，通常会带出真实的文件系统错误。
 
 Markdown / HTML 报表是该月按天 + 按供应商的汇总，不包含逐条原始采样；要原始数据请用同一子菜单里的「原始采样 CSV」。
-多月对比表里某个单元格是 `-`，表示该供应商在那个月没有采样——占位符是正常的，不是导出失败。
+原始采样 CSV 会跨旧文件与全部月度归档合并，并按时间戳、账号、窗口和周期去重。多月对比表里某个单元格是
+`-`，表示该供应商在那个月没有百分比采样——占位符是正常的，不是导出失败；余额与无上限指标不会被写成 0% 参与环比。
 
 ## 趋势图窗口是空的或者打不开
 
 先确认数据侧再怀疑界面：
 
-1. `ai-history.jsonl` 有没有内容、时间戳是否落在所选窗口内（趋势图只看最近 7 / 14 / 30 天）；
+1. `ai-history.jsonl` 或 `history\` 下的月度归档有没有内容、时间戳是否落在所选窗口内（趋势图只看最近 7 / 14 / 30 天）；
 2. 某个供应商采样不足窗口天数时**只画已有的点**，不补零，这是预期行为；
 3. 右键菜单里的入口是「趋势图…」；用 `pwsh -NoProfile -File .\AiUsageWidget.ps1 -Demo -TrendWindow`
    可以在没有凭证、没有历史的情况下确认窗口本身能画出来；

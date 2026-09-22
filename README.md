@@ -22,23 +22,24 @@
 | 供应商 | 卡片显示 | 账号模式 | 凭证来源 |
 | --- | --- | --- | --- |
 | **Grok** | Build / Chat 等产品的周用量与重置时间 | 多账号，每个账号一行 | `~/.grok/auth.json` |
-| **Kimi** | 5 小时窗与周窗口的用量 | 单账号 | `~/.kimi-code/credentials/kimi-code.json` |
+| **Kimi** | 5 小时窗与周窗口的用量 | 多账号，每个登记账号一行 | `~/.kimi-code/credentials/kimi-code.json` |
 | **ChatGPT / Codex** | 5 小时窗与周窗口的用量 | 多账号，每个账号一行 | `~/.codex/auth.json` |
-| **Gemini / Antigravity** | 配额百分比与重置时间 | 单账号 | Windows 凭据管理器 `gemini:antigravity` |
-| **Command Code** | 5 小时窗与周窗口的用量，可选余额 | 单账号 | `~/.commandcode/auth.json` |
+| **Gemini / Antigravity** | 配额百分比与重置时间 | 多账号，每个登记账号一行 | Windows 凭据管理器 `gemini:antigravity` |
+| **Command Code** | 5 小时窗与周窗口的用量，可选余额 | 多账号，每个登记账号一行 | `~/.commandcode/auth.json` |
 | **OpenRouter** | 密钥的已用额度与上限（未设上限时明确说明） | 每个密钥一行 | `~/.openrouter/auth.json` 或 `$env:OPENROUTER_API_KEY` |
 | **DeepSeek** | 账户总余额与充值 / 赠额明细（余额型，没有百分比） | 单账号 | `~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY` |
-| **Claude Code** | 5 小时窗与周窗口的用量 | 单账号 | `~/.claude/.credentials.json`（OAuth，不是 API key） |
-| **Cursor** | 当前计费周期已用百分比与剩余额度 | 单账号 | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
-| **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 单账号 | `~/.zai/auth.json`、`~/.zhipu/auth.json`、`~/.bigmodel/auth.json`（或 ZCode 的 `~/.zcode/v2/config.json`）或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
-| **GitHub Copilot** | Premium requests 的已用占比与配额重置日期 | 单账号 | `~/.config/github-copilot/hosts.json` / `apps.json`（也支持 OpenCode 的 `auth.json`） |
+| **Cline** | Cline Dashboard 的 5 小时 / 周 / 月额度与对应重置时间 | 多账号，每个登记账号一行 | `~/.cline/data/settings/providers.json`（CLI OAuth） |
+| **Claude Code** | 5 小时窗与周窗口的用量 | 多账号，每个登记账号一行 | `~/.claude/.credentials.json`（OAuth，不是 API key） |
+| **Cursor** | 当前计费周期已用百分比与剩余额度 | 多账号，每个登记账号一行 | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
+| **GLM / Z.AI** | Coding Plan 的 5 小时窗与周窗口 | 多账号，每个登记密钥一行 | `~/.zai/auth.json`、`~/.zhipu/auth.json`、`~/.bigmodel/auth.json`（或 ZCode 的 `~/.zcode/v2/config.json`）或 `$env:ZAI_API_KEY` / `$env:ZHIPU_API_KEY` / `$env:BIGMODEL_API_KEY` |
+| **GitHub Copilot** | Premium requests 的已用占比与配额重置日期 | 多账号，每个登记账号一行 | `~/.config/github-copilot/hosts.json` / `apps.json`（也支持 OpenCode 的 `auth.json`） |
 
-已经登录过对应 CLI 或扩展（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Antigravity、GitHub Copilot for VS Code、ZCode）就不会有额外配置负担：
+已经登录过对应 CLI 或扩展（Grok CLI、`kimi`、Codex CLI、Command Code CLI、Cline CLI、Antigravity、GitHub Copilot for VS Code、ZCode）就不会有额外配置负担：
 卡片直接复用它们的凭证，只读不写（令牌过期时才会原地刷新）。OpenRouter 是纯 API-key 供应商：读取 `~/.openrouter/auth.json`（或 `$env:OPENROUTER_API_KEY`），每个密钥一行；DeepSeek 同样只看 API-key（`~/.deepseek/auth.json` 或 `$env:DEEPSEEK_API_KEY`），卡片显示账户余额而不是百分比。
 
 ## 特性
 
-- **一个窗口看全部**：圆角常驻卡片，Grok 与 ChatGPT 会按账号展开成多行。
+- **一个窗口看全部**：圆角常驻卡片，已登记的账号会按供应商展开成多行。
 - **深色 / 浅色双主题**：设置窗口或启动参数（`-Theme dark|light`）切换，全部颜色来自同一张调色板；窗口不透明度可调（0.5 – 1.0）。
 - **不打断工作**：常驻桌面、可置顶、拖拽移动、贴边吸附，位置与设置自动记忆。
 - **托盘常驻**：双击托盘图标显示 / 隐藏卡片；关闭窗口即退出并释放单实例互斥。
@@ -48,7 +49,8 @@
 - **耗尽预测**：悬停提示按最近趋势估算额度耗尽时间，并提示是否早于本次重置。
 - **1 - 3 列卡片**：同一张卡片可以横向排成 2 列或 3 列，供应商多时不再拉得很长；列数在设置窗口或 `ai-config.json` 里调。
 - **每日汇总**：可选在每天固定时刻弹一次汇总气泡，列出当时各行的用量；同一天只提醒一次。
-- **历史报表导出**：右键 → **导出历史**，可选原始采样 CSV、按天汇总 CSV、月度报表 Markdown 与自包含 HTML；默认导出最近一个有数据的月份，历史为空时明确提示而不是生成空文件。
+- **历史报表导出**：右键 → **导出历史**，可选原始采样 CSV、按天汇总 CSV、月度报表 Markdown 与自包含 HTML；历史按 schema v2 写入月度归档，默认保留 90 天，原始导出跨月合并去重，历史为空时明确提示而不是生成空文件。
+- **有界并发刷新**：最多 3 个供应商 job 并行，同一供应商不并发；完成的 job 立即更新，错误按类型退避，失败行保留上次成功值。
 - **多月对比**：同一子菜单里的「多月对比 Markdown / HTML」把最近 3 个月并排成「供应商 × 月份」表格，每个单元格给出该月的采样数、天数与月初 / 月末 / 最低 / 最高，并单列一栏给出与上月的环比百分点变化；HTML 自包含，某个月没有采样的供应商也会占一行并显示 `-`。
 - **趋势图窗口**：右键 → **趋势图…**（或启动时加 `-TrendWindow`），按供应商画出每日用量折线，可切换到 7 / 14 / 30 天；折线颜色沿用各组件在卡片上的用量颜色，图例给出最新百分比。窗口只读，不写任何文件。
 - **集中设置**：设置窗口写入 `ai-config.json`（供应商开关、刷新间隔、列数、主题、不透明度、阈值、分供应商阈值、静音时段、每日汇总），保存后即时生效。
@@ -73,8 +75,8 @@
 
 ![右键菜单](docs/images/demo-menu.png)
 
-右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记 Grok 账号、登记 ChatGPT 账号、
-打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Claude / Cursor / GLM / Copilot）、
+右键菜单包含：立即刷新、刷新间隔（1 / 5 / 15 / 60 分钟）、登记当前登录的 Grok / Gemini / Kimi / Claude / Command Code / Cursor / GLM / Copilot / Cline / ChatGPT 账号、
+打开用量页（Grok / Gemini / Kimi / ChatGPT / Command Code / OpenRouter / DeepSeek / Cline / Claude / Cursor / GLM / Copilot）、
 导出历史（原始采样 CSV / 按天汇总 CSV / 月度报表 Markdown / 月度报表 HTML / 多月对比 Markdown / 多月对比 HTML）、
 趋势图…、设置…、关于…、浮在窗口上、开机启动、退出。
 
@@ -129,7 +131,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 也可以从 [Releases](https://github.com/Regine88/ai-usage-widget/releases) 下载 zip 后安装：
 
 ```powershell
-.\install.ps1 -Zip .\ai-usage-widget-0.15.0.zip
+.\install.ps1 -Zip .\ai-usage-widget-0.16.0.zip
 ```
 
 Scoop 用户可以直接安装每个 Release 附带的 manifest：
@@ -142,16 +144,20 @@ scoop install https://github.com/Regine88/ai-usage-widget/releases/latest/downlo
 
 ```powershell
 pwsh -NoProfile -File .\AiUsageWidget.ps1 -Version
-# AI Usage Widget 0.15.0
+# AI Usage Widget 0.16.0
 ```
 
 ### 多账号
 
-Grok 与 ChatGPT / Codex 是一账号一行：
+Grok、Gemini、Kimi、ChatGPT / Codex、Command Code、Cline、Claude、Cursor、GLM 与 Copilot 都是一账号一行。当前登录会在刷新时记入快照；要保留切换前的账号，先登记再切换：
 
-1. 先用对应 CLI 登录一个账号；
-2. 右键卡片 → **登记 Grok 账号** / **登记 ChatGPT 账号**；
-3. 切换到另一个账号重复上面的步骤，卡片会自动多出一行。
+1. 先用对应客户端登录一个账号；
+2. 右键卡片，选择该供应商的 **登记账号**；
+3. 在原来的客户端里切换到另一个账号，再登记一次，卡片会多出一行。
+
+每个已登记账号用自己的令牌读取用量。刷新某个账号的令牌只写回这个账号的快照；当前正在使用的登录才会写回原来的凭证文件或凭据管理器。
+
+注意：Cline 的网页登录与 Cline CLI 登录是两套会话。浏览器里切换账号不会改变 CLI token；切换 Cline 目标账号时要在终端执行 `cline auth cline`，登录完成后再点“登记 Cline 账号”。如果 CLI 仍是同一个 `accountId`，程序会用气泡提示“当前仍是已登记账号”，不会新增重复行。
 
 登记的账号以受 DPAPI 保护的快照保存在 `%LOCALAPPDATA%\AIUsageWidget\accounts\`，文件名是账号的短哈希，不含邮箱。
 
@@ -175,6 +181,13 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `-Uninstall` | 移除开机启动，然后退出 |
 | `-AddAccount` | 把当前 `~/.codex/auth.json` 登记为一个账号 |
 | `-AddGrokAccount` | 把当前 `~/.grok/auth.json` 登记为一个账号 |
+| `-AddGeminiAccount` | 把当前 Antigravity 登录登记为一个 Gemini 账号 |
+| `-AddKimiAccount` | 把当前 Kimi 登录登记为一个账号 |
+| `-AddClaudeAccount` | 把当前 Claude Code 登录登记为一个账号 |
+| `-AddCommandCodeAccount` | 把当前 Command Code 登录登记为一个账号 |
+| `-AddCursorAccount` | 把当前 Cursor 登录登记为一个账号 |
+| `-AddGlmAccount` | 把当前 GLM / 智谱密钥登记为一个账号 |
+| `-AddCopilotAccount` | 把当前 GitHub Copilot 登录登记为一个账号 |
 | `-MigrateSecrets` | 把旧版本遗留在程序目录里的账号快照迁移到 DPAPI 目录 |
 | `-IntervalSeconds <秒>` | 指定刷新间隔（最小 15 秒，默认 300 秒，会被右键菜单的选择覆盖） |
 | `-Theme <dark\|light>` | 只对本次运行强制深色 / 浅色主题，不改写 `ai-config.json` |
@@ -196,10 +209,16 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | `showTrend` | `true` | 在每行进度条右侧显示 7 天迷你折线 |
 | `showForecast` | `true` | 悬停提示里显示额度耗尽预测 |
 | `trendDays` | `7` | 折线与预测使用的天数（1 – 14） |
+| `historyRetentionDays` | `90` | 月度历史归档的保留天数（7 – 3650） |
+| `historyMaxBytes` | `10485760` | 历史归档总容量上限（1 MB – 1 GB）；空间不足时优先淘汰旧月份并标记历史不完整 |
+| `historySampleMinutes` | `15` | 没有变化时仍写入定时有效采样的最小间隔（1 – 1440 分钟） |
 | `alertThresholds` | `[70, 90]` | 触发气泡提醒的已用百分比，自动升序去重 |
 | `quietHours` | `{ "enabled": false, "start": "22:00", "end": "07:00" }` | 静音时段，跨午夜自动识别 |
 | `dailySummary` | `{ "enabled": false, "time": "09:00" }` | 每日汇总气泡；到点后每天只弹一次，日期记在 `ai-state.json` |
-| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `claude` / `cursor` / `glm` / `copilot` |
+| `accountAliases` | `{}` | 稳定行 ID 到显示别名的映射 |
+| `hiddenAccounts` | `[]` | 不显示在卡片上的稳定行 ID；账号快照仍保留 |
+| `accountOrder` | `[]` | 稳定行 ID 的显示顺序，未列出的账号排在后面 |
+| `providers` | 全部 `true` | 供应商开关：`grok` / `gemini` / `kimi` / `codex` / `commandcode` / `openrouter` / `deepseek` / `cline` / `claude` / `cursor` / `glm` / `copilot` |
 | `language` | `"auto"` | 界面语言：`auto`（跟随系统）/ `zh-CN` / `en-US` |
 
 任何非法值（超范围、类型不对、时间格式错误）都会回退成默认值，不用担心把配置改坏。
@@ -220,7 +239,7 @@ Grok 与 ChatGPT / Codex 是一账号一行：
 | --- | --- | --- |
 | 账号快照（DPAPI 加密） | `%LOCALAPPDATA%\AIUsageWidget\accounts\` | 加密存储，文件名为哈希 |
 | 界面状态（位置 / 置顶 / 间隔） | `<程序目录>\ai-state.json` | 否 |
-| 用量历史 | `<程序目录>\ai-history.jsonl` | 否，只有时间戳与百分比 |
+| 用量历史 | `<程序目录>\ai-history.jsonl` 与 `<程序目录>\history\ai-history-YYYY-MM.jsonl` | 否，以 schema v2 记录时间、账号、指标类型、窗口、周期和值 |
 | 请求事件 | `<程序目录>\ai-request-events.jsonl` | 否，只有供应商 / 模型 / 状态 / 耗时 |
 | 日志 | `<程序目录>\ai-widget.log` | 否，账号只以短哈希出现，自动轮转 |
 | 账号别名（可选） | `<程序目录>\grok-aliases.json` | 否，只有短哈希与本地别名，已被 `.gitignore` 排除 |

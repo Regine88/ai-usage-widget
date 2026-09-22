@@ -9,9 +9,10 @@
 #   -Theme <name>    force the dark or light palette for this run
 #   -Install         register the widget in the current user's startup folder
 #   -Uninstall       remove the startup registration
-#   -AddAccount      register the current ChatGPT / Codex account
-#   -AddGrokAccount  register the current Grok account
-#   -MigrateSecrets  migrate legacy project-local snapshots into DPAPI storage
+#   -AddAccount       register the current ChatGPT / Codex account
+#   -AddGrokAccount   register the current Grok account
+#   -AddGeminiAccount register the current Antigravity Gemini account
+#   -MigrateSecrets   migrate legacy project-local snapshots into DPAPI storage
 
 [CmdletBinding()]
 param(
@@ -19,6 +20,13 @@ param(
     [switch]$Uninstall,
     [switch]$AddAccount,
     [switch]$AddGrokAccount,
+    [switch]$AddGeminiAccount,
+    [switch]$AddKimiAccount,
+    [switch]$AddClaudeAccount,
+    [switch]$AddCommandCodeAccount,
+    [switch]$AddCursorAccount,
+    [switch]$AddGlmAccount,
+    [switch]$AddCopilotAccount,
     [switch]$MigrateSecrets,
     [switch]$Version,
     [switch]$Demo,
@@ -31,7 +39,7 @@ $ErrorActionPreference = 'Stop'
 
 # Demo mode renders fixed rows so screenshots and UI checks need neither
 # credentials nor network access; it never touches credentials, history or state.
-$script:AppVersion = '0.15.0'
+$script:AppVersion = '0.16.0'
 $script:DemoMode = $false
 # 趋势图窗口按需创建：$script:TrendForm 保存当前窗口，关闭后置空再重建。
 # 变量名不能叫 TrendWindow：脚本顶层的 $script:X 与 -X 开关参数是同一个变量，
@@ -66,6 +74,13 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     if ($Uninstall) { $argList += '-Uninstall' }
     if ($AddAccount) { $argList += '-AddAccount' }
     if ($AddGrokAccount) { $argList += '-AddGrokAccount' }
+    if ($AddGeminiAccount) { $argList += '-AddGeminiAccount' }
+    if ($AddKimiAccount) { $argList += '-AddKimiAccount' }
+    if ($AddClaudeAccount) { $argList += '-AddClaudeAccount' }
+    if ($AddCommandCodeAccount) { $argList += '-AddCommandCodeAccount' }
+    if ($AddCursorAccount) { $argList += '-AddCursorAccount' }
+    if ($AddGlmAccount) { $argList += '-AddGlmAccount' }
+    if ($AddCopilotAccount) { $argList += '-AddCopilotAccount' }
     if ($MigrateSecrets) { $argList += '-MigrateSecrets' }
     if ($Demo) { $argList += '-Demo' }
     if ($TrendWindow) { $argList += '-TrendWindow' }
@@ -121,6 +136,12 @@ $script:DeepSeekApiBaseUrl = 'https://api.deepseek.com'
 $script:DeepSeekUsagePageUrl = 'https://platform.deepseek.com/usage'
 $script:DeepSeekDisplayName = 'DeepSeek'
 
+$script:ClineProvidersPath = Join-Path $env:USERPROFILE '.cline\data\settings\providers.json'
+$script:ClineUsageUrl = 'https://api.cline.bot/api/v1/users/me/plan/usage-limits'
+$script:ClineRefreshUrl = 'https://api.cline.bot/api/v1/auth/refresh'
+$script:ClineUsagePageUrl = 'https://app.cline.bot/dashboard/usage'
+$script:ClineDisplayName = 'Cline'
+
 $script:ClaudeHomeDir = if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE '.claude' }
 $script:ClaudeCredPath = Join-Path $script:ClaudeHomeDir '.credentials.json'
 $script:ClaudeUsageUrl = 'https://api.anthropic.com/api/oauth/usage'
@@ -170,6 +191,7 @@ $script:RequestEventsPath = Join-Path $script:WidgetDir 'ai-request-events.jsonl
 $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'UsageValidation.ps1')
 . (Join-Path $script:WidgetDir 'SecureSnapshot.ps1')
+. (Join-Path $script:WidgetDir 'WidgetProviders.ps1')
 . (Join-Path $script:WidgetDir 'ApiKeyAuth.ps1')
 . (Join-Path $script:WidgetDir 'GrokAccounts.ps1')
 . (Join-Path $script:WidgetDir 'GeminiAntigravity.ps1')
@@ -177,6 +199,7 @@ $script:VbsPath = Join-Path $script:WidgetDir 'Start-AiUsageWidget.vbs'
 . (Join-Path $script:WidgetDir 'CommandCodeQuota.ps1')
 . (Join-Path $script:WidgetDir 'OpenRouterQuota.ps1')
 . (Join-Path $script:WidgetDir 'DeepSeekQuota.ps1')
+. (Join-Path $script:WidgetDir 'ClineQuota.ps1')
 . (Join-Path $script:WidgetDir 'ClaudeQuota.ps1')
 . (Join-Path $script:WidgetDir 'CursorQuota.ps1')
 . (Join-Path $script:WidgetDir 'ZaiQuota.ps1')
@@ -213,11 +236,15 @@ $script:LastOkAt = $null
 $script:FetchRunning = $false
 $script:FetchJob = $null
 $script:WorkerSrc = $null
-$script:WorkerRs = $null
+$script:WorkerPool = $null
+$script:FetchGeneration = 0
 $script:Fonts = $null
 $script:Alerted = @{}
 $script:LastPct = @{}
 $script:LastUsagePct = @{}
+$script:RowState = @{}
+$script:AccountSpecs = @()
+$script:CurrentSpecs = @()
 $script:FailCount = @{}
 $script:BackoffUntil = @{}
 $script:IntervalItems = @{}
@@ -243,6 +270,15 @@ function Write-WidgetLog {
             Set-Content -LiteralPath $script:LogPath -Value $tail -Encoding utf8
         }
     } catch { }
+}
+
+if (-not $script:DemoMode) {
+    try {
+        [void](Import-UsageHistoryLegacy -Path $script:HistoryPath)
+        [void](Invoke-UsageHistoryRetention -Path $script:HistoryPath -RetentionDays $script:Config.historyRetentionDays -MaxBytes $script:Config.historyMaxBytes)
+    } catch {
+        Write-WidgetLog ('history initialize failed: ' + $_.Exception.Message)
+    }
 }
 
 function Hide-ConsoleWindow {
@@ -486,6 +522,22 @@ function Read-GrokAuth {
     Read-GrokAuthFromFile -Path $Path
 }
 
+function Set-GrokAuthFields {
+    param($Raw, [string]$KeyName, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
+    $entry = if ($KeyName -and $Raw.PSObject.Properties[$KeyName]) {
+        $Raw.PSObject.Properties[$KeyName].Value
+    } else {
+        $null
+    }
+    if (-not $entry) { throw 'Grok 登录文件缺少账号条目' }
+    [void]($entry.key = $AccessToken)
+    if ($RefreshToken) { [void]($entry.refresh_token = $RefreshToken) }
+    $expires = $ExpiresAt.ToUniversalTime().ToString('o')
+    if ($entry.PSObject.Properties['expires_at']) { $entry.expires_at = $expires }
+    else { Add-Member -InputObject $entry -NotePropertyName expires_at -NotePropertyValue $expires -Force }
+    return $Raw
+}
+
 function Save-GrokAuth {
     param($Auth, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
     $path = $Auth.Path
@@ -493,40 +545,58 @@ function Save-GrokAuth {
     if ($path -like '*.snapshot') {
         $raw = Update-SecureSnapshot -Provider grok -AccountId $Auth.AccountId -Update {
             param($current)
-            $entry = if ($Auth.KeyName -and $current.PSObject.Properties[$Auth.KeyName]) {
-                $current.PSObject.Properties[$Auth.KeyName].Value
-            }
-            if (-not $entry) { throw 'Grok 受保护凭据缺少账号条目' }
-            [void]($entry.key = $AccessToken)
-            if ($RefreshToken) { [void]($entry.refresh_token = $RefreshToken) }
-            [void]($entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o'))
-            return $current
+            $currentAuth = Convert-GrokRawAuth -Raw $current -Path $path
+            Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+            return (Set-GrokAuthFields -Raw $current -KeyName $Auth.KeyName -AccessToken $AccessToken -RefreshToken $RefreshToken -ExpiresAt $ExpiresAt)
         }
         $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $null }
         if (-not $entry) { throw 'Grok 受保护凭据缺少账号条目' }
     } else {
-        Invoke-SecureSnapshotFileLock -Path $path -Action {
-            $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
-            $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $Auth.Entry }
-            if (-not $entry) { throw 'Grok 登录文件缺少账号条目' }
-            $entry.key = $AccessToken
-            if ($RefreshToken) { $entry.refresh_token = $RefreshToken }
-            $entry.expires_at = $ExpiresAt.ToUniversalTime().ToString('o')
-            $json = $raw | ConvertTo-Json -Depth 8
-            $tmp = "{0}.{1}.tmp" -f $path, ([guid]::NewGuid().ToString('n'))
-            try {
-                [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
-                Move-SecureSnapshotFile -Source $tmp -Destination $path
-            } finally {
-                if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        try {
+            $raw = Update-JsonFile -Path $path -Update {
+                param($current)
+                $currentAuth = Convert-GrokRawAuth -Raw $current -Path $path
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+                return (Set-GrokAuthFields -Raw $current -KeyName $Auth.KeyName -AccessToken $AccessToken -RefreshToken $RefreshToken -ExpiresAt $ExpiresAt)
             }
+        } catch {
+            if (-not (Test-CredentialAccountChanged $_) -and -not (Test-CredentialStale $_)) { throw }
+            if (Test-CredentialStale $_) {
+                Write-WidgetLog ('grok active credential is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+                return
+            }
+            $snapPath = Get-GrokSnapshotPath $Auth.AccountId
+            if (Test-Path -LiteralPath $snapPath) {
+                $raw = Update-SecureSnapshot -Provider grok -AccountId $Auth.AccountId -Update {
+                    param($current)
+                    $currentAuth = Convert-GrokRawAuth -Raw $current -Path $snapPath
+                    Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+                    return (Set-GrokAuthFields -Raw $current -KeyName $Auth.KeyName -AccessToken $AccessToken -RefreshToken $RefreshToken -ExpiresAt $ExpiresAt)
+                }
+            } else {
+                $raw = Set-GrokAuthFields -Raw $Auth.Raw -KeyName $Auth.KeyName -AccessToken $AccessToken -RefreshToken $RefreshToken -ExpiresAt $ExpiresAt
+                [void](Write-SecureSnapshot -Provider grok -AccountId $Auth.AccountId -Value $raw)
+            }
+            $Auth.Path = $snapPath
+            Write-WidgetLog ('grok active credential changed; refreshed result stored in account snapshot {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
         }
-        $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
-        $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $Auth.Entry }
     }
+    $entry = if ($Auth.KeyName -and $raw.PSObject.Properties[$Auth.KeyName]) { $raw.PSObject.Properties[$Auth.KeyName].Value } else { $null }
+    if (-not $entry) { throw 'Grok 登录文件缺少账号条目' }
     $Auth.Raw = $raw
     $Auth.Entry = $entry
-    $Auth.Path = $path
+    if ($Auth.Path -notlike '*.snapshot' -and $Auth.AccountId) {
+        $snapPath = Get-GrokSnapshotPath $Auth.AccountId
+        if (Test-Path -LiteralPath $snapPath) {
+            [void](Update-SecureSnapshot -Provider grok -AccountId $Auth.AccountId -Update {
+                param($current)
+                $currentAuth = Convert-GrokRawAuth -Raw $current -Path $snapPath
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+                return (Set-GrokAuthFields -Raw $current -KeyName $Auth.KeyName -AccessToken $AccessToken -RefreshToken $RefreshToken -ExpiresAt $ExpiresAt)
+            })
+        }
+    }
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $AccessToken -RefreshToken $RefreshToken -AccountId $Auth.AccountId)
 }
 
 function Update-GrokToken {
@@ -558,6 +628,7 @@ function Sync-GrokAuthFromDisk {
     if (-not $path) { $path = $script:GrokAuthPath }
     $fresh = Read-GrokAuthFromFile -Path $path
     if (-not $fresh) { return $false }
+    if ([string]$fresh.AccountId -ne [string]$Auth.AccountId) { return $false }
     $changed = ($fresh.Token -ne $Auth.Token)
     $Auth.Token = $fresh.Token
     $Auth.RefreshToken = $fresh.RefreshToken
@@ -569,6 +640,7 @@ function Sync-GrokAuthFromDisk {
     $Auth.Email = $fresh.Email
     $Auth.AccountId = $fresh.AccountId
     $Auth.Path = $fresh.Path
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
     return $changed
 }
 
@@ -604,7 +676,10 @@ function Get-GrokUsageSnapshot {
     if (-not $Auth) { $Auth = Read-GrokAuthFromFile -Path $script:GrokAuthPath }
     $auth = $Auth
     if ($auth.ExpiresAt -and $auth.ExpiresAt.ToUniversalTime() -lt [datetime]::UtcNow.AddMinutes(2)) {
-        try { $auth = Update-GrokToken -Auth $auth } catch { Write-WidgetLog "grok preemptive refresh failed: $($_.Exception.Message)" }
+        try { $auth = Update-GrokToken -Auth $auth } catch {
+            Write-WidgetLog "grok preemptive refresh failed: $($_.Exception.Message)"
+            throw
+        }
     }
 
     $credits = Invoke-GrokGet -Auth $auth -Url 'https://cli-chat-proxy.grok.com/v1/billing?format=credits'
@@ -632,9 +707,11 @@ function Get-GrokUsageSnapshot {
     $products = @()
     if ($cfg.productUsage) {
         foreach ($p in @($cfg.productUsage)) {
+            $productPercent = Convert-OptionalNumber $p.usagePercent 'Grok product usagePercent'
+            if ($null -eq $productPercent) { continue }
             $products += [pscustomobject]@{
                 Name    = Get-ProductLabel ([string]$p.product)
-                Percent = Assert-UsagePercent $p.usagePercent 'Grok product usagePercent'
+                Percent = Assert-UsagePercent $productPercent 'Grok product usagePercent'
             }
         }
     }
@@ -674,41 +751,237 @@ function Get-KimiHosts {
     }
 }
 
+function Find-MatchingSnapshotAccount {
+    param($Active, $Snapshots)
+    if (-not $Active) { return $null }
+    foreach ($snap in @($Snapshots)) {
+        if (-not $snap) { continue }
+        if ($Active.AccountId -and $snap.AccountId -and [string]$snap.AccountId -eq [string]$Active.AccountId) {
+            return [string]$snap.AccountId
+        }
+        $activeRefresh = if ($Active.RefreshToken) { [string]$Active.RefreshToken } elseif ($Active.Refresh) { [string]$Active.Refresh } else { $null }
+        $snapRefresh = if ($snap.RefreshToken) { [string]$snap.RefreshToken } elseif ($snap.Refresh) { [string]$snap.Refresh } else { $null }
+        if ($activeRefresh -and $snapRefresh -and $activeRefresh -eq $snapRefresh) { return [string]$snap.AccountId }
+    }
+    return [string]$Active.AccountId
+}
+
+function Get-ProviderRowId {
+    param($Auth, [string]$Kind)
+    $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.AccountId) -Prefix 'acct'
+    if ($fingerprint) { return ('{0}-{1}' -f $Kind, $fingerprint) }
+    return ($Kind + '-unknown')
+}
+
+function Get-ProviderRowName {
+    param($Auth, [string]$Prefix, [string]$Fallback)
+    $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.AccountId) -Prefix $Prefix
+    if ($fingerprint) { return $fingerprint }
+    return $Fallback
+}
+
+function Add-CurrentSnapshotAccount {
+    param(
+        [Parameter(Mandatory)][string]$Provider,
+        $Auth,
+        [string]$Name
+    )
+    if (-not $Auth -or -not $Auth.AccountId -or $null -eq $Auth.Raw) {
+        Write-Host (T 'cli.accountMissing')
+        return [pscustomobject]@{ Status = 'missing'; Name = $null; Path = $null }
+    }
+    if (-not $Name) { $Name = [string]$Auth.AccountId }
+    $snapPath = Get-SecureSnapshotPath -Provider $Provider -AccountId ([string]$Auth.AccountId)
+    $existed = Test-Path -LiteralPath $snapPath
+    [void](Write-SecureSnapshot -Provider $Provider -AccountId ([string]$Auth.AccountId) -Value $Auth.Raw)
+    $status = if ($existed) { 'same-account' } else { 'registered' }
+    Write-Host (T 'cli.registered' @($Name, $snapPath))
+    if (Get-Command Write-WidgetLog -ErrorAction SilentlyContinue) {
+        Write-WidgetLog ("snapshot {0} {1} status={2}" -f $Provider, $Name, $status)
+    }
+    return [pscustomobject]@{ Status = $status; Name = $Name; Path = $snapPath }
+}
+
+function Show-AccountRegistration {
+    param($Result)
+    try {
+        if (-not $script:Ui -or -not $script:Ui.Tray) { return }
+        if ($Result.Status -eq 'same-account') {
+            $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), (T 'cli.accountSame' @($Result.Name)), [System.Windows.Forms.ToolTipIcon]::Warning)
+        } elseif ($Result.Status -eq 'registered') {
+            $script:Ui.Tray.ShowBalloonTip(6000, (T 'app.title'), (T 'cli.accountRegistered' @($Result.Name)), [System.Windows.Forms.ToolTipIcon]::Info)
+        } else {
+            $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), (T 'cli.accountMissing'), [System.Windows.Forms.ToolTipIcon]::Warning)
+        }
+    } catch { }
+}
+
+function Get-KimiAccountId {
+    param($Raw)
+    if (-not $Raw) { return $null }
+    foreach ($name in @('user_id', 'userId', 'account_id', 'accountId', 'email')) {
+        $prop = $Raw.PSObject.Properties[$name]
+        if ($prop -and [string]$prop.Value) { return ([string]$prop.Value).Trim().ToLowerInvariant() }
+    }
+    if ($Raw.refresh_token) { return ('refresh:' + (Get-AccountFingerprint -AccountId ([string]$Raw.refresh_token) -Prefix 'tok')) }
+    return $null
+}
+
+function Convert-KimiRawAuth {
+    param($Raw, [string]$Path, [string]$Source)
+    if (-not $Raw -or -not $Raw.access_token -or -not $Raw.refresh_token) {
+        throw 'kimi-code.json 中没有可用的登录凭证，请重新登录'
+    }
+    $exp = $null
+    if ($Raw.expires_at) {
+        try { $exp = [DateTimeOffset]::FromUnixTimeSeconds([long]$Raw.expires_at).UtcDateTime } catch { }
+    }
+    $accountId = Get-KimiAccountId $Raw
+    if (-not $accountId) { throw 'missing-credential' }
+    $authObject = [pscustomobject]@{
+        Token     = [string]$Raw.access_token
+        Refresh   = [string]$Raw.refresh_token
+        ExpiresAt = $exp
+        AccountId = $accountId
+        Path      = $Path
+        Source    = $Source
+        Raw       = $Raw
+    }
+    return (Set-CredentialVersion -Auth $authObject -AccessToken $authObject.Token -RefreshToken $authObject.Refresh -AccountId $accountId)
+}
+
+function Set-KimiAuthFields {
+    param($Raw, [string]$Token, [string]$Refresh, [datetime]$ExpiresAt)
+    if (-not $Raw) { throw 'Kimi credential is missing' }
+    $Raw.access_token = $Token
+    $Raw.refresh_token = $Refresh
+    if ($ExpiresAt) {
+        $Raw.expires_at = [long][DateTimeOffset]::new($ExpiresAt.ToUniversalTime()).ToUnixTimeSeconds()
+    }
+    return $Raw
+}
+
+function Save-KimiSnapshot {
+    param($Auth)
+    if (-not $Auth -or -not $Auth.AccountId) { throw 'Kimi snapshot is missing an account id' }
+    $path = Get-SecureSnapshotPath -Provider kimi -AccountId $Auth.AccountId
+    if (Test-Path -LiteralPath $path) {
+        try {
+            return (Update-SecureSnapshot -Provider kimi -AccountId $Auth.AccountId -Update {
+                param($current)
+                $currentAuth = Convert-KimiRawAuth -Raw $current -Path $path -Source 'snapshot'
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.Refresh
+                return (Set-KimiAuthFields -Raw $current -Token $Auth.Token -Refresh $Auth.Refresh -ExpiresAt $Auth.ExpiresAt)
+            })
+        } catch {
+            if (Test-CredentialStale $_) {
+                Write-WidgetLog ('kimi snapshot is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+                return $Auth.Raw
+            }
+            throw
+        }
+    }
+    $raw = Set-KimiAuthFields -Raw $Auth.Raw -Token $Auth.Token -Refresh $Auth.Refresh -ExpiresAt $Auth.ExpiresAt
+    [void](Write-SecureSnapshot -Provider kimi -AccountId $Auth.AccountId -Value $raw)
+    return $raw
+}
+
+function Read-KimiAuthFromFile {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { throw 'missing-credential' }
+    if ($Path -like '*.snapshot') {
+        $raw = Read-SecureSnapshot -Path $Path
+        $source = 'snapshot'
+    } else {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        $source = 'file'
+    }
+    return (Convert-KimiRawAuth -Raw $raw -Path $Path -Source $source)
+}
+
 function Read-KimiAuth {
     if (-not (Test-Path -LiteralPath $script:KimiCredPath)) {
         throw '未找到 ~/.kimi-code/credentials/kimi-code.json，请先运行 kimi 登录'
     }
-    $raw = Get-Content -LiteralPath $script:KimiCredPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if (-not $raw.access_token -or -not $raw.refresh_token) {
-        throw 'kimi-code.json 中没有可用的登录凭证，请重新登录'
+    return (Read-KimiAuthFromFile -Path $script:KimiCredPath)
+}
+
+function Get-KimiSnapshotAuths {
+    $list = @()
+    foreach ($file in @(Get-SecureSnapshotFiles -Provider kimi)) {
+        try { $list += Read-KimiAuthFromFile -Path $file.FullName } catch { }
     }
-    $exp = $null
-    if ($raw.expires_at) {
-        try { $exp = [DateTimeOffset]::FromUnixTimeSeconds([long]$raw.expires_at).UtcDateTime } catch { }
+    return @($list)
+}
+
+function Get-KimiAccounts {
+    $active = $null
+    try { if (Test-Path -LiteralPath $script:KimiCredPath) { $active = Read-KimiAuth } } catch { $active = $null }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-KimiSnapshotAuths)
+        if ($matched) { $active.AccountId = $matched }
     }
-    [pscustomobject]@{
-        Token     = [string]$raw.access_token
-        Refresh   = [string]$raw.refresh_token
-        ExpiresAt = $exp
+    return @(Get-MergedProviderAccounts -Provider kimi -Active $active -ReadPath {
+        param($Path)
+        Read-KimiAuthFromFile -Path $Path
+    })
+}
+
+function Sync-ActiveKimiSnapshot {
+    if (-not $script:KimiCredPath -or -not (Test-Path -LiteralPath $script:KimiCredPath)) { return }
+    $active = $null
+    try { $active = Read-KimiAuth } catch { return }
+    if (-not $active -or -not $active.Raw) { return }
+    $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-KimiSnapshotAuths)
+    if ($matched) { $active.AccountId = $matched }
+    if (-not $active.AccountId) { return }
+    [void](Write-SecureSnapshot -Provider kimi -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentKimiAccount {
+    $active = $null
+    try { if (Test-Path -LiteralPath $script:KimiCredPath) { $active = Read-KimiAuth } } catch { }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-KimiSnapshotAuths)
+        if ($matched) { $active.AccountId = $matched }
     }
+    return (Add-CurrentSnapshotAccount -Provider kimi -Auth $active -Name $(if ($active) { Get-ProviderRowName $active 'Kimi' 'Kimi' } else { $null }))
 }
 
 function Save-KimiAuth {
-    param([string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
-    Invoke-SecureSnapshotFileLock -Path $script:KimiCredPath -Action {
-        $raw = Get-Content -LiteralPath $script:KimiCredPath -Raw -Encoding utf8 | ConvertFrom-Json
-        $raw.access_token = $AccessToken
-        $raw.refresh_token = $RefreshToken
-        $raw.expires_at = [long][DateTimeOffset]::new($ExpiresAt.ToUniversalTime()).ToUnixTimeSeconds()
-        $json = $raw | ConvertTo-Json -Depth 8 -Compress
-        $tmp = "{0}.{1}.tmp" -f $script:KimiCredPath, ([guid]::NewGuid().ToString('n'))
-        try {
-            [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
-            Move-SecureSnapshotFile -Source $tmp -Destination $script:KimiCredPath
-        } finally {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-        }
+    param($Auth)
+    if (-not $Auth) { return }
+    $source = [string]$Auth.Source
+    if (-not $source -and [string]$Auth.Path -like '*.snapshot') { $source = 'snapshot' }
+    if ($source -eq 'snapshot') {
+        $Auth.Raw = Save-KimiSnapshot $Auth
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.Refresh -AccountId $Auth.AccountId)
+        return
     }
+    try {
+        $raw = Update-JsonFile -Path $script:KimiCredPath -Update {
+            param($current)
+            $currentAuth = Convert-KimiRawAuth -Raw $current -Path $script:KimiCredPath -Source 'file'
+            Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.Refresh
+            return (Set-KimiAuthFields -Raw $current -Token $Auth.Token -Refresh $Auth.Refresh -ExpiresAt $Auth.ExpiresAt)
+        }
+    } catch {
+        if (-not (Test-CredentialAccountChanged $_) -and -not (Test-CredentialStale $_)) { throw }
+        if (Test-CredentialStale $_) {
+            Write-WidgetLog ('kimi active credential is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+            return
+        }
+        $Auth.Raw = Set-KimiAuthFields -Raw $Auth.Raw -Token $Auth.Token -Refresh $Auth.Refresh -ExpiresAt $Auth.ExpiresAt
+        $Auth.Path = Get-SecureSnapshotPath -Provider kimi -AccountId $Auth.AccountId
+        $Auth.Source = 'snapshot'
+        $Auth.Raw = Save-KimiSnapshot $Auth
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.Refresh -AccountId $Auth.AccountId)
+        Write-WidgetLog ('kimi active credential changed; refreshed result stored in account snapshot {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+        return
+    }
+    $Auth.Raw = $raw
+    $Auth.Raw = Save-KimiSnapshot $Auth
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.Refresh -AccountId $Auth.AccountId)
 }
 
 function Update-KimiToken {
@@ -724,10 +997,10 @@ function Update-KimiToken {
     $expiresIn = Assert-PositiveFiniteNumber $resp.expires_in 'Kimi expires_in'
     $expires = [datetime]::UtcNow.AddSeconds($expiresIn)
     $newRefresh = if ($resp.refresh_token) { [string]$resp.refresh_token } else { $Auth.Refresh }
-    Save-KimiAuth -AccessToken $resp.access_token -RefreshToken $newRefresh -ExpiresAt $expires
     $Auth.Token = [string]$resp.access_token
     $Auth.Refresh = $newRefresh
     $Auth.ExpiresAt = $expires
+    Save-KimiAuth $Auth
     Write-WidgetLog 'kimi token refreshed'
     return $Auth
 }
@@ -744,16 +1017,19 @@ function Invoke-KimiGet {
     } catch {
         $code = Get-HttpStatusCode $_
         if ($code -notin 401, 403) { throw }
-        try {
-            $fresh = Read-KimiAuth
-            if ($fresh.Token -and $fresh.Token -ne $Auth.Token) {
-                $Auth.Token = $fresh.Token
-                $Auth.Refresh = $fresh.Refresh
-                $Auth.ExpiresAt = $fresh.ExpiresAt
-                $headers.Authorization = "Bearer $($Auth.Token)"
-                return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
-            }
-        } catch { }
+        if ([string]$Auth.Source -ne 'snapshot') {
+            try {
+                $fresh = Read-KimiAuth
+                if ([string]$fresh.AccountId -eq [string]$Auth.AccountId -and $fresh.Token -and $fresh.Token -ne $Auth.Token) {
+                    $Auth.Token = $fresh.Token
+                    $Auth.Refresh = $fresh.Refresh
+                    $Auth.ExpiresAt = $fresh.ExpiresAt
+                    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.Refresh -AccountId $Auth.AccountId)
+                    $headers.Authorization = "Bearer $($Auth.Token)"
+                    return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
+                }
+            } catch { }
+        }
         $Auth = Update-KimiToken -Auth $Auth
         $headers.Authorization = "Bearer $($Auth.Token)"
         return Invoke-WidgetRest -Method Get -Uri $Url -Headers $headers
@@ -761,9 +1037,13 @@ function Invoke-KimiGet {
 }
 
 function Get-KimiUsageSnapshot {
-    $auth = Read-KimiAuth
+    param($Auth)
+    $auth = if ($Auth) { $Auth } else { Read-KimiAuth }
     if ($auth.ExpiresAt -and $auth.ExpiresAt -lt [datetime]::UtcNow.AddMinutes(2)) {
-        try { $auth = Update-KimiToken -Auth $auth } catch { Write-WidgetLog "kimi preemptive refresh failed: $($_.Exception.Message)" }
+        try { $auth = Update-KimiToken -Auth $auth } catch {
+            Write-WidgetLog "kimi preemptive refresh failed: $($_.Exception.Message)"
+            throw
+        }
     }
     $hosts = Get-KimiHosts
     $data = Invoke-KimiGet -Auth $auth -Url "$($hosts.BaseUrl)/usages"
@@ -797,14 +1077,16 @@ function Convert-CodexRawAuth {
     $accountId = [string]$raw.tokens.account_id
     if (-not $accountId) { return $null }
     $email = Get-TokenEmail ([string]$raw.tokens.id_token)
-    [pscustomobject]@{
+    $authObject = [pscustomobject]@{
         Path      = $Path
+        Source    = $(if ($Path -like '*.snapshot') { 'snapshot' } else { 'file' })
         Token     = [string]$raw.tokens.access_token
         Refresh   = [string]$raw.tokens.refresh_token
         AccountId = $accountId
         Email     = $email
         Raw       = $raw
     }
+    return (Set-CredentialVersion -Auth $authObject -AccessToken $authObject.Token -RefreshToken $authObject.Refresh -AccountId $accountId)
 }
 
 function Read-CodexAuth {
@@ -905,37 +1187,66 @@ function Migrate-ProjectSnapshots {
     Write-Host (T 'cli.migrateDone')
 }
 
+function Set-CodexAuthFields {
+    param($Raw, [string]$AccessToken, [string]$RefreshToken, [string]$IdToken)
+    if (-not $Raw -or -not $Raw.tokens) { throw 'Codex 凭据缺少 tokens' }
+    [void]($Raw.tokens.access_token = $AccessToken)
+    [void]($Raw.tokens.refresh_token = $RefreshToken)
+    if ($IdToken) { [void]($Raw.tokens.id_token = $IdToken) }
+    $lastRefresh = (Get-Date).ToUniversalTime().ToString('o')
+    if ($Raw.PSObject.Properties['last_refresh']) { $Raw.last_refresh = $lastRefresh }
+    else { Add-Member -InputObject $Raw -NotePropertyName last_refresh -NotePropertyValue $lastRefresh -Force }
+    return $Raw
+}
+
 function Save-CodexAuth {
-    param([string]$Path, [string]$AccessToken, [string]$RefreshToken, [string]$IdToken)
+    param($Auth, [string]$Path, [string]$AccessToken, [string]$RefreshToken, [string]$IdToken)
+    if (-not $Path -and $Auth) { $Path = [string]$Auth.Path }
+    if (-not $Path) { throw 'Codex credential path is missing' }
+    if (-not $Auth -or -not $Auth.AccountId) { throw 'Codex credential is missing an account id' }
     if ($Path -like '*.snapshot') {
-        $accountId = [string](Read-SecureSnapshot -Path $Path).tokens.account_id
-        if (-not $accountId) { throw 'Codex 受保护凭据缺少 account_id' }
-        $raw = Update-SecureSnapshot -Provider codex -AccountId $accountId -Update {
+        $raw = Update-SecureSnapshot -Provider codex -AccountId $Auth.AccountId -Update {
             param($current)
-            if (-not $current.tokens) { throw 'Codex 受保护凭据缺少 tokens' }
-            [void]($current.tokens.access_token = $AccessToken)
-            [void]($current.tokens.refresh_token = $RefreshToken)
-            if ($IdToken) { [void]($current.tokens.id_token = $IdToken) }
-            [void]($current.last_refresh = (Get-Date).ToUniversalTime().ToString('o'))
-            return $current
+            $currentAuth = Convert-CodexRawAuth -Raw $current -Path $Path
+            if (-not $currentAuth) { throw 'Codex 受保护凭据缺少 account_id' }
+            Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.Refresh
+            return (Set-CodexAuthFields -Raw $current -AccessToken $AccessToken -RefreshToken $RefreshToken -IdToken $IdToken)
         }
-        return
-    }
-    Invoke-SecureSnapshotFileLock -Path $Path -Action {
-        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
-        $raw.tokens.access_token = $AccessToken
-        $raw.tokens.refresh_token = $RefreshToken
-        if ($IdToken) { $raw.tokens.id_token = $IdToken }
-        $raw.last_refresh = (Get-Date).ToUniversalTime().ToString('o')
-        $json = $raw | ConvertTo-Json -Depth 8
-        $tmp = "{0}.{1}.tmp" -f $Path, ([guid]::NewGuid().ToString('n'))
+    } else {
         try {
-            [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
-            Move-SecureSnapshotFile -Source $tmp -Destination $Path
-        } finally {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            $raw = Update-JsonFile -Path $Path -Update {
+                param($current)
+                $currentAuth = Convert-CodexRawAuth -Raw $current -Path $Path
+                if (-not $currentAuth) { throw 'Codex 登录文件缺少 account_id' }
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.Refresh
+                return (Set-CodexAuthFields -Raw $current -AccessToken $AccessToken -RefreshToken $RefreshToken -IdToken $IdToken)
+            }
+        } catch {
+            if (-not (Test-CredentialAccountChanged $_) -and -not (Test-CredentialStale $_)) { throw }
+            if (Test-CredentialStale $_) {
+                Write-WidgetLog ('codex active credential is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+                return
+            }
+            $snapPath = Get-SnapshotPath $Auth.AccountId
+            if (Test-Path -LiteralPath $snapPath) {
+                $raw = Update-SecureSnapshot -Provider codex -AccountId $Auth.AccountId -Update {
+                    param($current)
+                    $currentAuth = Convert-CodexRawAuth -Raw $current -Path $snapPath
+                    if (-not $currentAuth) { throw 'Codex 受保护凭据缺少 account_id' }
+                    Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.Refresh
+                    return (Set-CodexAuthFields -Raw $current -AccessToken $AccessToken -RefreshToken $RefreshToken -IdToken $IdToken)
+                }
+            } else {
+                $raw = Set-CodexAuthFields -Raw $Auth.Raw -AccessToken $AccessToken -RefreshToken $RefreshToken -IdToken $IdToken
+                [void](Write-SecureSnapshot -Provider codex -AccountId $Auth.AccountId -Value $raw)
+            }
+            $Auth.Path = $snapPath
+            $Auth.Source = 'snapshot'
+            Write-WidgetLog ('codex active credential changed; refreshed result stored in account snapshot {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
         }
     }
+    $Auth.Raw = $raw
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $AccessToken -RefreshToken $RefreshToken -AccountId $Auth.AccountId)
 }
 
 function Update-CodexToken {
@@ -949,7 +1260,7 @@ function Update-CodexToken {
     if (-not $resp.access_token) { throw '刷新令牌失败，请重新登录该账号' }
     $newRefresh = if ($resp.refresh_token) { [string]$resp.refresh_token } else { $Auth.Refresh }
     $newId = if ($resp.id_token) { [string]$resp.id_token } else { $null }
-    Save-CodexAuth -Path $Auth.Path -AccessToken $resp.access_token -RefreshToken $newRefresh -IdToken $newId
+    Save-CodexAuth -Auth $Auth -AccessToken $resp.access_token -RefreshToken $newRefresh -IdToken $newId
     $Auth.Token = [string]$resp.access_token
     $Auth.Refresh = $newRefresh
     Write-WidgetLog ("codex token refreshed for {0}" -f (Get-AccountLabel $Auth))
@@ -960,11 +1271,13 @@ function Sync-CodexAuthFromDisk {
     param($Auth)
     $fresh = Read-CodexAuth -Path $Auth.Path
     if (-not $fresh) { return $false }
+    if ([string]$fresh.AccountId -ne [string]$Auth.AccountId) { return $false }
     $changed = ($fresh.Token -ne $Auth.Token)
     $Auth.Token = $fresh.Token
     $Auth.Refresh = $fresh.Refresh
     if ($fresh.AccountId) { $Auth.AccountId = $fresh.AccountId }
     if ($fresh.Email) { $Auth.Email = $fresh.Email }
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.Token -RefreshToken $Auth.Refresh -AccountId $Auth.AccountId)
     return $changed
 }
 
@@ -1081,17 +1394,53 @@ function Test-CommandCodeCredExists {
 }
 
 function Read-CommandCodeAuth {
-    if (-not (Test-Path -LiteralPath $script:CommandCodeAuthPath)) {
+    param([string]$Path = $script:CommandCodeAuthPath)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
         throw '未找到 ~/.commandcode/auth.json，请先安装 Command Code 并登录'
     }
-    $raw = Get-Content -LiteralPath $script:CommandCodeAuthPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if (-not $raw.apiKey) { throw 'auth.json 缺少 apiKey，请重新登录' }
-    return [pscustomobject]@{
-        ApiKey   = [string]$raw.apiKey
-        UserId   = [string]$raw.userId
-        UserName = [string]$raw.userName
-        KeyName  = [string]$raw.keyName
+    if ($Path -like '*.snapshot') {
+        $raw = Read-SecureSnapshot -Path $Path
+        $source = 'snapshot'
+    } else {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        $source = 'file'
     }
+    if (-not $raw.apiKey) { throw 'auth.json 缺少 apiKey，请重新登录' }
+    $accountId = ([string]$raw.userId).Trim().ToLowerInvariant()
+    if (-not $accountId) { $accountId = 'key:' + (Get-AccountFingerprint -AccountId ([string]$raw.apiKey) -Prefix 'tok') }
+    return [pscustomobject]@{
+        ApiKey    = [string]$raw.apiKey
+        UserId    = [string]$raw.userId
+        UserName  = [string]$raw.userName
+        KeyName   = [string]$raw.keyName
+        AccountId = $accountId
+        Path      = $Path
+        Source    = $source
+        Raw       = $raw
+    }
+}
+
+function Get-CommandCodeAccounts {
+    $active = $null
+    try { if (Test-CommandCodeCredExists) { $active = Read-CommandCodeAuth } } catch { $active = $null }
+    return @(Get-MergedProviderAccounts -Provider commandcode -Active $active -ReadPath {
+        param($Path)
+        Read-CommandCodeAuth -Path $Path
+    })
+}
+
+function Sync-ActiveCommandCodeSnapshot {
+    if (-not (Test-CommandCodeCredExists)) { return }
+    $active = $null
+    try { $active = Read-CommandCodeAuth } catch { return }
+    if (-not $active -or -not $active.AccountId -or -not $active.Raw) { return }
+    [void](Write-SecureSnapshot -Provider commandcode -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentCommandCodeAccount {
+    $active = $null
+    try { if (Test-CommandCodeCredExists) { $active = Read-CommandCodeAuth } } catch { }
+    return (Add-CurrentSnapshotAccount -Provider commandcode -Auth $active -Name $(if ($active) { Get-ProviderRowName $active 'CommandCode' 'Command Code' } else { $null }))
 }
 
 function Get-CommandCodeAuthHeaders {
@@ -1120,7 +1469,8 @@ function Get-CommandCodeOrgId {
 }
 
 function Get-CommandCodeUsageSnapshot {
-    $auth = Read-CommandCodeAuth
+    param($Auth)
+    $auth = if ($Auth) { $Auth } else { Read-CommandCodeAuth }
     $orgId = Get-CommandCodeOrgId $auth
     $path = '/alpha/billing/credits'
     if ($orgId) { $path += '?orgId=' + [uri]::EscapeDataString($orgId) }
@@ -1129,7 +1479,8 @@ function Get-CommandCodeUsageSnapshot {
 }
 
 function Get-CommandCodeRowData {
-    $u = Get-CommandCodeUsageSnapshot
+    param($Auth, [string]$Name)
+    $u = Get-CommandCodeUsageSnapshot -Auth $Auth
     $details = @()
     if ($u.FiveHour) { $details += (T 'row.window5hPercent' @($u.FiveHour.Percent)) }
     if ($u.Weekly)   { $details += (T 'row.windowWeekPercent' @($u.Weekly.Percent)) }
@@ -1174,11 +1525,17 @@ function Get-OpenRouterRowData {
     if ($null -eq $percent) { $percent = 0.0 }
     Write-WidgetLog ("usage openrouter {0} ok" -f $percent)
     [pscustomobject]@{
-        Percent = $percent
-        Detail  = ($details -join ' · ')
-        Tip     = (T 'row.codexTip' @($display, (Format-PercentText $percent)))
-        Reset   = $null
-        ResetAt = $null
+        Percent    = $percent
+        Detail     = ($details -join ' · ')
+        Tip        = (T 'row.codexTip' @($display, (Format-PercentText $percent)))
+        Reset      = $null
+        ResetAt    = $null
+        MetricType = $(if ($usage.IsUnlimited) { 'unlimited' } else { 'percent' })
+        Value      = $usage.Spent
+        Unit       = 'USD'
+        Window     = [string]$usage.Period
+        Used       = $usage.Spent
+        Limit      = $usage.Limit
         FetchedAt = $usage.FetchedAt
     }
 }
@@ -1205,12 +1562,269 @@ function Get-DeepSeekRowData {
     }
     Write-WidgetLog ("usage deepseek {0} ok" -f $usage.Display)
     [pscustomobject]@{
-        Percent   = 0.0
-        Display   = $usage.Display
+        Percent    = 0.0
+        Display    = $usage.Display
+        Detail     = ($details -join ' · ')
+        Tip        = (T 'row.balanceTip' @($display, $usage.Display))
+        Reset      = $null
+        ResetAt    = $null
+        MetricType = 'balance'
+        Value      = $usage.Total
+        Unit       = $usage.Currency
+        Window     = 'balance'
+        FetchedAt  = $usage.FetchedAt
+    }
+}
+
+# --- Cline ---
+
+function Test-ClineCredExists {
+    try {
+        return (@(Get-ClineAccounts).Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+function Read-ClineAuth {
+    param([string]$Path = $script:ClineProvidersPath)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { throw 'missing-credential' }
+    if ($Path -like '*.snapshot') {
+        $raw = Read-SecureSnapshot -Path $Path
+    } else {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+    }
+    return (Convert-ClineRawAuth -Raw $raw -Path $Path)
+}
+
+function Set-ClineAuthFields {
+    param($RawAuth, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
+    if (-not $RawAuth) { throw 'Cline 凭据缺少 auth' }
+    $RawAuth.accessToken = ConvertTo-ClineStoredAccessToken $AccessToken
+    if ($RefreshToken) { $RawAuth.refreshToken = $RefreshToken }
+    if ($ExpiresAt) {
+        $epoch = [datetime]::SpecifyKind([datetime]'1970-01-01', 'Utc')
+        $RawAuth.expiresAt = [int64](($ExpiresAt.ToUniversalTime() - $epoch).TotalMilliseconds)
+    }
+    return $RawAuth
+}
+
+function Save-ClineSnapshot {
+    param($Auth)
+    if (-not $Auth -or -not $Auth.AccountId) { throw 'Cline 受保护凭据缺少 accountId' }
+    $path = Get-ClineSnapshotPath $Auth.AccountId
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $updated = Update-SecureSnapshot -Provider cline -AccountId $Auth.AccountId -Update {
+                param($current)
+                $currentAuth = Convert-ClineRawAuth -Raw $current -Path $path
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+                $entry = Get-ClineAuthEntry $current
+                if (-not $entry -or -not $entry.Auth) { throw 'Cline 受保护凭据缺少 auth' }
+                [void](Set-ClineAuthFields -RawAuth $entry.Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+                return $current
+            }
+        } catch {
+            if (Test-CredentialStale $_) {
+                Write-WidgetLog ('cline snapshot is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+                return $Auth.Raw
+            }
+            throw
+        }
+    } else {
+        $entry = Get-ClineAuthEntry $Auth.Raw
+        if (-not $entry -or -not $entry.Auth) { throw 'Cline 凭据缺少 auth' }
+        [void](Set-ClineAuthFields -RawAuth $entry.Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+        $updated = $Auth.Raw
+        [void](Write-SecureSnapshot -Provider cline -AccountId $Auth.AccountId -Value $updated)
+    }
+    $Auth.Raw = $updated
+    $entry = Get-ClineAuthEntry $updated
+    $Auth.RawProvider = $entry.Provider
+    $Auth.RawSettings = $entry.Settings
+    $Auth.RawAuth = $entry.Auth
+    return $updated
+}
+
+function Save-ClineAuth {
+    param($Auth)
+    if (-not $Auth -or -not $Auth.Raw -or -not $Auth.RawAuth) { return }
+    if ($Auth.Path -like '*.snapshot') {
+        [void](Save-ClineSnapshot $Auth)
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
+        return
+    }
+    $path = [string]$Auth.Path
+    if (-not $path) { $path = $script:ClineProvidersPath }
+    try {
+        $updated = Update-JsonFile -Path $path -Update {
+                param($current)
+                $currentAuth = Convert-ClineRawAuth -Raw $current -Path $path
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+            $entry = Get-ClineAuthEntry $current
+            if (-not $entry -or -not $entry.Auth) { throw 'Cline 登录文件缺少 auth' }
+            [void](Set-ClineAuthFields -RawAuth $entry.Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+            return $current
+        }
+    } catch {
+        if (-not (Test-CredentialAccountChanged $_) -and -not (Test-CredentialStale $_)) { throw }
+        if (Test-CredentialStale $_) {
+            Write-WidgetLog ('cline active credential is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+            return
+        }
+        [void](Set-ClineAuthFields -RawAuth $Auth.RawAuth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+        $Auth.Path = Get-ClineSnapshotPath $Auth.AccountId
+        $Auth.Source = 'snapshot'
+        [void](Save-ClineSnapshot $Auth)
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
+        Write-WidgetLog ('cline active credential changed; refreshed result stored in account snapshot {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+        return
+    }
+    $Auth.Raw = $updated
+    $entry = Get-ClineAuthEntry $updated
+    $Auth.RawProvider = $entry.Provider
+    $Auth.RawSettings = $entry.Settings
+    $Auth.RawAuth = $entry.Auth
+    [void](Save-ClineSnapshot $Auth)
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
+}
+
+function Get-ClineRowId {
+    param($Auth)
+    $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.AccountId) -Prefix 'acct'
+    if ($fingerprint) { return ('cline-{0}' -f $fingerprint) }
+    return 'cline-unknown'
+}
+
+function Get-ClineRowName {
+    param($Auth)
+    $fingerprint = Get-AccountFingerprint -AccountId ([string]$Auth.AccountId) -Prefix 'Cline'
+    if ($fingerprint) { return $fingerprint }
+    return $script:ClineDisplayName
+}
+
+function Get-ClineSnapshotPath {
+    param([string]$AccountId)
+    return (Get-SecureSnapshotPath -Provider cline -AccountId $AccountId)
+}
+
+function Get-ClineAccounts {
+    $byId = [ordered]@{}
+    $active = $null
+    try { $active = Read-ClineAuth -Path $script:ClineProvidersPath } catch { }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots @(
+            foreach ($f in @(Get-SecureSnapshotFiles -Provider cline)) {
+                try { Read-ClineAuth -Path $f.FullName } catch { }
+            }
+        )
+        if ($matched) { $active.AccountId = $matched }
+        $key = if ($active.AccountId) { [string]$active.AccountId } else { 'unknown' }
+        $byId[$key] = $active
+    }
+    foreach ($f in @(Get-SecureSnapshotFiles -Provider cline)) {
+        $snap = $null
+        try { $snap = Read-ClineAuth -Path $f.FullName } catch { }
+        if (-not $snap) { continue }
+        $key = if ($snap.AccountId) { [string]$snap.AccountId } else { 'unknown' }
+        if (-not $byId.Contains($key)) { $byId[$key] = $snap }
+    }
+    return @($byId.Values)
+}
+
+function Add-CurrentClineAccount {
+    $active = $null
+    try { $active = Read-ClineAuth -Path $script:ClineProvidersPath } catch { }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots @(
+            foreach ($f in @(Get-SecureSnapshotFiles -Provider cline)) {
+                try { Read-ClineAuth -Path $f.FullName } catch { }
+            }
+        )
+        if ($matched) { $active.AccountId = $matched }
+    }
+    if (-not $active -or -not $active.AccountId) {
+        Write-Host (T 'cli.clineAuthMissing')
+        return [pscustomobject]@{ Status = 'missing'; Name = $null; Path = $null }
+    }
+    $name = Get-ClineRowName $active
+    $snapPath = Get-ClineSnapshotPath $active.AccountId
+    $existed = Test-Path -LiteralPath $snapPath
+    [void](Write-SecureSnapshot -Provider cline -AccountId $active.AccountId -Value $active.Raw)
+    $status = if ($existed) { 'same-account' } else { 'registered' }
+    Write-Host (T 'cli.registered' @($name, $snapPath))
+    Write-WidgetLog ("snapshot cline {0} status={1}" -f $name, $status)
+    return [pscustomobject]@{ Status = $status; Name = $name; Path = $snapPath }
+}
+
+function Sync-ActiveClineSnapshot {
+    param($Accounts)
+    foreach ($acct in @($Accounts)) {
+        if ($acct.Path -eq $script:ClineProvidersPath) {
+            $snap = Get-ClineSnapshotPath $acct.AccountId
+            if (Test-Path -LiteralPath $snap) {
+                try { [void](Save-ClineSnapshot $acct) } catch { }
+            }
+        }
+    }
+}
+
+function Update-ClineToken {
+    param($Auth)
+    if (-not $Auth) { throw 'missing-credential' }
+    $needsRefresh = (-not $Auth.ExpiresAt) -or ($Auth.ExpiresAt.ToUniversalTime() -le [datetime]::UtcNow.AddMinutes(5))
+    if (-not $needsRefresh) { return $Auth }
+    if (-not $Auth.RefreshToken) { throw 'token-refresh' }
+    $body = @{ refreshToken = $Auth.RefreshToken; grantType = 'refresh_token' } | ConvertTo-Json -Compress
+    $resp = Invoke-WidgetRest -Method Post -Uri $script:ClineRefreshUrl -Body $body -ContentType 'application/json'
+    $data = $null
+    try { $data = $resp.data } catch { }
+    if (-not $resp -or -not $resp.success -or -not $data -or -not $data.accessToken) { throw 'token-refresh' }
+    $Auth.AccessToken = ConvertTo-ClineStoredAccessToken ([string]$data.accessToken)
+    if ($data.refreshToken) { $Auth.RefreshToken = [string]$data.refreshToken }
+    $expiresAt = Convert-ClineAuthExpiry $data.expiresAt
+    if ($expiresAt) { $Auth.ExpiresAt = $expiresAt }
+    try { Save-ClineAuth $Auth } catch {
+        Write-WidgetLog ('cline save token ' + (Convert-SafeLogText $_.Exception.Message 120))
+        throw
+    }
+    return $Auth
+}
+
+function Get-ClineAuthHeaders {
+    param($Auth)
+    $token = ConvertTo-ClineStoredAccessToken $Auth.AccessToken
+    return @{
+        Authorization = "Bearer $token"
+        Accept        = 'application/json'
+        'User-Agent'  = 'cline/3.0.62'
+    }
+}
+
+function Get-ClineUsageSnapshot {
+    param($Auth)
+    $auth = Update-ClineToken $Auth
+    $data = Invoke-WidgetRest -Method Get -Uri $script:ClineUsageUrl -Headers (Get-ClineAuthHeaders $auth)
+    return (Convert-ClineUsageLimits $data)
+}
+
+function Get-ClineRowData {
+    param($Auth, [string]$Name)
+    $auth = if ($Auth) { $Auth } else { Read-ClineAuth }
+    $usage = Get-ClineUsageSnapshot -Auth $auth
+    $details = @()
+    if ($usage.FiveHour) { $details += (T 'row.window5hPercent' @($usage.FiveHour.Percent)) }
+    if ($usage.Weekly)   { $details += (T 'row.windowWeekPercent' @($usage.Weekly.Percent)) }
+    if ($usage.Monthly)  { $details += (T 'row.windowMonthPercent' @($usage.Monthly.Percent)) }
+    $reset = Format-ResetText $usage.ResetAt
+    if ($reset) { $details += $reset }
+    Write-WidgetLog ("usage cline {0} ok" -f $usage.Percent)
+    [pscustomobject]@{
+        Percent   = $usage.Percent
         Detail    = ($details -join ' · ')
-        Tip       = (T 'row.balanceTip' @($display, $usage.Display))
-        Reset     = $null
-        ResetAt   = $null
+        Tip       = (T 'row.codexTip' @($script:ClineDisplayName, (Format-PercentText $usage.Percent)))
+        Reset     = $(if ($usage.ResetAt) { Format-ResetTime $usage.ResetAt } else { $null })
+        ResetAt   = $(if ($usage.ResetAt) { ConvertTo-ResetStamp $usage.ResetAt } else { $null })
         FetchedAt = $usage.FetchedAt
     }
 }
@@ -1224,33 +1838,147 @@ function Test-ClaudeCredExists {
 function Read-ClaudeAuthFromFile {
     param([string]$Path = $script:ClaudeCredPath)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { throw 'missing-credential' }
-    $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
-    return (Convert-ClaudeRawAuth $raw)
+    if ($Path -like '*.snapshot') {
+        $raw = Read-SecureSnapshot -Path $Path
+        $source = 'snapshot'
+    } else {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        $source = 'file'
+    }
+    $auth = Convert-ClaudeRawAuth $raw
+    $auth | Add-Member -NotePropertyName Path -NotePropertyValue $Path -Force
+    $auth | Add-Member -NotePropertyName Source -NotePropertyValue $source -Force
+    return $auth
+}
+
+function Get-ClaudeSnapshotAuths {
+    $list = @()
+    foreach ($file in @(Get-SecureSnapshotFiles -Provider claude)) {
+        try { $list += Read-ClaudeAuthFromFile -Path $file.FullName } catch { }
+    }
+    return @($list)
+}
+
+function Get-ClaudeAccounts {
+    $active = $null
+    try { if (Test-ClaudeCredExists) { $active = Read-ClaudeAuthFromFile } } catch { $active = $null }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-ClaudeSnapshotAuths)
+        if ($matched) { $active.AccountId = $matched }
+    }
+    return @(Get-MergedProviderAccounts -Provider claude -Active $active -ReadPath {
+        param($Path)
+        Read-ClaudeAuthFromFile -Path $Path
+    })
+}
+
+function Sync-ActiveClaudeSnapshot {
+    if (-not (Test-ClaudeCredExists)) { return }
+    $active = $null
+    try { $active = Read-ClaudeAuthFromFile } catch { return }
+    if (-not $active -or -not $active.Raw) { return }
+    $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-ClaudeSnapshotAuths)
+    if ($matched) { $active.AccountId = $matched }
+    if (-not $active.AccountId) { return }
+    [void](Write-SecureSnapshot -Provider claude -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentClaudeAccount {
+    $active = $null
+    try { if (Test-ClaudeCredExists) { $active = Read-ClaudeAuthFromFile } } catch { }
+    if ($active) {
+        $matched = Find-MatchingSnapshotAccount -Active $active -Snapshots (Get-ClaudeSnapshotAuths)
+        if ($matched) { $active.AccountId = $matched }
+    }
+    return (Add-CurrentSnapshotAccount -Provider claude -Auth $active -Name $(if ($active) { Get-ProviderRowName $active 'Claude' 'Claude' } else { $null }))
+}
+
+function Set-ClaudeAuthFields {
+    param($Raw, [string]$AccessToken, [string]$RefreshToken, [datetime]$ExpiresAt)
+    $oauth = $null
+    if ($Raw.PSObject.Properties['claudeAiOauth']) { $oauth = $Raw.claudeAiOauth }
+    if (-not $oauth -and $Raw.PSObject.Properties['oauth']) { $oauth = $Raw.oauth }
+    if (-not $oauth) { throw 'missing-credential' }
+    if ($oauth.PSObject.Properties['accessToken']) { $oauth.accessToken = $AccessToken }
+    elseif ($oauth.PSObject.Properties['access_token']) { $oauth.access_token = $AccessToken }
+    else { Add-Member -InputObject $oauth -NotePropertyName accessToken -NotePropertyValue $AccessToken -Force }
+    if ($RefreshToken) {
+        if ($oauth.PSObject.Properties['refreshToken']) { $oauth.refreshToken = $RefreshToken }
+        elseif ($oauth.PSObject.Properties['refresh_token']) { $oauth.refresh_token = $RefreshToken }
+        else { Add-Member -InputObject $oauth -NotePropertyName refreshToken -NotePropertyValue $RefreshToken -Force }
+    }
+    if ($ExpiresAt) {
+        $epoch = [datetime]::SpecifyKind([datetime]'1970-01-01', 'Utc')
+        $ms = [int64]($ExpiresAt.ToUniversalTime() - $epoch).TotalMilliseconds
+        if ($oauth.PSObject.Properties['expiresAt']) { $oauth.expiresAt = $ms }
+        elseif ($oauth.PSObject.Properties['expires_at']) { $oauth.expires_at = $ms }
+        else { Add-Member -InputObject $oauth -NotePropertyName expiresAt -NotePropertyValue $ms -Force }
+    }
+    return $Raw
+}
+
+function Save-ClaudeSnapshot {
+    param($Auth)
+    if (-not $Auth -or -not $Auth.AccountId) { throw 'Claude snapshot is missing an account id' }
+    $path = Get-SecureSnapshotPath -Provider claude -AccountId $Auth.AccountId
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $updated = Update-SecureSnapshot -Provider claude -AccountId $Auth.AccountId -Update {
+                param($current)
+                $currentAuth = Convert-ClaudeRawAuth -Raw $current
+                Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+                return (Set-ClaudeAuthFields -Raw $current -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+            }
+        } catch {
+            if (Test-CredentialStale $_) {
+                Write-WidgetLog ('claude snapshot is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+                return $Auth.Raw
+            }
+            throw
+        }
+    } else {
+        $updated = Set-ClaudeAuthFields -Raw $Auth.Raw -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt
+        [void](Write-SecureSnapshot -Provider claude -AccountId $Auth.AccountId -Value $updated)
+    }
+    $Auth.Raw = $updated
+    return $updated
 }
 
 function Save-ClaudeAuth {
-    param($Auth, [string]$Path = $script:ClaudeCredPath)
+    param($Auth, [string]$Path)
+    if (-not $Path -and $Auth) { $Path = [string]$Auth.Path }
+    if (-not $Path) { $Path = $script:ClaudeCredPath }
     if (-not $Auth -or -not $Path) { return }
-    $raw = $Auth.Raw
-    if (-not $raw) { return }
-    $oauth = $null
-    if ($raw.PSObject.Properties['claudeAiOauth']) { $oauth = $raw.claudeAiOauth }
-    if (-not $oauth -and $raw.PSObject.Properties['oauth']) { $oauth = $raw.oauth }
-    if ($oauth) {
-        $oauth.accessToken = $Auth.AccessToken
-        if ($Auth.RefreshToken) { $oauth.refreshToken = $Auth.RefreshToken }
-        if ($Auth.ExpiresAt) {
-            $epoch = [datetime]::SpecifyKind([datetime]'1970-01-01', 'Utc')
-            $ms = [int64]($Auth.ExpiresAt.ToUniversalTime() - $epoch).TotalMilliseconds
-            try { $oauth.expiresAt = $ms } catch { }
+    if ($Path -like '*.snapshot') {
+        [void](Save-ClaudeSnapshot $Auth)
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
+        return
+    }
+    if (-not $Auth.Raw) { return }
+    try {
+        $updated = Update-JsonFile -Path $Path -Update {
+            param($current)
+            $currentAuth = Convert-ClaudeRawAuth -Raw $current
+                    Assert-CredentialIdentity -ExpectedAccountId $Auth.AccountId -ActualAccountId $currentAuth.AccountId -ExpectedRefreshToken $Auth.OriginalRefreshToken -ActualRefreshToken $currentAuth.RefreshToken
+            return (Set-ClaudeAuthFields -Raw $current -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
         }
+    } catch {
+        if (-not (Test-CredentialAccountChanged $_) -and -not (Test-CredentialStale $_)) { throw }
+        if (Test-CredentialStale $_) {
+            Write-WidgetLog ('claude active credential is newer; stale refresh discarded for {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+            return
+        }
+        [void](Set-ClaudeAuthFields -Raw $Auth.Raw -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -ExpiresAt $Auth.ExpiresAt)
+        $Auth.Path = Get-SecureSnapshotPath -Provider claude -AccountId $Auth.AccountId
+        $Auth.Source = 'snapshot'
+        [void](Save-ClaudeSnapshot $Auth)
+        [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
+        Write-WidgetLog ('claude active credential changed; refreshed result stored in account snapshot {0}' -f (Get-AccountFingerprint -AccountId $Auth.AccountId -Prefix 'acct'))
+        return
     }
-    $json = $raw | ConvertTo-Json -Depth 10
-    Invoke-SecureSnapshotFileLock -Path $Path -Action {
-        $tmp = "$Path.tmp"
-        [IO.File]::WriteAllText($tmp, ($json.TrimEnd("`r", "`n") + "`n"), [Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $tmp -Destination $Path -Force
-    }
+    $Auth.Raw = $updated
+    [void](Save-ClaudeSnapshot $Auth)
+    [void](Set-CredentialVersion -Auth $Auth -AccessToken $Auth.AccessToken -RefreshToken $Auth.RefreshToken -AccountId $Auth.AccountId)
 }
 
 function Update-ClaudeToken {
@@ -1273,7 +2001,10 @@ function Update-ClaudeToken {
     if ($newRefresh) { $Auth.RefreshToken = $newRefresh }
     $expiresIn = $resp.expires_in
     if (Test-FiniteNumber $expiresIn) { $Auth.ExpiresAt = [datetime]::UtcNow.AddSeconds([double]$expiresIn) }
-    try { Save-ClaudeAuth $Auth } catch { Write-WidgetLog ('claude save token ' + (Convert-SafeLogText $_.Exception.Message 120)) }
+    try { Save-ClaudeAuth $Auth } catch {
+        Write-WidgetLog ('claude save token ' + (Convert-SafeLogText $_.Exception.Message 120))
+        throw
+    }
     return $Auth
 }
 
@@ -1346,10 +2077,64 @@ function Read-CursorAuth {
         $token = Get-CursorSqliteTextValue -Bytes $bytes -Key 'cursorAuth/accessToken'
         if (-not $token) { throw 'missing-credential' }
         $script:CursorTokenCache = @{ Stamp = $stamp; Token = $token }
-        return [pscustomobject]@{ AccessToken = $token }
+        $accountId = Get-TokenEmail $token
+        if ($accountId) { $accountId = $accountId.Trim().ToLowerInvariant() }
+        if (-not $accountId) { $accountId = 'token:' + (Get-AccountFingerprint -AccountId $token -Prefix 'tok') }
+        return [pscustomobject]@{
+            AccessToken = $token
+            AccountId   = $accountId
+            Source      = 'live'
+            Path        = $path
+            Raw         = [pscustomobject]@{ accessToken = $token; accountId = $accountId }
+        }
     } finally {
         try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch { }
     }
+}
+
+function Read-CursorSnapshot {
+    param([string]$Path)
+    $raw = Read-SecureSnapshot -Path $Path
+    $token = [string]$raw.accessToken
+    if (-not $token) { throw 'missing-credential' }
+    $accountId = [string]$raw.accountId
+    if (-not $accountId) {
+        $accountId = Get-TokenEmail $token
+        if ($accountId) { $accountId = $accountId.Trim().ToLowerInvariant() }
+    }
+    if (-not $accountId) { $accountId = 'token:' + (Get-AccountFingerprint -AccountId $token -Prefix 'tok') }
+    return [pscustomobject]@{
+        AccessToken = $token
+        AccountId   = $accountId
+        Source      = 'snapshot'
+        Path        = $Path
+        Raw         = $raw
+    }
+}
+
+function Get-CursorAccounts {
+    $active = $null
+    try { $active = Read-CursorAuth } catch { $active = $null }
+    if ($active -and $active.AccountId -and $active.Raw) {
+        try { [void](Write-SecureSnapshot -Provider cursor -AccountId $active.AccountId -Value $active.Raw) } catch { }
+    }
+    return @(Get-MergedProviderAccounts -Provider cursor -Active $active -ReadPath {
+        param($Path)
+        Read-CursorSnapshot -Path $Path
+    })
+}
+
+function Sync-ActiveCursorSnapshot {
+    $active = $null
+    try { if (Test-CursorCredExists) { $active = Read-CursorAuth } } catch { return }
+    if (-not $active -or -not $active.AccountId -or -not $active.Raw) { return }
+    [void](Write-SecureSnapshot -Provider cursor -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentCursorAccount {
+    $active = $null
+    try { if (Test-CursorCredExists) { $active = Read-CursorAuth } } catch { }
+    return (Add-CurrentSnapshotAccount -Provider cursor -Auth $active -Name $(if ($active) { Get-ProviderRowName $active 'Cursor' 'Cursor' } else { $null }))
 }
 
 function Test-CursorCredExists {
@@ -1433,6 +2218,59 @@ function Test-ZaiCredExists {
     return [bool](Resolve-ZaiCredential)
 }
 
+function Read-ZaiSnapshot {
+    param([string]$Path)
+    $raw = Read-SecureSnapshot -Path $Path
+    $key = [string]$raw.apiKey
+    if (-not $key) { throw 'missing-credential' }
+    $accountId = [string]$raw.accountId
+    if (-not $accountId) { $accountId = 'key:' + (Get-AccountFingerprint -AccountId $key -Prefix 'tok') }
+    $baseUrl = [string]$raw.baseUrl
+    if (-not $baseUrl) { $baseUrl = $script:ZaiApiBaseUrl }
+    return [pscustomobject]@{
+        ApiKey    = $key
+        BaseUrl   = $baseUrl
+        AccountId = $accountId
+        Source    = 'snapshot'
+        Path      = $Path
+        Raw       = $raw
+    }
+}
+
+function Get-ZaiActiveAuth {
+    $credential = Resolve-ZaiCredential
+    if (-not $credential -or -not $credential.Key) { return $null }
+    $key = [string]$credential.Key
+    $accountId = 'key:' + (Get-AccountFingerprint -AccountId $key -Prefix 'tok')
+    return [pscustomobject]@{
+        ApiKey    = $key
+        BaseUrl   = [string]$credential.BaseUrl
+        AccountId = $accountId
+        Source    = 'live'
+        Raw       = [pscustomobject]@{ apiKey = $key; baseUrl = [string]$credential.BaseUrl; accountId = $accountId }
+    }
+}
+
+function Get-ZaiAccounts {
+    return @(Get-MergedProviderAccounts -Provider glm -Active (Get-ZaiActiveAuth) -ReadPath {
+        param($Path)
+        Read-ZaiSnapshot -Path $Path
+    })
+}
+
+function Sync-ActiveZaiSnapshot {
+    $active = Get-ZaiActiveAuth
+    if (-not $active -or -not $active.AccountId -or -not $active.Raw) { return }
+    [void](Write-SecureSnapshot -Provider glm -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentZaiAccount {
+    return (Add-CurrentSnapshotAccount -Provider glm -Auth (Get-ZaiActiveAuth) -Name $(
+        $active = Get-ZaiActiveAuth
+        if ($active) { Get-ProviderRowName $active 'GLM' 'GLM' } else { $null }
+    ))
+}
+
 function Get-ZaiAuthHeaders {
     param($Auth)
     return @{
@@ -1446,8 +2284,11 @@ function Get-ZaiAuthHeaders {
 function Get-ZaiUsageSnapshot {
     param($Auth)
     $credential = $null
-    if ($Auth) { $credential = @{ Key = [string]$Auth.ApiKey; BaseUrl = $script:ZaiApiBaseUrl } }
-    else { $credential = Resolve-ZaiCredential }
+    if ($Auth -and [string]$Auth.ApiKey) {
+        $baseUrl = [string]$Auth.BaseUrl
+        if (-not $baseUrl) { $baseUrl = $script:ZaiApiBaseUrl }
+        $credential = @{ Key = [string]$Auth.ApiKey; BaseUrl = $baseUrl }
+    } else { $credential = Resolve-ZaiCredential }
     if (-not $credential) { throw 'missing-credential' }
     $baseUrl = $credential.BaseUrl
     if ($env:ZAI_API_BASE) { $baseUrl = $env:ZAI_API_BASE.Trim().TrimEnd('/') }
@@ -1490,6 +2331,63 @@ function Read-CopilotTokenFromFile {
     return $token
 }
 
+function Get-CopilotAuthToken {
+    param($Auth)
+    if ($null -eq $Auth) { return (Get-CopilotToken) }
+    if ($Auth -is [string]) { return [string]$Auth }
+    if ($Auth.Token) { return [string]$Auth.Token }
+    if ($Auth.AccessToken) { return [string]$Auth.AccessToken }
+    return $null
+}
+
+function Convert-CopilotAuth {
+    param([string]$Token, [string]$Path, [string]$Source)
+    if (-not $Token) { throw 'missing-credential' }
+    $accountId = 'token:' + (Get-AccountFingerprint -AccountId $Token -Prefix 'tok')
+    return [pscustomobject]@{
+        Token       = $Token
+        AccessToken = $Token
+        AccountId   = $accountId
+        Path        = $Path
+        Source      = $Source
+        Raw         = [pscustomobject]@{ token = $Token; accountId = $accountId }
+    }
+}
+
+function Read-CopilotSnapshot {
+    param([string]$Path)
+    $raw = Read-SecureSnapshot -Path $Path
+    $token = [string]$raw.token
+    if (-not $token) { throw 'missing-credential' }
+    $auth = Convert-CopilotAuth -Token $token -Path $Path -Source 'snapshot'
+    if ($raw.accountId) { $auth.AccountId = [string]$raw.accountId }
+    return $auth
+}
+
+function Get-CopilotAccounts {
+    $active = $null
+    $token = Get-CopilotToken
+    if ($token) { $active = Convert-CopilotAuth -Token $token -Path 'live' -Source 'live' }
+    return @(Get-MergedProviderAccounts -Provider copilot -Active $active -ReadPath {
+        param($Path)
+        Read-CopilotSnapshot -Path $Path
+    })
+}
+
+function Sync-ActiveCopilotSnapshot {
+    $token = Get-CopilotToken
+    if (-not $token) { return }
+    $active = Convert-CopilotAuth -Token $token -Path 'live' -Source 'live'
+    [void](Write-SecureSnapshot -Provider copilot -AccountId $active.AccountId -Value $active.Raw)
+}
+
+function Add-CurrentCopilotAccount {
+    $active = $null
+    $token = Get-CopilotToken
+    if ($token) { $active = Convert-CopilotAuth -Token $token -Path 'live' -Source 'live' }
+    return (Add-CurrentSnapshotAccount -Provider copilot -Auth $active -Name $(if ($active) { Get-ProviderRowName $active 'Copilot' 'Copilot' } else { $null }))
+}
+
 function Get-CopilotToken {
     foreach ($path in @($script:CopilotHostsPath, $script:CopilotAppsPath, $script:CopilotOpencodeAuthPath)) {
         try {
@@ -1517,7 +2415,7 @@ function Get-CopilotAuthHeaders {
 
 function Get-CopilotUsageSnapshot {
     param($Auth)
-    $token = if ($Auth) { [string]$Auth } else { Get-CopilotToken }
+    $token = Get-CopilotAuthToken $Auth
     if (-not $token) { throw 'missing-credential' }
     $data = Invoke-WidgetRest -Method Get -Uri $script:CopilotUsageUrl -Headers (Get-CopilotAuthHeaders $token)
     $usage = Convert-CopilotQuota $data
@@ -1560,6 +2458,7 @@ function Get-DemoRowTable {
         [pscustomobject]@{ Id = 'demo-commandcode'; Kind = 'commandcode'; Name = $script:CommandCodeDisplayName; OpenUrl = $script:CommandCodeUsagePageUrl; Percent = 93.0; Detail = ((T 'row.window5hPercent' @(41)) + ' · ' + (T 'row.windowWeekPercent' @(93)) + ' · ' + (T 'reset.daysHours' @(3, 6))); TrendPct = @(41, 55, 68, 79, 86, 90, 93) }
         [pscustomobject]@{ Id = 'demo-openrouter'; Kind = 'openrouter'; Name = 'OpenRouter-3ad9f1c7'; OpenUrl = $script:OpenRouterUsagePageUrl; Percent = 12.5; Detail = (T 'row.limitUsage' @(12.5, 100, 12.5)); TrendPct = @(1.5, 3, 4.5, 6, 8, 10, 12.5) }
         [pscustomobject]@{ Id = 'demo-deepseek'; Kind = 'deepseek'; Name = $script:DeepSeekDisplayName; OpenUrl = $script:DeepSeekUsagePageUrl; Percent = 0.0; Display = '¥14.00'; Detail = ((T 'row.balanceToppedUp' @('¥12.40')) + ' · ' + (T 'row.balanceGranted' @('¥1.60'))); TrendPct = @(0, 0, 0, 0, 0, 0, 0) }
+        [pscustomobject]@{ Id = 'demo-cline'; Kind = 'cline'; Name = $script:ClineDisplayName; OpenUrl = $script:ClineUsagePageUrl; Percent = 64.0; Detail = ((T 'row.window5hPercent' @(8)) + ' · ' + (T 'row.windowWeekPercent' @(31)) + ' · ' + (T 'row.windowMonthPercent' @(64)) + ' · ' + (T 'reset.daysHours' @(6, 12))); TrendPct = @(4, 10, 18, 27, 39, 52, 64) }
         [pscustomobject]@{ Id = 'demo-claude'; Kind = 'claude'; Name = $script:ClaudeDisplayName; OpenUrl = $script:ClaudeUsagePageUrl; Percent = 37.0; Detail = ((T 'row.window5hPercent' @(11)) + ' · ' + (T 'row.windowWeekPercent' @(37)) + ' · ' + (T 'reset.daysHours' @(4, 8))); TrendPct = @(12, 18, 22, 27, 31, 34, 37) }
         [pscustomobject]@{ Id = 'demo-cursor'; Kind = 'cursor'; Name = $script:CursorDisplayName; OpenUrl = $script:CursorUsagePageUrl; Percent = 58.0; Detail = (T 'row.limitUsage' @(11.6, 20, 58)); TrendPct = @(20, 28, 35, 42, 48, 53, 58) }
         [pscustomobject]@{ Id = 'demo-glm'; Kind = 'glm'; Name = $script:ZaiDisplayName; OpenUrl = $script:ZaiUsagePageUrl; Percent = 22.0; Detail = ((T 'row.window5hPercent' @(8)) + ' · ' + (T 'row.windowWeekPercent' @(22)) + ' · ' + (T 'reset.hoursMinutes' @(3, 10))); TrendPct = @(4, 7, 10, 13, 16, 19, 22) }
@@ -1598,22 +2497,24 @@ function Get-ProviderRows {
             Auth    = $acct
         }
     }
-    if (Test-AntigravityCredExists) {
+    try { Sync-ActiveGeminiSnapshot } catch { Write-WidgetLog ("gemini snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-GeminiAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'gemini'
+            Id      = Get-GeminiRowId $acct
             Kind    = 'gemini'
-            Name    = 'Gemini'
+            Name    = Get-GeminiRowName $acct
             OpenUrl = $script:GeminiUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
-    if (Test-Path -LiteralPath $script:KimiCredPath) {
+    try { Sync-ActiveKimiSnapshot } catch { Write-WidgetLog ("kimi snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-KimiAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'kimi'
+            Id      = Get-ProviderRowId $acct 'kimi'
             Kind    = 'kimi'
-            Name    = 'Kimi'
+            Name    = Get-ProviderRowName $acct 'Kimi' 'Kimi'
             OpenUrl = $script:KimiUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
     foreach ($acct in @(Get-CodexAccounts)) {
@@ -1625,13 +2526,14 @@ function Get-ProviderRows {
             Auth    = $acct
         }
     }
-    if (Test-CommandCodeCredExists) {
+    try { Sync-ActiveCommandCodeSnapshot } catch { Write-WidgetLog ("commandcode snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-CommandCodeAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'commandcode'
+            Id      = Get-ProviderRowId $acct 'commandcode'
             Kind    = 'commandcode'
-            Name    = $script:CommandCodeDisplayName
+            Name    = Get-ProviderRowName $acct 'CommandCode' $script:CommandCodeDisplayName
             OpenUrl = $script:CommandCodeUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
     if (Test-ApiKeyCredExists -AuthPath $script:OpenRouterAuthPath -EnvironmentValue $env:OPENROUTER_API_KEY) {
@@ -1658,40 +2560,56 @@ function Get-ProviderRows {
             Auth    = $null
         }
     }
-    if (Test-ClaudeCredExists) {
+    if (Test-ClineCredExists) {
+        $clineAccounts = @(Get-ClineAccounts)
+        Sync-ActiveClineSnapshot $clineAccounts
+        foreach ($acct in $clineAccounts) {
+            $rows += [pscustomobject]@{
+                Id      = Get-ClineRowId $acct
+                Kind    = 'cline'
+                Name    = Get-ClineRowName $acct
+                OpenUrl = $script:ClineUsagePageUrl
+                Auth    = $acct
+            }
+        }
+    }
+    try { Sync-ActiveClaudeSnapshot } catch { Write-WidgetLog ("claude snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-ClaudeAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'claude'
+            Id      = Get-ProviderRowId $acct 'claude'
             Kind    = 'claude'
-            Name    = $script:ClaudeDisplayName
+            Name    = Get-ProviderRowName $acct 'Claude' $script:ClaudeDisplayName
             OpenUrl = $script:ClaudeUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
-    if (Test-CursorCredExists) {
+    foreach ($acct in @(Get-CursorAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'cursor'
+            Id      = Get-ProviderRowId $acct 'cursor'
             Kind    = 'cursor'
-            Name    = $script:CursorDisplayName
+            Name    = Get-ProviderRowName $acct 'Cursor' $script:CursorDisplayName
             OpenUrl = $script:CursorUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
-    if (Test-ZaiCredExists) {
+    try { Sync-ActiveZaiSnapshot } catch { Write-WidgetLog ("glm snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-ZaiAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'glm'
+            Id      = Get-ProviderRowId $acct 'glm'
             Kind    = 'glm'
-            Name    = $script:ZaiDisplayName
+            Name    = Get-ProviderRowName $acct 'GLM' $script:ZaiDisplayName
             OpenUrl = $script:ZaiUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
-    if (Test-CopilotCredExists) {
+    try { Sync-ActiveCopilotSnapshot } catch { Write-WidgetLog ("copilot snapshot $($_.Exception.Message)") }
+    foreach ($acct in @(Get-CopilotAccounts)) {
         $rows += [pscustomobject]@{
-            Id      = 'copilot'
+            Id      = Get-ProviderRowId $acct 'copilot'
             Kind    = 'copilot'
-            Name    = $script:CopilotDisplayName
+            Name    = Get-ProviderRowName $acct 'Copilot' $script:CopilotDisplayName
             OpenUrl = $script:CopilotUsagePageUrl
-            Auth    = $null
+            Auth    = $acct
         }
     }
     return $rows
@@ -2066,7 +2984,12 @@ function Rebuild-ProviderRows {
         }
     }
 
-    $h = Get-FormHeight $Specs.Count
+    $contentH = Get-FormHeight $Specs.Count
+    $screen = if ($Form.Visible) { [System.Windows.Forms.Screen]::FromPoint($Form.Location) } else { [System.Windows.Forms.Screen]::PrimaryScreen }
+    $maxH = [Math]::Max((Scale-Px 240), $screen.WorkingArea.Height - (Scale-Px 24))
+    $Form.AutoScroll = ($contentH -gt $maxH)
+    $Form.AutoScrollMinSize = New-Object System.Drawing.Size (0, $contentH)
+    $h = [Math]::Min($contentH, $maxH)
     $Form.Size = New-Object System.Drawing.Size($m.FormWidth, $h)
     $round = New-RoundRectPath 0 0 $Form.Width $Form.Height $m.Radius
     $old = $Form.Region
@@ -2077,7 +3000,7 @@ function Rebuild-ProviderRows {
         $Form.Region = New-Object System.Drawing.Region($round)
     }
     if ($old) { try { $old.Dispose() } catch { } }
-    $script:Ui.Stamp.Top = $h - $m.StampInset
+    $script:Ui.Stamp.Top = $contentH - $m.StampInset
     $script:Ui.Sig = (($Specs | ForEach-Object { $_.Id }) -join ',')
 }
 
@@ -2152,12 +3075,14 @@ function Get-GrokRowData {
 }
 
 function Get-GeminiRowData {
-    $u = Get-GeminiUsageSnapshot
+    param($Auth, [string]$Name)
+    $u = Get-GeminiUsageSnapshot -Auth $Auth
     $details = @()
     if ($null -ne $u.Remain5h) { $details += (T 'row.remain5h' @($u.Remain5h)) }
     if ($null -ne $u.RemainWeekly) { $details += (T 'row.remainWeek' @($u.RemainWeekly)) }
     $details += Format-ResetText $u.PeriodEnd
-    Write-WidgetLog ("usage gemini remain={0} ok" -f $u.Remaining)
+    $display = if ($Name) { $Name } else { 'Gemini' }
+    Write-WidgetLog ("usage gemini {0} remain={1} ok" -f $display, $u.Remaining)
     [pscustomobject]@{
         Percent = $u.Remaining
         Detail  = ($details -join ' · ')
@@ -2168,7 +3093,8 @@ function Get-GeminiRowData {
 }
 
 function Get-KimiRowData {
-    $u = Get-KimiUsageSnapshot
+    param($Auth, [string]$Name)
+    $u = Get-KimiUsageSnapshot -Auth $Auth
     $details = @()
     foreach ($w in @($u.Windows)) {
         if ($w.Label) { $details += ('{0} {1:0}%' -f $w.Label, $w.Percent) }
@@ -2363,6 +3289,7 @@ function Show-WidgetSettings {
     $chkGlm = New-SettingCheckBox $dialog 'GLM' (Scale-Px 292) (Scale-Px 252) ([bool]$current.providers.glm)
     $chkOpenRouter = New-SettingCheckBox $dialog 'OpenRouter' $colValue (Scale-Px 278) ([bool]$current.providers.openrouter)
     $chkCopilot = New-SettingCheckBox $dialog 'Copilot' (Scale-Px 208) (Scale-Px 278) ([bool]$current.providers.copilot)
+    $chkCline = New-SettingCheckBox $dialog 'Cline' (Scale-Px 292) (Scale-Px 278) ([bool]$current.providers.cline)
 
     [void](New-SettingLabel $dialog (T 'settings.columns') $colLabel (Scale-Px 304) $muted)
     $numColumns = New-SettingNumber $dialog $colValue (Scale-Px 304) (Scale-Px 70) $current.columns 1 3 1
@@ -2419,6 +3346,7 @@ function Show-WidgetSettings {
                     commandcode = [bool]$chkCommandCode.Checked
                     openrouter  = [bool]$chkOpenRouter.Checked
                     deepseek    = [bool]$chkDeepSeek.Checked
+                    cline       = [bool]$chkCline.Checked
                     claude      = [bool]$chkClaude.Checked
                     cursor      = [bool]$chkCursor.Checked
                     glm         = [bool]$chkGlm.Checked
@@ -2452,6 +3380,117 @@ function Show-WidgetSettings {
 
     [void]$dialog.ShowDialog($script:Ui.Form)
     $dialog.Dispose()
+}
+
+function Show-AccountManager {
+    $rows = @($script:AccountSpecs)
+    if ($rows.Count -eq 0) { return }
+    $muted = (Get-WidgetColor 'Muted')
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = (T 'accounts.title')
+    $form.Size = New-Object System.Drawing.Size (Scale-Px 600), (Scale-Px 440)
+    $form.StartPosition = 'CenterParent'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $list = New-Object System.Windows.Forms.ListView
+    $list.Location = New-Object System.Drawing.Point (Scale-Px 12), (Scale-Px 12)
+    $list.Size = New-Object System.Drawing.Size (Scale-Px 560), (Scale-Px 310)
+    $list.View = 'Details'
+    $list.FullRowSelect = $true
+    $list.CheckBoxes = $true
+    $list.HideSelection = $false
+    [void]$list.Columns.Add((T 'accounts.name'), (Scale-Px 180))
+    [void]$list.Columns.Add((T 'accounts.provider'), (Scale-Px 120))
+    [void]$list.Columns.Add((T 'accounts.source'), (Scale-Px 120))
+    [void]$list.Columns.Add((T 'accounts.identity'), (Scale-Px 120))
+    $hidden = @($script:Config.hiddenAccounts)
+    $aliases = $script:Config.accountAliases
+    foreach ($row in $rows) {
+        $source = ''
+        try { $source = if ([string]$row.Auth.Path -like '*.snapshot') { 'snapshot' } else { [string]$row.Auth.Source } } catch { }
+        $accountId = ''
+        try { $accountId = [string]$row.Auth.AccountId } catch { }
+        $alias = if ($aliases.ContainsKey([string]$row.Id)) { [string]$aliases[[string]$row.Id] } else { '' }
+        $item = New-Object System.Windows.Forms.ListViewItem ([string]$row.Name)
+        [void]$item.SubItems.Add([string]$row.Kind)
+        [void]$item.SubItems.Add($source)
+        [void]$item.SubItems.Add((Get-AccountFingerprint -AccountId $accountId -Prefix 'acct'))
+        $item.Checked = ($hidden -notcontains [string]$row.Id)
+        $item.Tag = @{ Row = $row; Alias = $alias }
+        [void]$list.Items.Add($item)
+    }
+
+    $aliasLabel = New-SettingLabel $form (T 'accounts.alias') (Scale-Px 12) (Scale-Px 334) $muted
+    $aliasText = New-SettingText $form '' (Scale-Px 105) (Scale-Px 330) (Scale-Px 180)
+    $status = New-SettingLabel $form '' (Scale-Px 12) (Scale-Px 372) $muted
+    $btnUp = New-SettingButton $form (T 'accounts.moveUp') (Scale-Px 300) (Scale-Px 328)
+    $btnDown = New-SettingButton $form (T 'accounts.moveDown') (Scale-Px 390) (Scale-Px 328)
+    $btnRemove = New-SettingButton $form (T 'accounts.removeSnapshot') (Scale-Px 300) (Scale-Px 366)
+    $btnClose = New-SettingButton $form (T 'accounts.close') (Scale-Px 480) (Scale-Px 366)
+
+    $syncAlias = {
+        $item = if ($list.SelectedItems.Count -gt 0) { $list.SelectedItems[0] } else { $null }
+        if (-not $item) { $aliasText.Text = ''; return }
+        $aliasText.Text = [string]$item.Tag.Alias
+    }
+    $list.Add_SelectedIndexChanged($syncAlias)
+    $aliasText.Add_Leave({
+        if ($list.SelectedItems.Count -eq 0) { return }
+        $item = $list.SelectedItems[0]
+        $item.Tag.Alias = $aliasText.Text.Trim()
+        $item.Text = if ($item.Tag.Alias) { [string]$item.Tag.Alias } else { [string]$item.Tag.Row.Name }
+    })
+    $move = {
+        param([int]$Delta)
+        if ($list.SelectedItems.Count -eq 0) { return }
+        $item = $list.SelectedItems[0]
+        $index = $item.Index
+        $target = $index + $Delta
+        if ($target -lt 0 -or $target -ge $list.Items.Count) { return }
+        $list.Items.RemoveAt($index)
+        $list.Items.Insert($target, $item)
+        $item.Selected = $true
+        $item.EnsureVisible()
+    }
+    $btnUp.Add_Click({ & $move -1 })
+    $btnDown.Add_Click({ & $move 1 })
+    $btnRemove.Add_Click({
+        if ($list.SelectedItems.Count -eq 0) { return }
+        $item = $list.SelectedItems[0]
+        $row = $item.Tag.Row
+        $path = [string]$row.Auth.Path
+        if ($path -notlike '*.snapshot') {
+            $status.Text = T 'accounts.activeNotRemoved'
+            return
+        }
+        try {
+            Remove-SecureSnapshot -Path $path
+            $list.Items.Remove($item)
+            $status.Text = T 'accounts.removed'
+        } catch {
+            $status.Text = Convert-SafeLogText $_.Exception.Message 80
+        }
+    })
+    $btnClose.Add_Click({
+        $order = @($list.Items | ForEach-Object { [string]$_.Tag.Row.Id })
+        $hiddenIds = @($list.Items | Where-Object { -not $_.Checked } | ForEach-Object { [string]$_.Tag.Row.Id })
+        $aliasMap = @{}
+        foreach ($item in @($list.Items)) {
+            if ($item.Tag.Alias) { $aliasMap[[string]$item.Tag.Row.Id] = [string]$item.Tag.Alias }
+        }
+        $script:Config.accountOrder = $order
+        $script:Config.hiddenAccounts = $hiddenIds
+        $script:Config.accountAliases = $aliasMap
+        try { [void](Write-WidgetConfig -Config $script:Config) } catch { }
+        $form.Close()
+        Update-Widget -Force
+    })
+    $form.AcceptButton = $btnClose
+    $form.CancelButton = $btnClose
+    [void]$form.ShowDialog($script:Ui.Form)
+    $form.Dispose()
 }
 
 # About dialog: version, licence, project link and a manual GitHub update check.
@@ -2649,6 +3688,14 @@ function New-WidgetForm {
     }
     [void]$menu.Items.Add($miInterval)
     $miAddGrok = $menu.Items.Add((T 'menu.registerGrok'))
+    $miAddGemini = $menu.Items.Add((T 'menu.registerGemini'))
+    $miAddKimi = $menu.Items.Add((T 'menu.registerKimi'))
+    $miAddClaude = $menu.Items.Add((T 'menu.registerClaude'))
+    $miAddCommandCode = $menu.Items.Add((T 'menu.registerCommandCode'))
+    $miAddCursor = $menu.Items.Add((T 'menu.registerCursor'))
+    $miAddGlm = $menu.Items.Add((T 'menu.registerGlm'))
+    $miAddCopilot = $menu.Items.Add((T 'menu.registerCopilot'))
+    $miAddCline = $menu.Items.Add((T 'menu.registerCline'))
     $miAdd = $menu.Items.Add((T 'menu.registerChatgpt'))
     $miOpen = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.openUsage')
     $miOpenGrok = $miOpen.DropDownItems.Add('Grok')
@@ -2658,6 +3705,7 @@ function New-WidgetForm {
     $miOpenCommandCode = $miOpen.DropDownItems.Add('Command Code')
     $miOpenOpenRouter = $miOpen.DropDownItems.Add('OpenRouter')
     $miOpenDeepSeek = $miOpen.DropDownItems.Add('DeepSeek')
+    $miOpenCline = $miOpen.DropDownItems.Add('Cline')
     $miOpenClaude = $miOpen.DropDownItems.Add('Claude')
     $miOpenCursor = $miOpen.DropDownItems.Add('Cursor')
     $miOpenGlm = $miOpen.DropDownItems.Add('GLM')
@@ -2672,6 +3720,7 @@ function New-WidgetForm {
     $miExportCompareHtml = $miExport.DropDownItems.Add((T 'menu.exportCompareHtml'))
     [void]$menu.Items.Add($miExport)
     $miTrend = $menu.Items.Add((T 'menu.trend'))
+    $miAccounts = $menu.Items.Add((T 'menu.accounts'))
     $miSettings = $menu.Items.Add((T 'menu.settings'))
     $miAbout = $menu.Items.Add((T 'menu.about'))
     $miTop = $menu.Items.Add((T 'menu.topMost'))
@@ -2718,11 +3767,21 @@ function New-WidgetForm {
     Bind-Drag $form
     Bind-Drag $lblStamp
 
-    $form.Add_KeyDown({
-        if ($_.KeyCode -eq 'F5') { try { Update-Widget } catch { Write-WidgetLog ("f5 $($_.Exception.Message)") } }
+    $form.Add_DpiChanged({
+        $script:UiScale = ([double]$_.NewDpi / 96.0)
+        $script:UiMetrics = $null
+        if ($script:Fonts) {
+            foreach ($f in $script:Fonts.Values) { try { $f.Dispose() } catch { } }
+            $script:Fonts = $null
+        }
+        if ($script:CurrentSpecs.Count -gt 0) { Rebuild-ProviderRows $form $script:CurrentSpecs }
     })
 
-    $miRefresh.Add_Click({ try { Update-Widget } catch { Write-WidgetLog ("refresh $($_.Exception.Message)") } })
+    $form.Add_KeyDown({
+        if ($_.KeyCode -eq 'F5') { try { Update-Widget -Force } catch { Write-WidgetLog ("f5 $($_.Exception.Message)") } }
+    })
+
+    $miRefresh.Add_Click({ try { Update-Widget -Force } catch { Write-WidgetLog ("refresh $($_.Exception.Message)") } })
     $miExportRaw.Add_Click({ Export-UsageHistoryInteractive })
     $miExportDaily.Add_Click({ Export-UsageReportInteractive -Kind 'daily' })
     $miExportReportMd.Add_Click({ Export-UsageReportInteractive -Kind 'markdown' })
@@ -2730,6 +3789,7 @@ function New-WidgetForm {
     $miExportCompareMd.Add_Click({ Export-UsageReportComparisonInteractive -Kind 'markdown' -Months 3 })
     $miExportCompareHtml.Add_Click({ Export-UsageReportComparisonInteractive -Kind 'html' -Months 3 })
     $miTrend.Add_Click({ Show-WidgetTrend -Days $script:TrendDays })
+    $miAccounts.Add_Click({ Show-AccountManager })
     $miSettings.Add_Click({ Show-WidgetSettings })
     $miAbout.Add_Click({ Show-WidgetAbout })
     foreach ($sec in $script:IntervalItems.Keys) {
@@ -2750,6 +3810,42 @@ function New-WidgetForm {
         Add-CurrentGrokAccount
         Update-Widget
     })
+    $miAddGemini.Add_Click({
+        $result = Add-CurrentGeminiAccount
+        Update-Widget
+        try {
+            if ($result.Status -eq 'same-account') {
+                $msg = (T 'cli.geminiSameAccount' @($result.Name))
+                $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Warning)
+            } elseif ($result.Status -eq 'registered') {
+                $msg = (T 'cli.geminiRegistered' @($result.Name))
+                $script:Ui.Tray.ShowBalloonTip(6000, (T 'app.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+            } else {
+                $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), (T 'cli.geminiAuthMissing'), [System.Windows.Forms.ToolTipIcon]::Warning)
+            }
+        } catch { }
+    })
+    $miAddKimi.Add_Click({ Show-AccountRegistration (Add-CurrentKimiAccount); Update-Widget -Force })
+    $miAddClaude.Add_Click({ Show-AccountRegistration (Add-CurrentClaudeAccount); Update-Widget -Force })
+    $miAddCommandCode.Add_Click({ Show-AccountRegistration (Add-CurrentCommandCodeAccount); Update-Widget -Force })
+    $miAddCursor.Add_Click({ Show-AccountRegistration (Add-CurrentCursorAccount); Update-Widget -Force })
+    $miAddGlm.Add_Click({ Show-AccountRegistration (Add-CurrentZaiAccount); Update-Widget -Force })
+    $miAddCopilot.Add_Click({ Show-AccountRegistration (Add-CurrentCopilotAccount); Update-Widget -Force })
+    $miAddCline.Add_Click({
+        $result = Add-CurrentClineAccount
+        Update-Widget
+        try {
+            if ($result.Status -eq 'same-account') {
+                $msg = (T 'cli.clineSameAccount' @($result.Name))
+                $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Warning)
+            } elseif ($result.Status -eq 'registered') {
+                $msg = (T 'cli.clineRegistered' @($result.Name))
+                $script:Ui.Tray.ShowBalloonTip(6000, (T 'app.title'), $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+            } else {
+                $script:Ui.Tray.ShowBalloonTip(8000, (T 'app.title'), (T 'cli.clineAuthMissing'), [System.Windows.Forms.ToolTipIcon]::Warning)
+            }
+        } catch { }
+    })
     $miAdd.Add_Click({
         Add-CurrentAccount
         Update-Widget
@@ -2761,6 +3857,7 @@ function New-WidgetForm {
     $miOpenCommandCode.Add_Click({ Start-Process $script:CommandCodeUsagePageUrl })
     $miOpenOpenRouter.Add_Click({ Start-Process $script:OpenRouterUsagePageUrl })
     $miOpenDeepSeek.Add_Click({ Start-Process $script:DeepSeekUsagePageUrl })
+    $miOpenCline.Add_Click({ Start-Process $script:ClineUsagePageUrl })
     $miOpenClaude.Add_Click({ Start-Process $script:ClaudeUsagePageUrl })
     $miOpenCursor.Add_Click({ Start-Process $script:CursorUsagePageUrl })
     $miOpenGlm.Add_Click({ Start-Process $script:ZaiUsagePageUrl })
@@ -2880,22 +3977,29 @@ function Register-ProviderSuccess {
 }
 
 function Register-ProviderFailure {
-    param([string]$Id)
+    param([string]$Id, $ErrorRecord)
     $n = 1
     if ($script:FailCount.ContainsKey($Id)) { $n = [int]$script:FailCount[$Id] + 1 }
     $script:FailCount[$Id] = $n
-    $sec = [int][Math]::Min(900, 30 * [Math]::Pow(2, [Math]::Min($n - 1, 5)))
+    $category = Get-FetchFailureCategory -ErrorRecord $ErrorRecord -Message ([string]$ErrorRecord)
+    $seed = if ($Id) { [int]([Math]::Abs($Id.GetHashCode()) % 20) } else { 0 }
+    $sec = Get-ProviderBackoffSeconds -Category $category -FailureCount $n -JitterSeed $seed
     $script:BackoffUntil[$Id] = [datetime]::UtcNow.AddSeconds($sec)
-    Write-WidgetLog ("backoff {0} for {1}s after {2} fail(s)" -f $Id, $sec, $n)
+    Write-WidgetLog ("backoff {0} category={1} retry={2}s fails={3}" -f $Id, $category, $sec, $n)
+    return $script:BackoffUntil[$Id]
 }
 
 function Update-Widget {
+    param([switch]$Force)
     $ui = $script:Ui
     if (-not $ui -or $ui.Form.IsDisposed) { return }
     if ($script:FetchRunning) { return }
 
     try {
-        $specs = @(Get-ProviderRows | Where-Object { Test-ProviderEnabled $script:Config $_.Kind })
+        $allSpecs = @(Get-ProviderRows | Where-Object { Test-ProviderEnabled $script:Config $_.Kind })
+        $script:AccountSpecs = $allSpecs
+        $specs = @(Apply-WidgetAccountPreferences -Rows $allSpecs -Config $script:Config)
+        $script:CurrentSpecs = $specs
     } catch {
         Write-WidgetLog ("rows $($_.Exception.Message)")
         return
@@ -2922,7 +4026,7 @@ function Update-Widget {
 
     $script:FetchRunning = $true
     try {
-        Start-BackgroundFetch $specs
+        Start-BackgroundFetch $specs -Force:$Force
     } catch {
         $script:FetchRunning = $false
         $safeError = Convert-SafeLogText $_.Exception.Message 80
@@ -2940,25 +4044,31 @@ function Get-WorkerScriptSource {
         'Write-WidgetLog', 'Convert-ApiTime', 'Get-HttpStatusCode', 'Invoke-WidgetRest',
         'Get-WidgetText', 'T',
         'Format-PercentText', 'Format-RowValueText', 'Format-ResetText', 'Format-ResetTime', 'ConvertTo-ResetStamp', 'Format-FetchError',
-        'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent',
+        'Test-FiniteNumber', 'Assert-UsagePercent', 'Assert-PositiveFiniteNumber', 'Convert-UsageRatioPercent', 'Convert-OptionalNumber',
+        'Assert-CredentialAccountId', 'Set-CredentialVersion', 'Assert-CredentialIdentity',
+        'Test-CredentialAccountChanged', 'Test-CredentialStale',
         'Resolve-TrustedHttpsEndpoint', 'Get-WidgetTrustedHosts', 'Assert-TrustedHttpsHost', 'Get-AccountFingerprint', 'Convert-SafeLogText',
         'Get-SecureSnapshotRoot', 'Get-SecureSnapshotPath', 'ConvertTo-SnapshotCipherText',
         'ConvertFrom-SnapshotCipherText', 'Set-SecureSnapshotAcl', 'Invoke-SecureSnapshotFileLock', 'Move-SecureSnapshotFile',
-        'Write-SecureSnapshotLocked', 'Write-SecureSnapshot', 'Update-SecureSnapshot', 'Read-SecureSnapshot',
+        'Write-SecureSnapshotLocked', 'Write-JsonFileAtomic', 'Update-JsonFile',
+        'Write-SecureSnapshot', 'Update-SecureSnapshot', 'Read-SecureSnapshot',
         'Get-SecureSnapshotFiles', 'Remove-SecureSnapshot',
         'Get-GrokAccountId', 'Get-GrokAccountFingerprint', 'Get-GrokAccountAlias', 'Get-GrokAliasPath', 'Get-GrokAliasMap',
         'Get-GrokAccountLabel', 'Get-GrokRowName', 'Get-GrokRowId',
         'Get-GrokSnapshotFileName', 'Get-GrokSnapshotPath', 'Get-GrokLegacySnapshotPath', 'Convert-GrokRawAuth', 'Read-GrokAuthFromFile',
         'Get-GrokAccounts', 'Sync-ActiveGrokSnapshot', 'Sync-GrokAuthFromDisk',
-        'Get-ProductLabel', 'Read-GrokAuth', 'Save-GrokAuth', 'Update-GrokToken',
+        'Get-ProductLabel', 'Read-GrokAuth', 'Set-GrokAuthFields', 'Save-GrokAuth', 'Update-GrokToken',
         'Get-GrokAuthHeaders', 'Invoke-GrokGet', 'Get-GrokUsageSnapshot', 'Get-GrokRowData',
         'Ensure-AntigravityCredType', 'Test-AntigravityCredExists', 'Read-AntigravityCred',
         'Save-AntigravityCred', 'Update-AntigravityToken', 'Get-AntigravityAuth',
+        'Get-GeminiPropertyText', 'Get-GeminiJwtEmail', 'Get-GeminiAccountId', 'Convert-GeminiRawAuth',
+        'Set-GeminiAuthFields', 'Save-GeminiSnapshot', 'Save-GeminiAuth',
         'Convert-GeminiQuota', 'Invoke-AntigravityQuota', 'Get-GeminiUsageSnapshot', 'Get-GeminiRowData',
-        'Get-KimiHosts', 'Read-KimiAuth', 'Save-KimiAuth', 'Update-KimiToken',
+        'Get-KimiAccountId', 'Convert-KimiRawAuth', 'Read-KimiAuthFromFile',
+        'Set-KimiAuthFields', 'Save-KimiSnapshot', 'Get-KimiHosts', 'Read-KimiAuth', 'Save-KimiAuth', 'Update-KimiToken',
         'Invoke-KimiGet', 'Get-KimiWindowLabel', 'Resolve-KimiUsedLimit', 'Convert-KimiUsagePayload',
         'Get-KimiUsageSnapshot', 'Get-KimiRowData',
-        'Get-TokenEmail', 'Convert-CodexRawAuth', 'Read-CodexAuth', 'Get-AccountLabel', 'Save-CodexAuth',
+        'Get-TokenEmail', 'Convert-CodexRawAuth', 'Read-CodexAuth', 'Get-AccountLabel', 'Get-SnapshotPath', 'Set-CodexAuthFields', 'Save-CodexAuth',
         'Update-CodexToken', 'Sync-CodexAuthFromDisk', 'Get-CodexAuthHeaders',
         'Invoke-CodexGet', 'Get-CodexWindowInfo', 'Get-CodexUsageSnapshot', 'Get-CodexRowData',
         'Test-CommandCodeCredExists', 'Read-CommandCodeAuth', 'Get-CommandCodeAuthHeaders',
@@ -2970,8 +4080,12 @@ function Get-WorkerScriptSource {
         'Convert-OpenRouterCredits', 'Get-OpenRouterUsageSnapshot', 'Get-OpenRouterRowData',
         'Get-DeepSeekCurrencySymbol', 'Format-DeepSeekAmount', 'ConvertTo-DeepSeekPurse', 'Convert-DeepSeekBalance',
         'Get-DeepSeekUsageSnapshot', 'Get-DeepSeekRowData',
-        'Convert-ClaudeWindow', 'Convert-ClaudeUsage', 'Convert-ClaudeRawAuth',
-        'Test-ClaudeCredExists', 'Read-ClaudeAuthFromFile', 'Save-ClaudeAuth', 'Update-ClaudeToken',
+        'Get-ClineProperty', 'Convert-ClineResetTime', 'Convert-ClineUsageLimit', 'Convert-ClineUsageLimits',
+        'Convert-ClineAuthExpiry', 'ConvertTo-ClineStoredAccessToken', 'Get-ClineAuthEntry', 'Convert-ClineRawAuth',
+        'Read-ClineAuth', 'Get-ClineSnapshotPath', 'Set-ClineAuthFields', 'Save-ClineSnapshot', 'Save-ClineAuth', 'Update-ClineToken',
+        'Get-ClineAuthHeaders', 'Get-ClineUsageSnapshot', 'Get-ClineRowData',
+        'Get-ClaudeAccountId', 'Convert-ClaudeWindow', 'Convert-ClaudeUsage', 'Convert-ClaudeRawAuth',
+        'Test-ClaudeCredExists', 'Read-ClaudeAuthFromFile', 'Set-ClaudeAuthFields', 'Save-ClaudeSnapshot', 'Save-ClaudeAuth', 'Update-ClaudeToken',
         'Get-ClaudeAuthHeaders', 'Get-ClaudeUsageSnapshot', 'Get-ClaudeRowData',
         'ConvertTo-CursorDollars', 'Convert-CursorUnixMs', 'Get-CursorPlanUsageObject', 'Convert-CursorPeriodUsage',
         'Find-Utf8NeedleIndex', 'Get-CursorJwtFromBytes', 'Get-CursorSqliteTextValue',
@@ -2982,7 +4096,7 @@ function Get-WorkerScriptSource {
         'Get-ZaiAuthHeaders', 'Get-ZaiUsageSnapshot', 'Get-ZaiRowData',
         'Get-CopilotProperty', 'Convert-CopilotQuotaDetail', 'Convert-CopilotResetDate', 'Convert-CopilotQuota',
         'ConvertTo-CopilotTokenText', 'Find-CopilotToken',
-        'Read-CopilotTokenFromFile', 'Get-CopilotToken', 'Test-CopilotCredExists', 'Get-CopilotAuthHeaders',
+        'Get-CopilotAuthToken', 'Read-CopilotTokenFromFile', 'Get-CopilotToken', 'Test-CopilotCredExists', 'Get-CopilotAuthHeaders',
         'Get-CopilotUsageSnapshot', 'Get-CopilotRowData'
     )
     $sb = New-Object System.Text.StringBuilder
@@ -2995,6 +4109,7 @@ function Get-WorkerScriptSource {
                    'CommandCodeAuthPath', 'CommandCodeApiBaseUrl', 'CommandCodeShowBalance', 'CommandCodeDisplayName',
                    'OpenRouterAuthPath', 'OpenRouterApiBaseUrl', 'OpenRouterDisplayName',
                    'DeepSeekAuthPath', 'DeepSeekApiBaseUrl', 'DeepSeekDisplayName',
+                   'ClineProvidersPath', 'ClineUsageUrl', 'ClineRefreshUrl', 'ClineDisplayName',
                    'ClaudeCredPath', 'ClaudeUsageUrl', 'ClaudeTokenUrl', 'ClaudeTokenUrlLegacy', 'ClaudeOAuthClientId', 'ClaudeDisplayName',
                    'CursorStateDbPath', 'CursorUsageUrl', 'CursorDisplayName', 'CursorTokenCache',
                    'ZaiAuthPath', 'ZhipuAuthPath', 'BigModelAuthPath', 'ZcodeConfigPath', 'ZaiApiBaseUrl', 'ZhipuApiBaseUrl', 'ZaiDisplayName',
@@ -3015,19 +4130,20 @@ foreach ($row in @($Rows)) {
         $d = $null
         switch ($row.Kind) {
             'grok'  { $d = Get-GrokRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
-            'gemini' { $d = Get-GeminiRowData }
-            'kimi'  { $d = Get-KimiRowData }
+            'gemini' { $d = Get-GeminiRowData -Auth $row.Auth -Name $row.Name }
+            'kimi'  { $d = Get-KimiRowData -Auth $row.Auth -Name $row.Name }
             'codex' { $d = Get-CodexRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
-            'commandcode' { $d = Get-CommandCodeRowData }
+            'commandcode' { $d = Get-CommandCodeRowData -Auth $row.Auth -Name $row.Name }
             'openrouter' { $d = Get-OpenRouterRowData -Auth $row.Auth -Name $row.Name -Id $row.Id }
             'deepseek' { $d = Get-DeepSeekRowData -Auth $row.Auth -Name $row.Name }
+            'cline' { $d = Get-ClineRowData -Auth $row.Auth -Name $row.Name }
             'claude' { $d = Get-ClaudeRowData -Auth $row.Auth -Name $row.Name }
             'cursor' { $d = Get-CursorRowData -Auth $row.Auth -Name $row.Name }
             'glm' { $d = Get-ZaiRowData -Auth $row.Auth -Name $row.Name }
             'copilot' { $d = Get-CopilotRowData -Auth $row.Auth -Name $row.Name }
             default { throw '未找到登录凭证' }
         }
-        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Display = $d.Display; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; Error = $null }
+        $results += [pscustomobject]@{ Id = $row.Id; Percent = $d.Percent; Display = $d.Display; Detail = $d.Detail; Tip = $d.Tip; Reset = $d.Reset; ResetAt = $d.ResetAt; MetricType = $d.MetricType; Value = $d.Value; Unit = $d.Unit; Window = $d.Window; Cycle = $d.Cycle; Used = $d.Used; Limit = $d.Limit; FetchedAt = $d.FetchedAt; Error = $null }
     } catch {
             $results += [pscustomobject]@{ Id = $row.Id; Percent = $null; Detail = $null; Tip = $null; Reset = $null; ResetAt = $null; Error = (Convert-SafeLogText $_.Exception.Message 240) }
     }
@@ -3038,7 +4154,7 @@ $results
 }
 
 function Start-BackgroundFetch {
-    param($Specs)
+    param($Specs, [switch]$Force)
     $cfg = @{
         GrokAuthPath       = $script:GrokAuthPath
         WidgetDir          = $script:WidgetDir
@@ -3064,6 +4180,10 @@ function Start-BackgroundFetch {
         DeepSeekAuthPath         = $script:DeepSeekAuthPath
         DeepSeekApiBaseUrl       = $script:DeepSeekApiBaseUrl
         DeepSeekDisplayName      = $script:DeepSeekDisplayName
+        ClineProvidersPath       = $script:ClineProvidersPath
+        ClineUsageUrl            = $script:ClineUsageUrl
+        ClineRefreshUrl          = $script:ClineRefreshUrl
+        ClineDisplayName         = $script:ClineDisplayName
         ClaudeCredPath           = $script:ClaudeCredPath
         ClaudeUsageUrl           = $script:ClaudeUsageUrl
         ClaudeTokenUrl           = $script:ClaudeTokenUrl
@@ -3092,7 +4212,7 @@ function Start-BackgroundFetch {
     }
     $rows = @()
     foreach ($s in $Specs) {
-        if (Test-ProviderBackoff $s.Id) {
+        if (-not $Force -and (Test-ProviderBackoff $s.Id)) {
             Write-WidgetLog ("skip {0} (backoff)" -f $s.Id)
             continue
         }
@@ -3103,22 +4223,35 @@ function Start-BackgroundFetch {
         return
     }
     if (-not $script:WorkerSrc) { $script:WorkerSrc = Get-WorkerScriptSource }
-    if (-not $script:WorkerRs) {
-        $script:WorkerRs = [runspacefactory]::CreateRunspace()
-        $script:WorkerRs.ApartmentState = 'MTA'
-        $script:WorkerRs.ThreadOptions = 'ReuseThread'
-        $script:WorkerRs.Open()
+    $chunks = @(Split-WidgetProviderRows -Rows $rows -MaxWorkers 3)
+    $maxWorkers = [Math]::Max(1, $chunks.Count)
+    if (-not $script:WorkerPool) {
+        $script:WorkerPool = [runspacefactory]::CreateRunspacePool(1, 3)
+        $script:WorkerPool.ApartmentState = 'MTA'
+        $script:WorkerPool.Open()
     }
-    $ps = [powershell]::Create()
-    $ps.Runspace = $script:WorkerRs
-    [void]$ps.AddScript($script:WorkerSrc)
-    [void]$ps.AddArgument($rows)
-    [void]$ps.AddArgument($cfg)
-    $handle = $ps.BeginInvoke()
+    $script:FetchGeneration++
+    $generation = $script:FetchGeneration
+    $jobs = @()
+    foreach ($chunk in @($chunks | Where-Object { @($_).Count -gt 0 })) {
+        $ps = [powershell]::Create()
+        $ps.RunspacePool = $script:WorkerPool
+        [void]$ps.AddScript($script:WorkerSrc)
+        [void]$ps.AddArgument(@($chunk))
+        [void]$ps.AddArgument($cfg)
+        $jobs += @{
+            Ps         = $ps
+            Handle     = $ps.BeginInvoke()
+            StartedAt  = Get-Date
+            Rows       = @($chunk)
+            Generation = $generation
+        }
+    }
     $script:FetchJob = @{
-        Ps        = $ps
-        Handle    = $handle
-        StartedAt = Get-Date
+        Jobs       = @($jobs)
+        StartedAt  = Get-Date
+        Generation = $generation
+        Force      = [bool]$Force
     }
     $script:Ui.Stamp.Text = (T 'status.refreshing')
     $script:Ui.Poll.Start()
@@ -3134,6 +4267,14 @@ function Convert-FetchRow {
     $reset = $null
     $resetAt = $null
     $display = $null
+    $metricType = $null
+    $value = $null
+    $unit = $null
+    $window = $null
+    $cycle = $null
+    $used = $null
+    $limit = $null
+    $fetchedAt = $null
     if ($null -ne $Raw) {
         try { if ($Raw.Id) { $id = [string]$Raw.Id } } catch { }
         try { if ($Raw.Error) { $err = [string]$Raw.Error } } catch { }
@@ -3145,6 +4286,14 @@ function Convert-FetchRow {
         try { if ($Raw.Reset) { $reset = [string]$Raw.Reset } } catch { }
         try { if ($Raw.ResetAt) { $resetAt = [string]$Raw.ResetAt } } catch { }
         try { if ($Raw.Display) { $display = [string]$Raw.Display } } catch { }
+        try { if ($Raw.MetricType) { $metricType = [string]$Raw.MetricType } } catch { }
+        try { $value = Convert-OptionalNumber -Value $Raw.Value -Field 'history value' } catch { }
+        try { if ($Raw.Unit) { $unit = [string]$Raw.Unit } } catch { }
+        try { if ($Raw.Window) { $window = [string]$Raw.Window } } catch { }
+        try { if ($Raw.Cycle) { $cycle = [string]$Raw.Cycle } } catch { }
+        try { $used = Convert-OptionalNumber -Value $Raw.Used -Field 'history used' } catch { }
+        try { $limit = Convert-OptionalNumber -Value $Raw.Limit -Field 'history limit' } catch { }
+        try { if ($Raw.FetchedAt) { $fetchedAt = [datetime]$Raw.FetchedAt } } catch { }
     }
     if (-not $id) { $id = $FallbackId }
     [pscustomobject]@{
@@ -3155,6 +4304,14 @@ function Convert-FetchRow {
         Tip     = $tip
         Reset   = $reset
         ResetAt = $resetAt
+        MetricType = $metricType
+        Value   = $value
+        Unit    = $unit
+        Window  = $window
+        Cycle   = $cycle
+        Used    = $used
+        Limit   = $limit
+        FetchedAt = $fetchedAt
         Error   = $err
     }
 }
@@ -3162,8 +4319,10 @@ function Convert-FetchRow {
 function Clear-FetchJobs {
     try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
     if ($script:FetchJob) {
-        try { $script:FetchJob.Ps.Stop() } catch { }
-        try { $script:FetchJob.Ps.Dispose() } catch { }
+        foreach ($job in @($script:FetchJob.Jobs)) {
+            try { $job.Ps.Stop() } catch { }
+            try { $job.Ps.Dispose() } catch { }
+        }
         $script:FetchJob = $null
     }
     $script:FetchRunning = $false
@@ -3171,9 +4330,10 @@ function Clear-FetchJobs {
 
 function Close-WorkerRunspace {
     Clear-FetchJobs
-    if ($script:WorkerRs) {
-        try { $script:WorkerRs.Dispose() } catch { }
-        $script:WorkerRs = $null
+    if ($script:WorkerPool) {
+        try { $script:WorkerPool.Close() } catch { }
+        try { $script:WorkerPool.Dispose() } catch { }
+        $script:WorkerPool = $null
     }
 }
 
@@ -3184,50 +4344,65 @@ function Receive-BackgroundFetch {
         $script:FetchRunning = $false
         return
     }
-    $done = $false
-    try { $done = [bool]$job.Handle.IsCompleted } catch { $done = $false }
-    if (-not $done) {
-        if ((Get-Date) - $job.StartedAt -gt [timespan]::FromMinutes(3)) {
-            Write-WidgetLog 'background fetch timed out, stopping'
-            try { $job.Ps.Stop() } catch { }
-            Clear-FetchJobs
-            if ($script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = (T 'status.refreshTimeout') }
-        }
-        return
-    }
-    $out = $null
-    try {
-        $iar = $job.Handle
-        try { if ($iar.PSObject -and $iar.PSObject.BaseObject) { $iar = $iar.PSObject.BaseObject } } catch { }
-        $out = $job.Ps.EndInvoke([System.IAsyncResult]$iar)
-        if ($job.Ps.HadErrors) {
-            $err0 = $null
-            try { $err0 = $job.Ps.Streams.Error | Select-Object -First 1 } catch { }
-            if ($err0) { Write-WidgetLog ("bg fetch error: {0}" -f $err0.ToString()) }
-        }
-    } catch {
-        Write-WidgetLog ("bg fetch failed: {0}" -f $_.Exception.Message)
-    }
+    if ($job.Generation -ne $script:FetchGeneration) { Clear-FetchJobs; return }
     $batch = @()
-    foreach ($item in @($out)) {
-        $rowData = Convert-FetchRow $item
-        if ($rowData.Id) { $batch += ,$rowData }
+    $remaining = @()
+    $hadTimeout = $false
+    foreach ($workerJob in @($job.Jobs)) {
+        $done = $false
+        try { $done = [bool]$workerJob.Handle.IsCompleted } catch { $done = $false }
+        if (-not $done) {
+            if ((Get-Date) - $workerJob.StartedAt -gt [timespan]::FromMinutes(3)) {
+                $hadTimeout = $true
+                try { $workerJob.Ps.Stop() } catch { }
+                foreach ($row in @($workerJob.Rows)) {
+                    $batch += [pscustomobject]@{ Id = $row.Id; Error = 'timeout'; Percent = $null; Detail = $null; Tip = $null; Reset = $null; ResetAt = $null }
+                }
+                try { $workerJob.Ps.Dispose() } catch { }
+            } else {
+                $remaining += $workerJob
+            }
+            continue
+        }
+        $out = $null
+        try {
+            $iar = $workerJob.Handle
+            try { if ($iar.PSObject -and $iar.PSObject.BaseObject) { $iar = $iar.PSObject.BaseObject } } catch { }
+            $out = $workerJob.Ps.EndInvoke([System.IAsyncResult]$iar)
+            if ($workerJob.Ps.HadErrors) {
+                $err0 = $null
+                try { $err0 = $workerJob.Ps.Streams.Error | Select-Object -First 1 } catch { }
+                if ($err0) { Write-WidgetLog ("bg fetch error: {0}" -f $err0.ToString()) }
+            }
+        } catch {
+            Write-WidgetLog ("bg fetch failed: {0}" -f $_.Exception.Message)
+        } finally {
+            try { $workerJob.Ps.Dispose() } catch { }
+        }
+        foreach ($item in @($out)) {
+            $rowData = Convert-FetchRow $item
+            if ($rowData.Id) { $batch += ,$rowData }
+        }
     }
-    $psOld = $job.Ps
-    $script:FetchJob = $null
-    $script:FetchRunning = $false
     if (@($batch).Count -gt 0) {
         try {
-            Apply-FetchResults @($batch)
+            Apply-FetchResults @($batch) -StillRunning:(@($remaining).Count -gt 0)
             Write-WidgetLog ("applied {0}" -f @($batch).Count)
         } catch {
             Write-WidgetLog ("apply $($_.Exception.Message)`n$($_.ScriptStackTrace)")
         }
-    } elseif ($script:Ui -and -not $script:Ui.Form.IsDisposed) {
+    } elseif (@($remaining).Count -eq 0 -and $script:Ui -and -not $script:Ui.Form.IsDisposed) {
         $script:Ui.Stamp.Text = (T 'status.updated' @([datetime]::Now.ToString('HH:mm')))
     }
-    try { $psOld.Dispose() } catch { }
-    try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
+    if (@($remaining).Count -gt 0) {
+        $job.Jobs = @($remaining)
+        if ($script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = (T 'status.refreshing') }
+    } else {
+        $script:FetchJob = $null
+        $script:FetchRunning = $false
+        try { if ($script:Ui -and $script:Ui.Poll) { $script:Ui.Poll.Stop() } } catch { }
+    }
+    if ($hadTimeout -and $script:Ui -and -not $script:Ui.Form.IsDisposed) { $script:Ui.Stamp.Text = (T 'status.refreshTimeout') }
 }
 
 function Set-RowTip {
@@ -3268,6 +4443,43 @@ function Export-UsageHistoryInteractive {
     }
 }
 
+function Select-UsageReportScope {
+    param($Records, [string]$DefaultMonth)
+    $months = @(Get-UsageHistoryMonths $Records)
+    if ($months.Count -eq 0) { return $null }
+    $ids = @($Records | ForEach-Object { [string]$_.Id } | Where-Object { $_ } | Sort-Object -Unique)
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = (T 'report.scopeTitle')
+    $form.ClientSize = New-Object System.Drawing.Size ((Scale-Px 340), (Scale-Px 150))
+    $form.StartPosition = 'CenterParent'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $muted = (Get-WidgetColor 'Muted')
+    [void](New-SettingLabel $form (T 'report.month') (Scale-Px 14) (Scale-Px 18) $muted)
+    $monthCombo = New-SettingCombo $form $months (Scale-Px 110) (Scale-Px 14) (Scale-Px 200)
+    $monthIndex = [array]::IndexOf($months, $DefaultMonth)
+    if ($monthIndex -ge 0) { $monthCombo.SelectedIndex = $monthIndex }
+    [void](New-SettingLabel $form (T 'report.account') (Scale-Px 14) (Scale-Px 54) $muted)
+    $accountItems = @((T 'report.allAccounts')) + $ids
+    $accountCombo = New-SettingCombo $form $accountItems (Scale-Px 110) (Scale-Px 50) (Scale-Px 200)
+    $accountCombo.SelectedIndex = 0
+    $btnOk = New-SettingButton $form (T 'report.export') (Scale-Px 140) (Scale-Px 100)
+    $btnCancel = New-SettingButton $form (T 'settings.cancel') (Scale-Px 230) (Scale-Px 100)
+    $result = $null
+    $btnOk.Add_Click({
+        $selectedAccount = if ($accountCombo.SelectedIndex -gt 0) { [string]$accountCombo.SelectedItem } else { '' }
+        $result = @{ Month = [string]$monthCombo.SelectedItem; Id = $selectedAccount }
+        $form.Close()
+    })
+    $btnCancel.Add_Click({ $form.Close() })
+    $form.AcceptButton = $btnOk
+    $form.CancelButton = $btnCancel
+    [void]$form.ShowDialog($script:Ui.Form)
+    $form.Dispose()
+    return $result
+}
+
 # 月度报表导出：默认导出“最近有数据的月份”，没有历史时给出明确提示。
 function Export-UsageReportInteractive {
     param([string]$Kind)
@@ -3280,19 +4492,24 @@ function Export-UsageReportInteractive {
         }
         $months = @(Get-UsageHistoryMonths $records)
         $month = if ($months.Count -gt 0) { $months[0] } else { ConvertTo-UsageReportMonth -Value $null -Now $now }
-        $rollup = @(Get-UsageHistoryDailyRollup -Records $records -Month $month -Now $now)
-        $summary = @(Get-UsageHistoryMonthlySummary -Records $records -Month $month -Now $now)
+        $scope = Select-UsageReportScope -Records $records -DefaultMonth $month
+        if (-not $scope) { return }
+        $month = [string]$scope.Month
+        $accountId = [string]$scope.Id
+        $rollup = @(Get-UsageHistoryDailyRollup -Records $records -Month $month -Now $now -Id $accountId)
+        $summary = @(Get-UsageHistoryMonthlySummary -Records $records -Month $month -Now $now -Id $accountId)
+        $inventory = Get-UsageHistoryInventory -Path $script:HistoryPath -MaxBytes $script:Config.historyMaxBytes
 
         $extension = 'csv'
         $content = $null
         switch ($Kind) {
             'markdown' {
                 $extension = 'md'
-                $content = ConvertTo-UsageReportMarkdown -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now
+                $content = ConvertTo-UsageReportMarkdown -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now -Inventory $inventory
             }
             'html' {
                 $extension = 'html'
-                $content = ConvertTo-UsageReportHtml -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now
+                $content = ConvertTo-UsageReportHtml -Summary $summary -Rollup $rollup -Month $month -GeneratedAt $now -Inventory $inventory
             }
             default {
                 $content = ConvertTo-UsageReportCsv $rollup
@@ -3397,7 +4614,7 @@ function Show-WidgetTrend {
     try { $specs = @(Get-ProviderRows) } catch { $specs = @() }
     $records = @()
     if (-not $script:DemoMode) {
-        try { $records = @(Read-UsageHistory -Path $script:HistoryPath -Limit 2000) } catch { $records = @() }
+        try { $records = @(Read-UsageHistory -Path $script:HistoryPath -Since ((Get-Date).AddDays(-30))) } catch { $records = @() }
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -3586,17 +4803,33 @@ function Show-WidgetTrend {
         Write-WidgetLog ('trend demo series days={0} series={1} synthetic=true' -f $days, @($script:TrendUi.Model).Count)
     }
 }
-function Write-UsageHistory {    param([string]$Id, [double]$Percent)
+function Write-UsageHistory {
+    param(
+        [string]$Id,
+        [double]$Percent,
+        [string]$Provider,
+        [string]$AccountId,
+        [string]$MetricType = 'percent',
+        $Value,
+        [string]$Unit,
+        [string]$Window,
+        [string]$Cycle,
+        [string]$ResetAt,
+        $Used,
+        $Limit,
+        [string]$SampleState = 'changed'
+    )
     try {
         if ($script:DemoMode) { return }
-        $line = [pscustomobject]@{ ts = [datetime]::Now.ToString('o'); id = $Id; pct = $Percent } | ConvertTo-Json -Compress
-        Add-Content -LiteralPath $script:HistoryPath -Value $line -Encoding utf8
-        $f = Get-Item -LiteralPath $script:HistoryPath
-        if ($f.Length -gt 1MB) {
-            $tail = Get-Content -LiteralPath $script:HistoryPath -Tail 2000
-            Set-Content -LiteralPath $script:HistoryPath -Value $tail -Encoding utf8
-        }
-    } catch { }
+        $retentionDays = if ($script:Config) { [int]$script:Config.historyRetentionDays } else { 90 }
+        $maxBytes = if ($script:Config) { [long]$script:Config.historyMaxBytes } else { 10485760 }
+        [void](Write-UsageHistoryRecord -Path $script:HistoryPath -Id $Id -Provider $Provider -AccountId $AccountId `
+            -MetricType $MetricType -Percent $Percent -Value $Value -Unit $Unit -Window $Window -Cycle $Cycle `
+            -ResetAt $ResetAt -Used $Used -Limit $Limit -SampleState $SampleState `
+            -RetentionDays $retentionDays -MaxBytes $maxBytes)
+    } catch {
+        Write-WidgetLog ('history write failed: ' + $_.Exception.Message)
+    }
 }
 
 function Send-UsageResetAlert {
@@ -3669,35 +4902,53 @@ function Apply-FetchResults {
     $wantTrend = $true
     $showForecast = $true
     $trendDays = 7
+    $historySampleMinutes = 15
     try {
         if ($script:Config) {
             $wantTrend = [bool]$script:Config.showTrend
             $showForecast = [bool]$script:Config.showForecast
             $trendDays = [int]$script:Config.trendDays
+            $historySampleMinutes = [int]$script:Config.historySampleMinutes
         }
     } catch { }
-    if ($wantTrend -or $showForecast) {
-        $historyRecords = @(Read-UsageHistory -Path $script:HistoryPath -Limit 2000)
+    $historySince = (Get-Date).AddDays(-[Math]::Max(1, $trendDays))
+    $historyRecords = @(Read-UsageHistory -Path $script:HistoryPath -Since $historySince)
+    $historyLatest = @{}
+    foreach ($record in $historyRecords) {
+        if (-not $record -or -not $record.Id) { continue }
+        $id = [string]$record.Id
+        if (-not $historyLatest.ContainsKey($id) -or [datetime]$record.Ts -ge [datetime]$historyLatest[$id].Ts) {
+            $historyLatest[$id] = $record
+        }
     }
     foreach ($r in @($Results)) {
         if (-not $r -or -not $r.Id) { continue }
         $row = @($ui.Rows | Where-Object { $_.Id -eq $r.Id })[0]
         if (-not $row) { continue }
         if ($r.Error) {
-            Register-ProviderFailure $r.Id
+            $nextRetry = Register-ProviderFailure $r.Id $r.Error
             $safeError = Convert-SafeLogText ([string]$r.Error) 240
             Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
-            Set-RowError $row (Format-FetchError $safeError)
-            Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail))
+            $errorText = Format-FetchError $safeError
+            $state = if ($script:RowState.ContainsKey($r.Id)) { $script:RowState[$r.Id] } else { $null }
+            $lastSuccessText = if ($state -and $state.LastSuccessAt) { T 'row.stale' @($state.LastSuccessAt.ToString('HH:mm')) } else { $null }
+            if ($lastSuccessText) { $errorText += (' · ' + $lastSuccessText) }
+            Set-RowError $row $errorText
+            Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail), $lastSuccessText, (T 'row.nextRetry' @($nextRetry.ToLocalTime().ToString('HH:mm'))))
+            $script:RowState[$r.Id] = @{ LastSuccessAt = $(if ($state) { $state.LastSuccessAt } else { $null }); LastText = $(if ($state) { $state.LastText } else { $null }); NextRetry = $nextRetry }
         } else {
             try {
                 $pct = Assert-UsagePercent $r.Percent 'provider result percent'
             } catch {
-                Register-ProviderFailure $r.Id
+                $nextRetry = Register-ProviderFailure $r.Id $_
                 $safeError = Convert-SafeLogText $_.Exception.Message
                 Write-WidgetLog ("error {0}: {1}" -f $r.Id, $safeError)
-                Set-RowError $row (Format-FetchError $safeError)
-                Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail))
+                $state = if ($script:RowState.ContainsKey($r.Id)) { $script:RowState[$r.Id] } else { $null }
+                $lastSuccessText = if ($state -and $state.LastSuccessAt) { T 'row.stale' @($state.LastSuccessAt.ToString('HH:mm')) } else { $null }
+                $errorText = Format-FetchError $safeError
+                if ($lastSuccessText) { $errorText += (' · ' + $lastSuccessText) }
+                Set-RowError $row $errorText
+                Set-RowTip $row @((T 'tip.errorTitle' @($row.Name)), (Format-FetchError $safeError -Detail), $lastSuccessText, (T 'row.nextRetry' @($nextRetry.ToLocalTime().ToString('HH:mm'))))
                 continue
             }
             Register-ProviderSuccess $r.Id
@@ -3705,22 +4956,30 @@ function Apply-FetchResults {
             $rowDetail = [string]$r.Detail
             if ($recentRequest) { $rowDetail = @($rowDetail, $recentRequest) -join ' · ' }
             Set-RowUsage $row $pct $rowDetail $r.Display
+            $script:RowState[$r.Id] = @{
+                LastSuccessAt = Get-Date
+                LastText = (Format-RowValueText -Display $r.Display -Percent $pct)
+                NextRetry = $null
+            }
             $script:LastOkAt = Get-Date
 
+            $usageNow = Convert-DisplayPercentToUsagePercent $pct $row.Kind
+            $metricType = if ($r.MetricType) { [string]$r.MetricType } elseif ($row.Kind -eq 'deepseek') { 'balance' } else { 'percent' }
             $forecastLine = $null
-            if ($historyRecords.Count -gt 0) {
-                $usagePct = Convert-DisplayPercentToUsagePercent $pct $row.Kind
-                $series = @(Get-UsageHistoryDaySeries -Records $historyRecords -Id $r.Id -Days $trendDays -Kind $row.Kind)
-                if ($wantTrend) { Set-RowTrend $row $series $usagePct }
+            $series = @()
+            if ($historyRecords.Count -gt 0 -and $metricType -eq 'percent') {
+                $series = @(Get-UsageHistoryDaySeries -Records $historyRecords -Id $r.Id -Days $trendDays -Kind $row.Kind -ResetAt ([string]$r.ResetAt))
+                if ($wantTrend) { Set-RowTrend $row $series $usageNow }
                 if ($showForecast) {
-                    $forecastLine = Format-ForecastText (Get-UsageForecast -Series $series -CurrentPercent $usagePct -ResetAt $r.ResetAt)
+                    $forecastSince = (Get-Date).AddDays(-[Math]::Max(1, $trendDays))
+                    $forecastSeries = @(Get-UsageHistorySampleSeries -Records $historyRecords -Id $r.Id -Since $forecastSince -Kind $row.Kind -ResetAt ([string]$r.ResetAt))
+                    $forecastLine = Format-ForecastText (Get-UsageForecast -Series $forecastSeries -CurrentPercent $usageNow -ResetAt $r.ResetAt)
                 }
             }
 
             $delta = $null
             if ($script:LastPct.ContainsKey($r.Id)) { $delta = $pct - [double]$script:LastPct[$r.Id] }
             $script:LastPct[$r.Id] = $pct
-            $usageNow = Convert-DisplayPercentToUsagePercent $pct $row.Kind
             if ($script:LastUsagePct.ContainsKey($r.Id) -and -not $r.Display) {
                 if (Test-UsageResetTransition $script:LastUsagePct[$r.Id] $usageNow) {
                     Send-UsageResetAlert $row
@@ -3743,13 +5002,26 @@ function Apply-FetchResults {
                 (T 'tip.openUsage')
             )
 
-            if ($null -eq $delta -or [Math]::Abs($delta) -ge 0.05) {
-                Write-UsageHistory $r.Id $pct
+            $latest = if ($historyLatest.ContainsKey($r.Id)) { $historyLatest[$r.Id] } else { $null }
+            $changed = $false
+            if ($metricType -eq 'percent') {
+                $changed = $null -eq $latest -or $null -eq $latest.Pct -or [Math]::Abs($usageNow - [double]$latest.Pct) -ge 0.05
+            } else {
+                $changed = $null -eq $latest -or $null -eq $latest.Value -or [Math]::Abs([double]$r.Value - [double]$latest.Value) -ge 0.000001
+            }
+            $scheduled = $null -eq $latest -or ((Get-Date) - [datetime]$latest.Ts).TotalMinutes -ge $historySampleMinutes
+            if ($changed -or $scheduled) {
+                $accountId = ''
+                try { $accountId = [string]$row.Auth.AccountId } catch { }
+                Write-UsageHistory -Id $r.Id -Percent $(if ($metricType -eq 'percent') { $usageNow } else { 0.0 }) `
+                    -Provider $row.Kind -AccountId $accountId -MetricType $metricType -Value $r.Value `
+                    -Unit $r.Unit -Window $r.Window -Cycle $(if ($r.Cycle) { $r.Cycle } else { $r.ResetAt }) -ResetAt $r.ResetAt `
+                    -Used $r.Used -Limit $r.Limit -SampleState $(if ($changed) { 'changed' } else { 'scheduled' })
             }
             Send-UsageAlert $row $r.Id $pct
         }
     }
-    Send-DailySummaryIfDue
+    if (-not $StillRunning) { Send-DailySummaryIfDue }
     if ($StillRunning) {
         $ui.Stamp.Text = (T 'status.refreshing')
     } else {
@@ -3774,6 +5046,13 @@ if ($Install) { Install-Widget; return }
 if ($Uninstall) { Uninstall-Widget; return }
 if ($AddAccount) { Add-CurrentAccount; return }
 if ($AddGrokAccount) { Add-CurrentGrokAccount; return }
+if ($AddGeminiAccount) { Add-CurrentGeminiAccount; return }
+if ($AddKimiAccount) { Add-CurrentKimiAccount; return }
+if ($AddClaudeAccount) { Add-CurrentClaudeAccount; return }
+if ($AddCommandCodeAccount) { Add-CurrentCommandCodeAccount; return }
+if ($AddCursorAccount) { Add-CurrentCursorAccount; return }
+if ($AddGlmAccount) { Add-CurrentZaiAccount; return }
+if ($AddCopilotAccount) { Add-CurrentCopilotAccount; return }
 if ($MigrateSecrets) { Migrate-ProjectSnapshots; return }
 
 try {

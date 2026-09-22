@@ -62,6 +62,7 @@ function Format-FetchError {
     if ($safe -match 'HTTP 403|\b403\b|Forbidden') { return (T 'error.forbidden') }
     if ($safe -match 'HTTP 429|\b429\b') { return (T 'error.tooMany') }
     if ($safe -match 'missing-credential|no-credential') { return (T 'error.noCredentials') }
+    if ($safe -match 'missing-secret') { return (T 'error.missingSecret') }
     if ($safe -match 'plan-missing') { return (T 'error.planMissing') }
     # 未知错误用本地化兜底，但在气泡提示里附上脱敏原文，便于对着日志排查。
     if ($Detail) { return ((T 'error.generic') + ' ' + $safe) }

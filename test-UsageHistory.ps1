@@ -29,6 +29,18 @@ Assert-Eq (ConvertTo-UsageHistoryRecord '{"ts":"2026-09-17T10:58:58+08:00","pct"
 Assert-Eq (ConvertTo-UsageHistoryRecord '{"ts":"2026-09-17T10:58:58+08:00","id":"kimi","pct":"nope"}') '' 'non numeric percent ignored'
 Assert-Eq (ConvertTo-UsageHistoryRecord '{"ts":"2026-09-17T10:58:58+08:00","id":"kimi","pct":"55.5"}').Pct 55.5 'numeric string percent accepted'
 
+$v2 = ConvertTo-UsageHistoryRecord '{"schemaVersion":2,"ts":"2026-09-17T10:58:58+08:00","id":"codex-acct-a","provider":"codex","accountId":"account-a","metricType":"percent","window":"5h","cycle":"2026-09-17T15:00:00Z","resetAt":"2026-09-17T15:00:00Z","value":42.5,"unit":"percent","pct":42.5,"sampleState":"scheduled"}'
+Assert-Eq $v2.SchemaVersion 2 'v2 schema version'
+Assert-Eq $v2.Provider 'codex' 'v2 provider'
+Assert-Eq $v2.AccountId 'account-a' 'v2 account id'
+Assert-Eq $v2.Window '5h' 'v2 window'
+Assert-Eq $v2.SampleState 'scheduled' 'v2 sample state'
+Assert-Eq $v2.Legacy 'False' 'v2 record is not legacy'
+$balance = ConvertTo-UsageHistoryRecord '{"schemaVersion":2,"ts":"2026-09-17T10:58:58+08:00","id":"deepseek","provider":"deepseek","accountId":"account-a","metricType":"balance","value":14.5,"unit":"CNY","sampleState":"changed"}'
+Assert-Eq $balance.MetricType 'balance' 'balance metric type'
+Assert-Eq $balance.Pct '' 'balance does not fake a percent'
+Assert-Eq $balance.Value 14.5 'balance keeps its numeric value'
+
 # ---------- 文件读取 ----------
 Assert-Eq (@(Read-UsageHistory -Path (Join-Path $env:TEMP 'no-such-history.jsonl')).Count) 0 'missing history file gives empty list'
 
@@ -49,7 +61,7 @@ try {
     $records = @(Read-UsageHistory -Path $historyPath)
     Assert-Eq $records.Count 5 'reads every valid line and skips junk'
     Assert-Eq (@(Read-UsageHistory -Path $historyPath -Limit 2).Count) 2 'limit keeps the newest lines'
-    Assert-Eq (@(Read-UsageHistory -Path $historyPath -Limit 2)[0].Pct) 90 'limit keeps file order'
+    Assert-Eq (@(Read-UsageHistory -Path $historyPath -Limit 2)[0].Pct) 20 'limit returns the newest records in chronological order'
 
     # ---------- 按天聚合 ----------
     $now = [datetime]'2026-09-17T12:00:00'
@@ -119,6 +131,11 @@ try {
     $noTrend = Get-UsageForecast @() 50.0 ($now.AddHours(10).ToString('o')) $now
     Assert-Eq $noTrend.EtaHours '' 'no series gives no eta'
     Assert-Eq $noTrend.ExhaustsBeforeReset 'False' 'no series never warns'
+    $shortSeries = Get-UsageForecast @(
+        @{ Day = [datetime]'2026-09-11'; Pct = 10.0 },
+        @{ Day = [datetime]'2026-09-12'; Pct = 20.0 }
+    ) 20.0 $null $now
+    Assert-Eq $shortSeries.EtaHours '' 'two samples are not enough for a forecast'
 
     # ---------- 折线几何 ----------
     $path = @(New-SparklinePath $rising 60 20 2 8)
@@ -150,10 +167,10 @@ try {
     )
     $csv = ConvertTo-UsageHistoryCsv $csvRecords
     $csvLines = @($csv -split "`r`n" | Where-Object { $_ })
-    Assert-Eq $csvLines[0] 'time,id,percent' 'csv header'
-    Assert-Eq $csvLines[1] '2026-09-11 23:00:00,commandcode,12' 'csv first row'
-    Assert-Eq $csvLines[2] '2026-09-12 09:00:00,"weird,id",20.5' 'csv escapes commas'
-    Assert-Eq (ConvertTo-UsageHistoryCsv @()).Trim() 'time,id,percent' 'csv with no records still has a header'
+    Assert-Eq $csvLines[0] 'time,id,provider,accountId,metricType,window,cycle,resetAt,value,unit,used,limit,sampleState,percent' 'csv header'
+    Assert-Eq ($csvLines[1] -like '2026-09-11 23:00:00,commandcode,*12') 'True' 'csv first row'
+    Assert-Eq ($csvLines[2] -like '2026-09-12 09:00:00,"weird,id",*20.5') 'True' 'csv escapes commas'
+    Assert-Eq (ConvertTo-UsageHistoryCsv @()).Trim() 'time,id,provider,accountId,metricType,window,cycle,resetAt,value,unit,used,limit,sampleState,percent' 'csv with no records still has a header'
 
     $csvPath = Join-Path $dir 'export.csv'
     Assert-Eq (Export-UsageHistoryCsv -Path $csvPath -Records $csvRecords) 'True' 'export returns true'
@@ -167,6 +184,95 @@ try {
     $csvFromSource = Join-Path $dir 'export-source.csv'
     Export-UsageHistoryCsv -Path $csvFromSource -SourcePath $historyPath | Out-Null
     Assert-Eq (@(Get-Content -LiteralPath $csvFromSource).Count) 6 'export reads the source file when no records are given'
+
+    # ---------- schema v2 monthly storage ----------
+    $storageRoot = Join-Path $dir 'storage'
+    New-Item -ItemType Directory -Path $storageRoot | Out-Null
+    $storagePath = Join-Path $storageRoot 'ai-history.jsonl'
+    foreach ($month in @(1, 2, 3, 4)) {
+        foreach ($account in 1..20) {
+            [void](Write-UsageHistoryRecord -Path $storagePath -Id ('acct-{0:d2}' -f $account) `
+                -Provider 'codex' -AccountId ('account-{0:d2}' -f $account) -MetricType 'percent' `
+                -Percent (10 + $month + $account / 100.0) -Value (10 + $month + $account / 100.0) -Unit 'percent' `
+                -Timestamp ([datetime]::new(2026, $month, 15, 12, 0, 0)) -SampleState 'scheduled' `
+                -RetentionDays 3650 -MaxBytes 104857600)
+        }
+    }
+    $stored = @(Read-UsageHistory -Path $storagePath)
+    Assert-Eq $stored.Count 80 'four months and twenty accounts remain readable'
+    $storedMonths = @($stored | ForEach-Object { $_.Ts.ToString('yyyy-MM') } | Sort-Object -Unique)
+    Assert-Eq ($storedMonths -join ',') '2026-01,2026-02,2026-03,2026-04' 'monthly archives cover every month'
+    Assert-Eq (Get-UsageHistoryInventory -Path $storagePath).FileCount 4 'one archive file per month'
+
+    # Legacy rows are copied into monthly archives without deleting the original, and repeated migration deduplicates.
+    $legacyPath = Join-Path $storageRoot 'legacy-history.jsonl'
+    [IO.File]::WriteAllText($legacyPath, (@(
+        '{"ts":"2026-01-01T01:00:00Z","id":"legacy-a","pct":10}'
+        '{"ts":"2026-02-01T01:00:00Z","id":"legacy-a","pct":20}'
+    ) -join "`n"), [Text.UTF8Encoding]::new($false))
+    Assert-Eq (Import-UsageHistoryLegacy -Path $legacyPath) 2 'legacy migration copies both records'
+    Assert-Eq (Import-UsageHistoryLegacy -Path $legacyPath) 0 'legacy migration is repeatable without duplicates'
+    Assert-Eq (@(Read-UsageHistory -Path $legacyPath).Count) 2 'legacy migration preserves the original source and avoids duplicates'
+
+    # Retention deletes only archives older than the requested window.
+    [void](Write-UsageHistoryRecord -Path $storagePath -Id 'current' -Provider 'codex' -AccountId 'current' -MetricType 'percent' -Percent 1 -Value 1 -Unit 'percent' -Timestamp ([datetime]'2026-04-15T12:00:00') -RetentionDays 3650 -MaxBytes 104857600)
+    $retention = Invoke-UsageHistoryRetention -Path $storagePath -RetentionDays 30 -MaxBytes 104857600 -Now ([datetime]'2026-04-30T12:00:00')
+    Assert-Eq ($retention.Removed -contains 'ai-history-2026-01.jsonl') 'True' 'retention removes the oldest archive'
+    Assert-Eq ($retention.Removed -contains 'ai-history-2026-03.jsonl') 'False' 'retention keeps archives inside the window'
+
+    # The old 2000-line / 1MB truncation is gone: every valid line in an archive remains readable.
+    $largeRoot = Join-Path $storageRoot 'large'
+    New-Item -ItemType Directory -Path $largeRoot -Force | Out-Null
+    $largePath = Join-Path $largeRoot 'ai-history.jsonl'
+    $largeArchive = Get-UsageHistoryArchivePath -Path $largePath -Timestamp ([datetime]'2026-05-01')
+    New-Item -ItemType Directory -Path (Split-Path -Parent $largeArchive) -Force | Out-Null
+    $largeLines = New-Object System.Collections.Generic.List[string]
+    foreach ($i in 1..2500) {
+        $line = [ordered]@{ schemaVersion = 2; ts = ([datetime]'2026-05-01').AddMinutes($i).ToString('o'); id = 'bulk'; provider = 'codex'; accountId = 'a'; metricType = 'percent'; value = ($i % 100); unit = 'percent'; pct = ($i % 100); sampleState = 'changed' } | ConvertTo-Json -Compress
+        [void]$largeLines.Add($line)
+    }
+    [IO.File]::WriteAllLines($largeArchive, $largeLines, [Text.UTF8Encoding]::new($false))
+    Assert-Eq (@(Read-UsageHistory -Path $largePath).Count) 2500 'more than 2000 archive rows are retained'
+    $capacity = Invoke-UsageHistoryRetention -Path $largePath -RetentionDays 3650 -MaxBytes 1 -Now ([datetime]'2026-05-30')
+    Assert-Eq $capacity.Incomplete 'True' 'capacity pressure marks history as incomplete when the current month cannot be trimmed'
+    Assert-Eq (Test-Path -LiteralPath $largeArchive) 'True' 'capacity retention never deletes the current month'
+
+    $bulkRoot = Join-Path $storageRoot 'bulk'
+    New-Item -ItemType Directory -Path $bulkRoot -Force | Out-Null
+    $bulkPath = Join-Path $bulkRoot 'ai-history.jsonl'
+    $bulkLines = New-Object System.Collections.Generic.List[string]
+    $bulkBase = [datetime]'2026-01-01'
+    foreach ($day in 0..119) {
+        foreach ($account in 0..19) {
+            foreach ($sample in 0..9) {
+                [void]$bulkLines.Add(('{{"ts":"{0}","id":"acct-{1:d2}","pct":{2}}}' -f $bulkBase.AddDays($day).AddHours($sample).ToString('o'), $account, (40 + ($day % 20))))
+            }
+        }
+    }
+    [IO.File]::WriteAllLines($bulkPath, $bulkLines, [Text.UTF8Encoding]::new($false))
+    Assert-Eq (Import-UsageHistoryLegacy -Path $bulkPath) 24000 'a 24000-row legacy history migrates completely'
+    [void](Write-UsageHistoryRecord -Path $bulkPath -Id 'acct-00' -Provider 'codex' -AccountId 'account-00' -MetricType 'percent' -Percent 61 -Value 61 -Unit 'percent' -Timestamp ([datetime]'2026-05-01') -RetentionDays 3650 -MaxBytes 104857600)
+    Assert-Eq (@(Read-UsageHistory -Path $bulkPath).Count) 24001 'migration plus new sampling preserves the full synthetic history'
+    Assert-Eq (@(Get-Content -LiteralPath $bulkPath).Count) 24000 'legacy migration keeps the original source file intact'
+
+    # Balance and unlimited samples stay out of percentage series.
+    $mixed = @(
+        @{ Ts = [datetime]'2026-06-01T10:00:00'; Id = 'deepseek'; Pct = $null; MetricType = 'balance'; Value = 20.0; SchemaVersion = 2; Legacy = $false }
+        @{ Ts = [datetime]'2026-06-01T11:00:00'; Id = 'openrouter'; Pct = 0.0; MetricType = 'unlimited'; Value = 12.0; SchemaVersion = 2; Legacy = $false }
+        @{ Ts = [datetime]'2026-06-01T12:00:00'; Id = 'codex'; Pct = 30.0; MetricType = 'percent'; Value = 30.0; SchemaVersion = 2; Legacy = $false }
+    )
+    Assert-Eq (@(Get-UsageHistoryDaySeries -Records $mixed -Id 'deepseek' -Days 7 -Now ([datetime]'2026-06-02')).Count) 0 'balance is not plotted as percent'
+    Assert-Eq (@(Get-UsageHistoryDaySeries -Records $mixed -Id 'openrouter' -Days 7 -Now ([datetime]'2026-06-02')).Count) 0 'unlimited is not plotted as percent'
+    Assert-Eq (@(Get-UsageHistoryDaySeries -Records $mixed -Id 'codex' -Days 7 -Now ([datetime]'2026-06-02')).Count) 1 'percent remains plot data'
+
+    # Reset-at filtering prevents a forecast from mixing two quota cycles.
+    $cycles = @(
+        @{ Ts = [datetime]'2026-06-01T10:00:00'; Id = 'codex'; Pct = 10.0; MetricType = 'percent'; ResetAt = 'r1'; SchemaVersion = 2; Legacy = $false }
+        @{ Ts = [datetime]'2026-06-01T11:00:00'; Id = 'codex'; Pct = 20.0; MetricType = 'percent'; ResetAt = 'r2'; SchemaVersion = 2; Legacy = $false }
+    )
+    $cycleSeries = @(Get-UsageHistorySampleSeries -Records $cycles -Id 'codex' -Since ([datetime]'2026-06-01') -ResetAt 'r2')
+    Assert-Eq $cycleSeries.Count 1 'forecast samples stay inside one reset cycle'
+    Assert-Eq $cycleSeries[0].Pct 20 'the current cycle keeps its own value'
 } finally {
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 }

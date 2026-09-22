@@ -12,6 +12,9 @@
 > GitHub Pages 落地页（`site/` + `pages.yml`）已完成；智谱 BigModel（含 ZCode 凭证）并入 GLM 行，
 > Trae / Amp / CodeBuddy 因缺少「可读凭证 + 可验证接口」记录为暂不接入。
 > 验收记录见 `docs/superpowers/reports/2026-09-17-ai-usage-widget-0.14.0-acceptance.md`。
+>
+> **0.15.0 进度（2026-09-17）：** 多月对比导出与独立趋势图窗口已完成，入口脚本版本为 0.15.0；
+> `WidgetTrend.ps1` 及安装清单同步落地。下方「现状评估」保留为开源启动时的历史快照，不代表当前供应商或测试数量。
 
 **目标：** 把当前内部工具补齐为可公开、可贡献、可发布的开源项目，并按用户价值排序扩展功能。
 
@@ -21,16 +24,16 @@
 
 ---
 
-## 一、现状评估
+## 一、现状评估（2026-09-17 开源启动时基线）
 
 ### 已具备
 
-- 6 个供应商：Grok（多账号）、Gemini / Antigravity、Kimi、ChatGPT / Codex（多账号）、Command Code、OpenRouter（多账号）
+- 当时为 6 个供应商：Grok（多账号）、Gemini / Antigravity、Kimi、ChatGPT / Codex（多账号）、Command Code、OpenRouter（多账号）
 - 暗色圆角常驻卡片：拖拽与贴边吸附、置顶开关、双击打开用量页、右键菜单（立即刷新 / 刷新间隔 / 登记账号 / 打开用量页 / 浮在窗口上 / 开机启动 / 退出）
 - 托盘图标与 70/90 阈值气泡提醒、日志轮转、`ai-history.jsonl` 用量历史、`ai-request-events.jsonl` 请求事件
 - 凭据安全：DPAPI 快照、哈希命名、ACL 收紧、原子替换、互斥锁
 - 后台 MTA worker 抓取，UI 线程不阻塞
-- 16 个离线测试套件，双 PowerShell 版本全绿
+- 当时为 16 个离线测试套件，双 PowerShell 版本全绿
 - 高 DPI 自适应布局（2026-09-17 修复）
 
 ### 开源缺口

@@ -71,6 +71,7 @@ $manifest = [ordered]@{
         'ai-request-events.jsonl'
         'ai-widget.log'
         'grok-aliases.json'
+        'history'
     )
     checkver = @{ github = 'https://github.com/' + $Repo }
     autoupdate = @{

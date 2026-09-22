@@ -60,6 +60,14 @@ Assert-Eq (Get-UsageReportNumber $rollup[0].Average) '12' 'average of the day'
 Assert-Eq (@(Get-UsageHistoryDailyRollup -Records $records -Month '2026-09' -Id 'kimi').Count) 1 'provider filter keeps one row'
 Assert-Eq (@(Get-UsageHistoryDailyRollup -Records $records -Month '2026-08').Count) 1 'august only holds the august sample'
 Assert-Eq (@(Get-UsageHistoryDailyRollup -Records @() -Month '2026-09').Count) 0 'no records gives no rows'
+$metricRecords = @(
+    @{ Ts = [datetime]'2026-09-01T10:00:00'; Id = 'deepseek'; Pct = $null; MetricType = 'balance'; Value = 20.0 }
+    @{ Ts = [datetime]'2026-09-01T11:00:00'; Id = 'openrouter'; Pct = 0.0; MetricType = 'unlimited'; Value = 12.0 }
+    @{ Ts = [datetime]'2026-09-01T12:00:00'; Id = 'codex'; Pct = 30.0; MetricType = 'percent'; Value = 30.0 }
+)
+$metricRollup = @(Get-UsageHistoryDailyRollup -Records $metricRecords -Month '2026-09')
+Assert-Eq $metricRollup.Count 1 'balance and unlimited samples stay out of percentage rollups'
+Assert-Eq $metricRollup[0].Id 'codex' 'the percentage provider remains in the rollup'
 
 # ---------- 月度汇总 ----------
 $summary = @(Get-UsageHistoryMonthlySummary -Records $records -Month '2026-09')
@@ -77,6 +85,9 @@ Assert-Eq $summary[0].PeakDay '2026-09-02' 'peak day is the highest daily last s
 Assert-Eq $summary[1].Id 'kimi' 'second provider summary'
 Assert-Eq ($null -eq $summary[1].SlopePerDay) 'True' 'a single day has no slope'
 Assert-Eq (Get-UsageReportNumber $summary[0].Average) '14.67' 'monthly average is sample weighted'
+$filteredSummary = @(Get-UsageHistoryMonthlySummary -Records $records -Month '2026-09' -Id 'kimi')
+Assert-Eq $filteredSummary.Count 1 'monthly summary can filter to one account'
+Assert-Eq $filteredSummary[0].Id 'kimi' 'account filter keeps the selected account'
 
 # ---------- 月份清单 ----------
 $months = @(Get-UsageHistoryMonths $records)
@@ -97,7 +108,7 @@ Assert-Eq ((ConvertTo-UsageReportCsv @()) -split "`r`n")[0] 'day,provider,sample
 # ---------- Markdown ----------
 $md = ConvertTo-UsageReportMarkdown -Summary $summary -Rollup $rollup -Month '2026-09' -GeneratedAt $fixed
 Assert-Eq $md.Contains('# AI usage report · 2026-09') 'True' 'markdown title carries the month'
-Assert-Eq $md.Contains('| Provider | Samples | Days | First | Last | Min | Max | Change | Slope |') 'True' 'markdown summary header'
+Assert-Eq $md.Contains('| Provider | Samples | Days | First | Last | Min | Max | Percentage point change | Slope |') 'True' 'markdown summary header'
 Assert-Eq $md.Contains('| grok | 3 | 2 | 10 | 20 | 10 | 20 | 10 | 6 %/day |') 'True' 'markdown summary row'
 Assert-Eq $md.Contains('| 2026-09-01 | grok | 2 | 10 | 14 | 10 | 14 |') 'True' 'markdown daily row'
 Assert-Eq $md.Contains('| kimi | 1 | 1 | 3 | 3 | 3 | 3 | 0 | - |') 'True' 'markdown shows a dash when there is no slope'
@@ -105,6 +116,9 @@ Assert-Eq $md.EndsWith("`n") 'True' 'markdown ends with a newline'
 $pipe = ConvertTo-UsageReportMarkdown -Summary @(@{ Id = 'a|b'; Samples = 1; Days = 1; First = 1; Last = 2; Min = 1; Max = 2; Delta = 1; SlopePerDay = $null }) -Rollup @() -Month '2026-09'
 Assert-Eq $pipe.Contains('a\|b') 'True' 'markdown escapes pipes'
 Assert-Eq (ConvertTo-UsageReportMarkdown -Summary @() -Rollup @() -Month '2026-09').Contains('No history samples for this month') 'True' 'markdown explains an empty month'
+$coverageMd = ConvertTo-UsageReportMarkdown -Summary $summary -Rollup $rollup -Month '2026-09' -Inventory @{ FileCount = 3; Bytes = 1234; Incomplete = $true }
+Assert-Eq $coverageMd.Contains('History coverage: 3 archive file(s), 1234 bytes') 'True' 'markdown shows history coverage'
+Assert-Eq $coverageMd.Contains('older samples may be incomplete') 'True' 'markdown shows incomplete history'
 
 # ---------- HTML ----------
 $html = ConvertTo-UsageReportHtml -Summary $summary -Rollup $rollup -Month '2026-09' -GeneratedAt $fixed
@@ -113,6 +127,9 @@ Assert-Eq $html.Contains('<meta charset="utf-8">') 'True' 'html declares utf-8'
 Assert-Eq $html.Contains('grok') 'True' 'html carries the provider rows'
 Assert-Eq ($html -match 'https?://') 'False' 'html is self contained'
 Assert-Eq $html.Contains('<style>') 'True' 'html inlines its stylesheet'
+$coverageHtml = ConvertTo-UsageReportHtml -Summary $summary -Rollup $rollup -Month '2026-09' -Inventory @{ FileCount = 3; Bytes = 1234; Incomplete = $true }
+Assert-Eq $coverageHtml.Contains('History coverage: 3 archive file(s), 1234 bytes') 'True' 'html shows history coverage'
+Assert-Eq $coverageHtml.Contains('older samples may be incomplete') 'True' 'html shows incomplete history'
 $escaped = ConvertTo-UsageReportHtml -Summary @(@{ Id = '<script>x</script>'; Samples = 1; Days = 1; First = 1; Last = 1; Min = 1; Max = 1; Delta = 0; SlopePerDay = $null }) -Rollup @() -Month '2026-09'
 Assert-Eq $escaped.Contains('<script>') 'False' 'html escapes markup from the data'
 Assert-Eq $escaped.Contains('&lt;script&gt;') 'True' 'html keeps the escaped text visible'
@@ -167,11 +184,11 @@ Assert-Eq (Get-UsageReportComparisonFileName -Months @() -Extension 'md') ('ai-u
 
 $compareMd = ConvertTo-UsageReportComparisonMarkdown -Comparison $comparison -Months $compareMonths -GeneratedAt $fixed
 Assert-Eq $compareMd.Contains('· 2026-09 → 2026-10') 'True' 'comparison markdown carries the range'
-Assert-Eq $compareMd.Contains('| Provider | Month | Samples | Days | First | Last | Min | Max | Change |') 'True' 'comparison markdown header matches the html columns'
+Assert-Eq $compareMd.Contains('| Provider | Month | Samples | Days | First | Last | Min | Max | Month-end percentage-point change |') 'True' 'comparison markdown header matches the html columns'
 Assert-Eq $compareMd.Contains('| grok | 2026-10 | 1 | 1 | 99 | 99 | 99 | 99 | +79 |') 'True' 'comparison markdown renders a month row'
 Assert-Eq $compareMd.Contains('| kimi | 2026-09 | 1 | 1 | 3 | 3 | 3 | 3 | - |') 'True' 'comparison markdown renders the dash for a missing change'
 Assert-Eq $compareMd.Contains('| kimi | 2026-10 | - | - | - | - | - | - | - |') 'True' 'comparison markdown renders a fully dashed row for a missing month'
-Assert-Eq $compareMd.Contains('means no samples that month') 'True' 'comparison markdown explains the dash'
+Assert-Eq $compareMd.Contains('balances and unlimited metrics') 'True' 'comparison markdown explains the dash'
 Assert-Eq $compareMd.EndsWith("`n") 'True' 'comparison markdown ends with a newline'
 Assert-Eq (ConvertTo-UsageReportComparisonMarkdown -Comparison @() -Months $compareMonths -GeneratedAt $fixed).Contains('No history samples for this month') 'True' 'comparison markdown explains an empty result'
 $comparePipe = ConvertTo-UsageReportComparisonMarkdown -Comparison @(@{ Id = 'a|b'; Month = '2026|09'; Samples = 1; Days = 1; First = 1; Last = 2; Min = 1; Max = 2; Change = $null }) -Months $compareMonths -GeneratedAt $fixed
@@ -185,7 +202,7 @@ Assert-Eq ($compareHtml -match 'https?://') 'False' 'comparison html is self con
 Assert-Eq $compareHtml.Contains('<style>') 'True' 'comparison html inlines its stylesheet'
 Assert-Eq $compareHtml.Contains('+79') 'True' 'comparison html carries the change column'
 Assert-Eq $compareHtml.Contains('<td>2026-10</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>') 'True' 'comparison html renders a fully dashed row for a missing month'
-Assert-Eq $compareHtml.Contains('means no samples that month') 'True' 'comparison html explains the dash'
+Assert-Eq $compareHtml.Contains('balances and unlimited metrics') 'True' 'comparison html explains the dash'
 $compareEscaped = ConvertTo-UsageReportComparisonHtml -Comparison @(@{ Id = '<script>x</script>'; Month = '2026-09'; Samples = 1; Days = 1; First = 1; Last = 1; Min = 1; Max = 1; Change = $null }) -Months $compareMonths -GeneratedAt $fixed
 Assert-Eq $compareEscaped.Contains('<script>') 'False' 'comparison html escapes markup from the data'
 Assert-Eq $compareEscaped.Contains('&lt;script&gt;') 'True' 'comparison html keeps the escaped text visible'
@@ -216,7 +233,7 @@ $script:WidgetStrings = @{ 'report.title' = 'REPORT-X' }
 $missingLabels = Get-UsageReportComparisonLabels
 Assert-Eq $missingLabels.Title 'AI usage report - month over month' 'a missing comparison title falls back to English'
 Assert-Eq $missingLabels.Heading 'Month over month' 'a missing comparison heading falls back to English'
-Assert-Eq $missingLabels.Change 'Change' 'a missing change label falls back to English'
+Assert-Eq $missingLabels.Change 'Month-end percentage-point change' 'a missing change label falls back to English'
 Assert-Eq ($missingLabels.Note -like '"-"*') 'True' 'a missing note falls back to English'
 Assert-Eq $missingLabels.Title.Contains('report.compareTitle') 'False' 'a missing label never shows its key name'
 $script:WidgetStrings = $null

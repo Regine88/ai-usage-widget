@@ -36,8 +36,37 @@ try {
     })
     $roundTrip3 = Read-SecureSnapshot -Path $path
     Assert-Eq $roundTrip3.token 'callback-secret' 'locked snapshot update'
+
+    $jsonPath = Join-Path $root 'plain-auth.json'
+    [IO.File]::WriteAllText($jsonPath, '{"keep":"yes","token":"old"}', [Text.UTF8Encoding]::new($false))
+    $plain = Update-JsonFile -Path $jsonPath -Update {
+        param($current)
+        $current.token = 'new'
+        return $current
+    }
+    Assert-Eq $plain.keep 'yes' 'plain JSON update keeps unrelated fields'
+    Assert-Eq $plain.token 'new' 'plain JSON update changes the target field'
+    Assert-Eq ((Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json).keep) 'yes' 'plain JSON update persists unrelated fields'
+    Assert-Eq (@(Get-ChildItem -LiteralPath $root -Filter '*.tmp' -File).Count) '0' 'plain JSON update leaves no temp file'
+
     $files = @(Get-SecureSnapshotFiles -Provider codex -Root $root)
     Assert-Eq $files.Count '1' 'snapshot enumeration'
+    [void](Write-SecureSnapshot -Provider gemini -AccountId 'kept' -Value ([pscustomobject]@{ AccountId = 'kept' }) -Root $root)
+    $active = [pscustomobject]@{ AccountId = 'active'; Token = 'live' }
+    $merged = @(Get-MergedProviderAccounts -Provider gemini -Active $active -Root $root -ReadPath {
+        param($Path)
+        $raw = Read-SecureSnapshot -Path $Path
+        [pscustomobject]@{ AccountId = [string]$raw.AccountId }
+    })
+    Assert-Eq $merged.Count '2' 'active account and snapshot stay distinct'
+    Assert-Eq $merged[0].AccountId 'active' 'the live account stays ahead of snapshots'
+    $replaced = @(Get-MergedProviderAccounts -Provider gemini -Active ([pscustomobject]@{ AccountId = 'kept'; Token = 'live' }) -Root $root -ReadPath {
+        param($Path)
+        $raw = Read-SecureSnapshot -Path $Path
+        [pscustomobject]@{ AccountId = [string]$raw.AccountId; Token = 'snapshot' }
+    })
+    Assert-Eq $replaced.Count '1' 'the live account replaces its own snapshot'
+    Assert-Eq $replaced[0].Token 'live' 'the live credential wins over the stored copy'
     Remove-SecureSnapshot -Path $path
     Assert-Eq (Test-Path -LiteralPath $path) 'False' 'snapshot removal'
 } finally {

@@ -30,6 +30,7 @@ Assert-Eq (Format-FetchError 'HTTP 401 Unauthorized') 'Sign-in expired, please s
 Assert-Eq (Format-FetchError 'HTTP 403 rate limit exceeded') 'Too many requests' '403 rate limit maps before forbidden'
 Assert-Eq (Format-FetchError 'HTTP 403 Forbidden') 'Access denied' 'plain 403 maps to forbidden'
 Assert-Eq (Format-FetchError 'missing-credential') 'Not signed in' 'missing credential maps'
+Assert-Eq (Format-FetchError 'missing-secret') 'The refresh client secret is missing; set ANTIGRAVITY_CLIENT_SECRET' 'missing client secret maps to configuration guidance'
 Assert-Eq (Format-FetchError 'weird-backend-crash') 'Failed to read usage, please retry later' 'unknown error is generic'
 $detailed = Format-FetchError 'weird-backend-crash' -Detail
 Assert-Eq ($detailed -like 'Failed to read usage, please retry later*') 'True' 'detail appends the redacted original'
